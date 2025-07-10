@@ -1,1 +1,1 @@
-Lyrion Music Server plugin for Yandex Music - proof of concept
+Yandex Music plugin for Lyrion Music Server - proof of concept
