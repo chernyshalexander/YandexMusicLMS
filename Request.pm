@@ -1,4 +1,4 @@
-package YandexMusicLMS::Request;
+package Plugins::yandex::Request;
 
 use strict;
 use warnings;
