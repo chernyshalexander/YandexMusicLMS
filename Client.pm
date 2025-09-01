@@ -1,4 +1,4 @@
-package YandexMusicLMS::Client;
+package Plugins::yandex::Client;
 
 use strict;
 use warnings;
@@ -9,7 +9,7 @@ our $VERSION = '0.01';
 
 sub new {
     my ($class, $token, %args) = @_;
-    my $request = $args{request} || YandexMusicLMS::Request->new(token => $token, proxy_url => $args{proxy_url});
+    my $request = $args{request} || Plugins::yandex::Request->new(token => $token, proxy_url => $args{proxy_url});
 
     my $self = {
         token => $token,
@@ -25,7 +25,7 @@ sub init {
     my ($self) = @_;
     my $result = $self->{request}->get('https://api.music.yandex.net/account/status ');
 
-    write_file('debug-user.json', encode_json($result));
+    #write_file('debug-user.json', encode_json($result));
     if (exists $result->{result} && exists $result->{result}->{account}) {
         $self->{me} = $result->{result}->{account}; # ← Правильное место с login
     } else {
@@ -43,7 +43,7 @@ sub users_likes_tracks {
     #write_file('debug-tracks.json', encode_json($result));
     my @track_short_objects;
     foreach my $item (@{$result->{result}->{library}->{tracks}}) {
-        push @track_short_objects, YandexMusicLMS::TrackShort->new($item);
+        push @track_short_objects, Plugins::yandex::TrackShort->new($item);
     }
 
     return \@track_short_objects;
@@ -57,7 +57,7 @@ sub tracks {
 
     my @tracks;
     foreach my $item (@$result) {
-        push @tracks, YandexMusicLMS::Track->new($item);
+        push @tracks, Plugins::yandex::Track->new($item);
     }
 
     return \@tracks;
