@@ -1,0 +1,38 @@
+[% PROCESS settings/header.html %]
+
+    [% WRAPPER setting title="PLUGIN_STAROE_MENU_LOCATION" desc="PLUGIN_STAROE_MENU_LOCATION_DESC" %]
+    <div class="prefDesc">
+        <select name="pref_menuLocation" class="stdedit">
+                <option value="radio"[% IF prefs.menuLocation == "radio" %] selected[% END %]>[% 'PLUGIN_STAROE_MENU_LOCATION_RADIO' | getstring %]</option>
+                <option value="apps"[% IF prefs.menuLocation == "apps" %] selected[% END %]>[% 'PLUGIN_STAROE_MENU_LOCATION_APPS' | getstring %]</option> 
+        </select>
+    </div>
+    [% END %]
+
+    [% WRAPPER setting title="PLUGIN_STAROE_STREAMING_QUALITY" desc="PLUGIN_STAROE_STREAMING_QUALITY_DESC" %]
+    <div class="prefDesc">
+        <select name="pref_streamingQuality" class="stdedit">
+                <option value="highest:mp3"[% IF prefs.streamingQuality == "highest:mp3" %] selected[% END %]>[% 'PLUGIN_STAROE_STREAMING_QUALITY_HIGHEST' | getstring %]</option>
+                <option value="high:mp3"[% IF prefs.streamingQuality == "high:mp3" %] selected[% END %]>[% 'PLUGIN_STAROE_STREAMING_QUALITY_HIGH' | getstring %]</option>            
+                <option value="low:mp3"[% IF prefs.streamingQuality == "low:mp3" %] selected[% END %]>[% 'PLUGIN_STAROE_STREAMING_QUALITY_LOW' | getstring %]</option>
+        </select>
+    </div>
+    [% END %]
+
+    [% WRAPPER setting title="PLUGIN_STAROE_TRANSLIT" desc="PLUGIN_STAROE_TRANSLIT_DESC" %]
+    <div class="prefDesc">
+        <select name="pref_translitSearch" class="stdedit">
+                <option value="enable"[% IF prefs.translitSearch == "enable" %] selected[% END %]>[% 'PLUGIN_STAROE_MENU_TRANSLIT_ENABLE' | getstring %]</option>
+                <option value="disable"[% IF prefs.translitSearch == "disable" %] selected[% END %]>[% 'PLUGIN_STAROE_MENU_TRANSLIT_DISABLE' | getstring %]</option>
+        </select>
+    </div>
+    [% END %]
+
+
+    [% WRAPPER setting title="PLUGIN_YANDEX_MUSIC_TOKEN" desc="PLUGIN_YANDEX_MUSIC_TOKEN_DESC" %]
+    <div class="prefDesc">
+        <input type="text" name="pref_token" id="pref_token" value="[% prefs.token %]" class="stdedit">
+    </div>
+    [% END %]
+
+[% PROCESS settings/footer.html %]

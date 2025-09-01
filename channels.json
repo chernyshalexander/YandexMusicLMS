@@ -1,0 +1,64 @@
+{"channels": [
+	{
+		"id": "oldradio",
+		"title": "Old radio",
+		"description": "Simple old radio",
+		"genre": "oldies",
+		"image": "plugins/Staroe/html/images/oldradio_svg.png",
+		"largeimage": "plugins/Staroe/html/images/oldradio_svg.png",
+		"xlimage": "plugins/Staroe/html/images/oldradio_svg.png",
+		"twitter": "",
+		"updated": "",
+		"playlists": [
+			{ "url": "http://www.staroeradio.ru/ices128.m3u", "format": "mp3",  "quality": "highest" },
+			{ "url": "http://www.staroeradio.ru/ices64.m3u", "format": "mp3",  "quality": "high" },
+			{ "url": "http://www.staroeradio.ru/ices32.m3u", "format": "mp3",  "quality": "low" }
+		],
+		"preroll": [ 
+
+		],
+		"listeners": "0",
+		"lastPlaying": ""
+	},
+	{
+		"id": "childradio",
+		"title": "Old radio for children",
+		"description": "Old radio for children",
+		"genre": "oldies",
+		"image": "plugins/Staroe/html/images/childradio_svg.png",
+		"largeimage": "plugins/Staroe/html/images/childradio_svg.png",
+		"xlimage": "plugins/Staroe/html/images/childradio_svg.png",
+		"twitter": "",
+		"updated": "",
+		"playlists": [
+			{ "url": "http://www.staroeradio.ru/detskoe128.m3u", "format": "mp3",  "quality": "highest" },			
+			{ "url": "http://www.staroeradio.ru/detskoe64.m3u", "format": "mp3",  "quality": "high" },
+			{ "url": "http://www.staroeradio.ru/detskoe32.m3u", "format": "mp3",  "quality": "low" }
+		],
+		"preroll": [ 
+			
+		],
+		"listeners": "0",
+		"lastPlaying": ""
+	},
+	{
+		"id": "oldmusic",
+		"title": "Old radio (musical)",
+		"description": "Old radio (musical)",
+		"genre": "oldies",
+		"image": "plugins/Staroe/html/images/oldradiomusic_svg.png",
+		"largeimage": "plugins/Staroe/html/images/oldradiomusic_svg.png",
+		"xlimage": "plugins/Staroe/html/images/oldradiomusic_svg.png",
+		"twitter": "",
+		"updated": "",
+		"playlists": [
+			{ "url": "http://www.staroeradio.ru/music128.m3u", "format": "mp3",  "quality": "highest" },			
+			{ "url": "http://www.staroeradio.ru/music64.m3u", "format": "mp3",  "quality": "high" },
+			{ "url": "http://www.staroeradio.ru/music32.m3u", "format": "mp3",  "quality": "low" }
+		],
+		"preroll": [ 
+			
+		],
+		"listeners": "0",
+		"lastPlaying": ""
+	}]}
