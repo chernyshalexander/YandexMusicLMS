@@ -1,4 +1,4 @@
-package YandexMusicLMS::Track;
+package Plugins::yandex::Track;
 
 use strict;
 use warnings;
