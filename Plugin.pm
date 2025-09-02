@@ -103,10 +103,10 @@ sub _transliterate {
 # It is used to initialize variables and the like.
 sub initPlugin {
     my $class = shift;
-    $prefs->init({ menuLocation => 'radio',  
-                    streamingQuality => 'highest', 
-                    translitSearch=>'disable', 
-                    token=>'******',
+    $prefs->init({ menuLocation => 'radio',
+                    streamingQuality => 'highest',
+                    translitSearch=>'disable',
+                    token=>'*****',
                     });
 
     my $token = $prefs->get('token');
@@ -181,8 +181,8 @@ sub _feedHandler {
                         duration => 0,
                         image    => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
                     }
-                } [@$playlist[0..4]];
-                #splice(@$playlist, 0, 5);
+                } #[@$playlist[0..4]];
+                splice(@$playlist, 0, 20);
 
                 $cb->({
                     type => 'opml',
