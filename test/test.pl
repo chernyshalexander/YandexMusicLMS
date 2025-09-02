@@ -17,6 +17,7 @@ if ($^O eq 'MSWin32') {
 }
 my $token = '';
 
+
 my $client = YandexMusicLMS::Client->new($token)->init();
 
 my $user = $client->get_me();
@@ -28,8 +29,10 @@ print "Display Name: " . ($user->{displayName} // 'не указано') . "\n";
 my $liked_tracks = $client->users_likes_tracks();
 foreach my $track_short (@$liked_tracks) {
     my $full_track = $track_short->fetch_track($client);
-    # my $title = $full_track->{title};
-    # my $artists = join ', ', map { $_->{name} } @{$full_track->{artists}};
+    my $title = $full_track->{title};
+    # 
+    my $artists = join ', ', 
+    map { $_->{name} } @{$full_track->{artists}};
     # print " - $artists - $title\n";
 
 #     # Раскомментируй, чтобы скачать первый трек

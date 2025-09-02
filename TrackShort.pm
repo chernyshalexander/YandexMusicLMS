@@ -1,4 +1,4 @@
-package YandexMusicLMS::TrackShort;
+package Plugins::yandex::TrackShort;
 
 use strict;
 use warnings;
@@ -27,8 +27,8 @@ sub fetch_track {
     # print Dumper($client);
     # print Dumper($self->{track_id});
     my $track_data = $client->{request}->get("https://api.music.yandex.net/tracks/" . $self->{track_id});
-    write_file('debug-tracks-data.json', encode_json($track_data));
-    return YandexMusicLMS::Track->new($track_data->{result}->[0]);
+    #write_file('debug-tracks-data.json', encode_json($track_data));
+    return Plugins::yandex::Track->new($track_data->{result}->[0]);
 }
 
 1;
