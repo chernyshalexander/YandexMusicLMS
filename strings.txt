@@ -1,0 +1,5 @@
+PLUGIN_YANDEX
+	EN	Yandex Music
+
+PLUGIN_YANDEX_DESC
+	EN	Play radio channels from Yandex Music
