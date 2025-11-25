@@ -26,11 +26,13 @@ use URI::Escape;
 use URI::Escape qw(uri_escape_utf8);
 use Encode qw(encode decode);
 use Encode::Guess;
+use Slim::Player::ProtocolHandlers;
 use Plugins::yandex::Client;
 use Plugins::yandex::Request;
 use Plugins::yandex::Track;
 use Plugins::yandex::TrackShort;
 use Plugins::yandex::Player;
+use Plugins::yandex::ProtocolHandler;
 # use constant HTTP_TIMEOUT => 15;
 # use constant HTTP_CACHE => 1;
 # use constant HTTP_EXPIRES => '1h';
@@ -111,6 +113,9 @@ sub initPlugin {
 
     my $token = $prefs->get('token');
     $ymClient = Plugins::yandex::Client->new($token)->init();
+    # Регистрация протокола
+    $log->error("YANDEX INIT: Registering ProtocolHandler...");
+    Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
     # Initialize the plugin with the given values. The 'feed' is the first
     # method called. The available menu entries will be shown in the new 
@@ -122,6 +127,7 @@ sub initPlugin {
         is_app => $class->can('nonSNApps') && ($prefs->get('menuLocation') eq 'apps') ? 1 : undef, 
         weight => 10,
     );
+  
 
     if (!$::noweb) {
         require Plugins::yandex::Settings;
@@ -171,18 +177,29 @@ sub _feedHandler {
                     my $ft = $_->fetch_track($ymClient);
                     my $title = $ft->{title};
                     my $name = $ft->{artists}[0]->{name};
+                    my $track_url = 'yandexmusic://' . $_->{id};
+                    $log->error("YANDEX MENU: Generating item '$title' with URL: $track_url");
                     {
                         #id       => $_->{id},
                         #name     => $_->{title} . " - " . $_->{artists}[0]->{name},
                         #name     => $_->fetch_track($ymClient)->{title} . ', ' . $_->fetch_track($ymClient)->{artists}[0]->{name},
                         name => $title . ' - ' . $name,
                         type     => 'audio',
-                        url      => '',#Plugins::yandex::Player->playTrackURL($_->{id}, $token),
+                        
+                        ##url      => url => 'yandexmusic://' . $_->{id},
+                       
+                   
+                        name     => $title . ' - ' . $name,
+                        type     => 'audio',
+                        
+                        
+                        url      => $track_url, 
                         duration => 0,
                         image    => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
+                        #image      => $class->getCoverUrl($track),
                     }
                 } #[@$playlist[0..4]];
-                splice(@$playlist, 0, 20);
+                splice(@$playlist, 0, 10);
 
                 $cb->({
                     type => 'opml',
