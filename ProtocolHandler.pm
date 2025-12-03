@@ -4,97 +4,132 @@ use strict;
 use warnings;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
-use Symbol qw(gensym); # Нужно для создания фиктивного сокета
+
+# 1. ОБЯЗАТЕЛЬНО: Подгружаем и наследуем HTTP.
+# Это нужно, чтобы когда мы подменим ссылку на https, LMS знал, как её играть.
+require Slim::Player::Protocols::HTTP;
+use base qw(Slim::Player::Protocols::HTTP);
 
 my $log = logger('plugin.yandex');
 
-# 1. Конструктор, создающий "фиктивный сокет"
-# Это решает ошибку "Not a GLOB reference"
-sub new {
-    my $class = shift;
-    my $args  = shift;
-    my $sock = gensym(); 
-    return bless $sock, $class;
+# --- Свойства ---
+
+sub isRemote { 1 }     
+sub isAudio { 1 }      
+sub audioScanned { 1 } 
+sub contentType { 'mp3' }
+sub getFormatForURL { 'mp3' }
+sub canSeek { 1 }
+
+# --- 2. СКАНИРОВАНИЕ (Заглушка) ---
+# LMS вызывает это ПЕРЕД проигрыванием.
+# Если мы тут попытаемся сделать HTTP запрос к yandexmusic://, все упадет.
+# Поэтому просто возвращаем фиктивные данные.
+sub scanUrl {
+    my ($class, $url, $args) = @_;
+    $log->info("YANDEX: scanUrl request: $url");
+    
+    return {
+        type    => 'mp3',
+        bitrate => 192000, # Говорим LMS, что это mp3 192kbps
+        length  => 0,      # Длительность пока неизвестна
+    };
 }
 
-# 2. КРИТИЧНО ВАЖНО: Сообщаем LMS, что это Аудио-поток, а не плейлист.
-# Это решает ошибку сканера "Can't connect to remote server... to retrieve playlist"
-sub isAudio { 1 }
+# --- 3. МЕТАДАННЫЕ ---
+# Чтобы на экране было красиво
+sub getMetadata {
+    my ($class, $client, $url) = @_;
 
-# Сообщаем, что этот трек не нужно сканировать на метаданные
-sub audioScanned { 1 }
+    my $id = $url;
+    $id =~ s/^yandexmusic:\/\///;
+    $id =~ s/^track\///;
 
-# Формат контента
-sub contentType { return 'mp3'; }
-sub getFormatForURL { return 'mp3'; }
+    my $meta = {
+        title    => "Yandex Track $id",
+        artist   => "Yandex Music",
+        type     => 'mp3',
+        bitrate  => '192k',
+    };
+    
+    # Быстро достаем инфу из кэша клиента (если есть)
+    if (defined $Plugins::yandex::Plugin::ymClient) {
+        eval {
+             # Здесь можно использовать быстрый метод получения инфы
+             # Но главное, чтобы он не вешал интерфейс
+             my $info = $Plugins::yandex::Plugin::ymClient->get_tracks_info([$id]);
+             if ($info && $info->[0]) {
+                 my $t = $info->[0];
+                 $meta->{title} = $t->{title};
+                 $meta->{artist} = $t->{artists}->[0]->{name};
+                 $meta->{duration} = int($t->{durationMs} / 1000);
+                 if ($t->{coverUri}) {
+                     my $c = $t->{coverUri}; $c =~ s/%%/200x200/;
+                     $meta->{cover} = 'https://' . $c;
+                 }
+             }
+        };
+    }
+    return $meta;
+}
 
-# 3. Основная логика подмены ссылки
+# --- 4. РЕЗОЛВИНГ (Самое важное) ---
+# Мы используем getNextTrack вместо getStreamUrl.
+# Задача этого метода: превратить yandexmusic://... в https://...
+# И сказать LMS: "Я всё сделал, теперь играй новую ссылку".
+
 sub getNextTrack {
     my ($class, $song, $successCb, $errorCb) = @_;
 
     my $url = $song->currentTrack()->url;
-    
-    $log->error("YANDEX: Trying to resolve URL: $url");
+    $log->info("YANDEX: getNextTrack called for: $url");
 
-    if ($url =~ m{^yandexmusic://(.+)}) {
-        my $track_id = $1;
-        
-        my $client = $Plugins::yandex::Plugin::ymClient;
-        
-        unless ($client) {
-            $log->error("YANDEX: Client not initialized!");
-            $errorCb->();
-            return;
-        }
-
-        # Получаем прямую ссылку
-        my $track = Plugins::yandex::Track->new({ id => $track_id });
-        my $stream_url;
-        
-        eval {
-            $stream_url = $track->get_stream_url($client);
-        };
-
-        if ($@) {
-             $log->error("YANDEX: Error fetching stream: $@");
-             $errorCb->();
-             return;
-        }
-
-        if ($stream_url) {
-            $log->error("YANDEX: Stream URL found: $stream_url");
-            
-            # Подменяем ссылку на реальную HTTPS
-            $song->streamUrl($stream_url);
-            
-            # Говорим LMS, что все ок
-            $successCb->();
-        } else {
-            $log->error("YANDEX: Stream URL is empty");
-            $errorCb->();
-        }
+    # 1. Парсим ID
+    my $track_id = $url;
+    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        $track_id = $1;
     } else {
+        $log->error("YANDEX: Can't parse ID");
+        $errorCb->(); return;
+    }
+
+    my $ym_client = $Plugins::yandex::Plugin::ymClient;
+    unless ($ym_client) {
+        $log->error("YANDEX: Client not ready");
+        $errorCb->(); return;
+    }
+
+    # 2. Получаем реальную ссылку
+    my $stream_url;
+    eval {
+        my $track = Plugins::yandex::Track->new({ id => $track_id });
+        $stream_url = $track->get_stream_url($ym_client);
+    };
+
+    if ($stream_url) {
+        $log->info("YANDEX: URL resolved: $stream_url");
+        
+        # 3. ПОДМЕНА ССЫЛКИ!
+        # Мы заменяем виртуальную ссылку на прямую HTTPS
+        $song->streamUrl($stream_url);
+        
+        # 4. УСПЕХ
+        # Вызываем callback. LMS увидит, что ссылка в $song изменилась на https://
+        # И передаст управление стандартному модулю Slim::Player::Protocols::HTTP
+        $successCb->();
+    } else {
+        $log->error("YANDEX: Failed to get URL");
         $errorCb->();
     }
 }
 
-# --- Заглушки для имитации поведения сокета (чтобы плеер не падал) ---
-
-sub blocking { 0 }
-sub connected { 1 }
-sub sysread { return 0; } # Возвращаем 0, так как данных мы не даем, мы только редиректим
-sub opened { 1 }
-sub close { 1 }
+# getStreamUrl нам больше не нужен, удаляем его, чтобы не путать LMS.
 
 # --- Разрешения ---
-
 sub canDoAction {
     my ($class, $client, $url, $action) = @_;
-    return 1 if ($action eq 'pause' || $action eq 'stop' || $action eq 'rew' || $action eq 'fwd');
+    return 1 if $action =~ /^(pause|stop|seek|rew|fwd)$/;
     return 0;
 }
-
-sub isRemote { 1 }
-sub canSeek { 1 }
 
 1;
