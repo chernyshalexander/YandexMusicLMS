@@ -3,7 +3,7 @@ package Plugins::yandex::ProtocolHandler;
 use strict;
 use warnings;
 use Slim::Utils::Log;
-use Slim::Player::Protocols::HTTPS;
+use base qw(Slim::Player::Protocols::HTTPS);
 use JSON::XS::VersionOneAndTwo;
 
 # !!! ГЛАВНОЕ ИСПРАВЛЕНИЕ: Явно загружаем наш модуль !!!
