@@ -78,6 +78,7 @@ sub initPlugin {
 
     my $token = $prefs->get('token');
     $ymClient = Plugins::yandex::Client->new($token)->init();
+    $log->info("YANDEX INIT: $ymClient token: $token");
     # Регистрация протокола
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
