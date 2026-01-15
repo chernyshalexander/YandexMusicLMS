@@ -1,7 +1,5 @@
 package Plugins::yandex::Plugin;
 
-
-
 use strict;
 use utf8;
 use vars qw(@ISA);
@@ -23,173 +21,260 @@ use URI::Escape qw(uri_escape_utf8);
 use Encode qw(encode decode);
 use Encode::Guess;
 use Slim::Player::ProtocolHandlers;
-use Plugins::yandex::Client;
-use Plugins::yandex::Request;
-use Plugins::yandex::Track;
-use Plugins::yandex::TrackShort;
-use Plugins::yandex::Player;
-use Plugins::yandex::ProtocolHandler;
-
-use constant MIN_SEARCH_LENGTH => 3;
-
 use warnings;
-
-#use Encode qw(decode);
-
-
-
-# Get the data related to this plugin and preset certain variables with 
-# default values in case they are not set
-my $prefs = preferences('plugin.yandex');
+use base qw(Slim::Plugin::OPMLBased);
+use Slim::Utils::Log;
+use Slim::Utils::Prefs;
+use utf8;
+use URI::Escape;
+use URI::Escape qw(uri_escape_utf8);
+use Encode::Guess;
+use Plugins::yandex::ClientAsync;
+use Data::Dumper;
 
 my $log;
+$log = Slim::Utils::Log->addLogCategory({
+    'category'     => 'plugin.yandex',
+    'defaultLevel' => 'DEBUG',
+    'description'  => string('PLUGIN_YANDEX'),
+});
 
-our $pluginDir;
 
-our $ymClient;
+my $prefs = preferences('plugin.yandex');
+# Добавляем переменную для хранения экземпляра клиента
+my $yandex_client_instance;
 
-# This is the entry point in the script
-BEGIN {
-    $pluginDir = $INC{"Plugins/yandex/Plugin.pm"};
-    $pluginDir =~ s/Plugin.pm$//; 
-}
-    # Initialize the logging
-    $log = Slim::Utils::Log->addLogCategory({
-        'category'     => 'plugin.yandex',
-        'defaultLevel' => 'DEBUG',
-        'description'  => string('PLUGIN_YANDEX'),
+
+sub initPlugin {
+    my $class = shift;
+
+    $prefs->init({
+        token => '',
     });
 
 
-#
-#
-
-
-
-# This is called when squeezebox server loads the plugin.
-# It is used to initialize variables and the like.
-sub initPlugin {
-    my $class = shift;
-    $prefs->init({ menuLocation => 'radio',
-                    streamingQuality => 'highest',
-                    translitSearch=>'disable',
-                    token=>'*****',
-                    });
-
-    my $token = $prefs->get('token');
-    $ymClient = Plugins::yandex::Client->new($token)->init();
-    $log->info("YANDEX INIT: $ymClient token: $token");
     # Регистрация протокола
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
-    # Initialize the plugin with the given values. The 'feed' is the first
-    # method called. The available menu entries will be shown in the new 
-    # menu entry 'yandex'.
     $class->SUPER::initPlugin(
-        feed   => \&_feedHandler,
+        feed   => \&handleFeed,
         tag    => 'yandex',
         menu   => 'radios',
-        is_app => $class->can('nonSNApps') && ($prefs->get('menuLocation') eq 'apps') ? 1 : undef, 
-        weight => 10,
+        weight => 50,
     );
-  
 
-    if (!$::noweb) {
+    if (main::WEBUI) {
         require Plugins::yandex::Settings;
-        Plugins::yandex::Settings->new;
+        Plugins::yandex::Settings->new();
+    }
+}
+
+sub getDisplayName { 'Yandex Music' }
+
+sub handleFeed {
+    my ($client, $cb, $args) = @_;
+    
+    my $token = $prefs->get('token');
+    #$log->info("handleFeed: token: $token");
+    unless ($token) {
+        $log->error("Токен не установлен. Проверьте настройки плагина.");
+        $cb->([{
+            name => 'Ошибка: токен не установлен',
+            type => 'text',
+        }]);
+        return;
     }
 
+    my $yandex_client = Plugins::yandex::ClientAsync->new($token);
+    #$log->info("yandex_client created: yandex_client token: $token");
+
+    $yandex_client->init(
+        sub {
+            #my $client_async = shift;
+            $yandex_client_instance = shift;
+
+            my @items = (
+                {
+                    name => 'Favorite tracks',
+                    type => 'link',
+                    url  => \&_handleLikedTracks,
+                    passthrough => [$yandex_client_instance],
+                },
+            );
+
+            $cb->(\@items);
+        },
+        sub {
+            my $error = shift;
+            $log->error("Initialization error: $error");
+            $cb->([{
+                name => "Error: $error",
+                type => 'text',
+            }]);
+        },
+    );
 }
+sub _handleLikedTracks {
+    my ($client, $cb, $args, $yandex_client) = @_;
 
- 
-# Called when the plugin is stopped
-sub shutdownPlugin {
-    my $class = shift;
-}
+    $yandex_client->users_likes_tracks(
+        sub {
+            my $tracks = shift; # $tracks - это массив ВСЕХ объектов TrackShort
 
-# Returns the name to display on the squeezebox
-sub getDisplayName {'PLUGIN_YANDEX' }
+            # 1. Берем только первые 5 треков из общего списка.
+            #    splice вернет массив из первых 5 элементов и изменит исходный массив $tracks.
+            my @tracks_to_process = splice(@$tracks, 0, 5);
+            my @all_items;
+            # Если понравившихся треков нет (или меньше 2), @tracks_to_process будет содержать то, что есть.
+            my $pending_requests = scalar @tracks_to_process;
 
-sub playerMenu { undef }
+            if ($pending_requests == 0) {
+                $cb->({
+                    items => [],
+                    title => 'Favorite tracks',
+                });
+                return;
+            }
 
-sub _feedHandler {
-    my ($client, $callback, $args, $passDict) = @_;
+            # 2. Итерируемся только по этим пяти трекам
+            foreach my $track_short_obj (@tracks_to_process) {
+                $track_short_obj->fetch_track(
+                    sub { # Callback на успех
+                        my $track_object_ref = shift;
+                        my $track_object = ${$track_object_ref};
 
-    my $menu = [];
-
-    my $fetch = sub {      
-        # add menu item "Favorite tracks"
-        push @$menu, {
-            name    => 'Favorite tracks',
-            type    => 'link',
-            image   => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
-            url     => sub {
-                my ($client, $cb) = @_;
-                my $token = $prefs->get('token');
-
-                unless ($token) {
-                    $log->warn("Токен не задан");
-                    $cb->([]);
-                    return;
-                }
-
-                # 1. Получаем список лайков
-                my $playlist = [];
-                eval { $playlist = $ymClient->users_likes_tracks(); };
-                
-                if ($@) {
-                    $log->error("Error fetching likes: $@");
-                    $cb->([]); 
-                    return;
-                }
-
-                # 2. Берем только первые 5 штук для теста (чтобы не висло)
-                my @subset = splice(@$playlist, 0, 5);
-
-                my @items = ();
-
-                foreach my $track_obj (@subset) {
-                    # Оборачиваем в eval, так как fetch_track делает сетевой запрос
-                    eval {
-                        # Получаем полные данные (это медленно, но для 5 штук пойдет)
-                        my $ft = $track_obj->fetch_track($ymClient);
-                        
-                        my $title = $ft->{title} // 'Unknown';
-                        my $artist = $ft->{artists}[0]->{name} // 'Unknown';
-                        my $track_id = $track_obj->{id}; # ID берем из исходного объекта
-                        
-                        # Формируем URL вида yandexmusic://12345
+                        my $title = $track_object->{title} // 'Unknown';
+                        my $artist = $track_object->{artists}[0]->{name} // 'Unknown';
+                        my $track_id = $track_short_obj->{id};
                         my $track_url = 'yandexmusic://' . $track_id;
 
-                        $log->info("Generating: $title ($track_url)");
-
-                        push @items, {
+                        # 3. Добавляем элемент в финальный массив
+                        push @all_items, {
                             name     => $artist . ' - ' . $title,
                             type     => 'audio',
                             url      => $track_url,
                             image    => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
                         };
-                    };
-                    if ($@) {
-                        $log->error("Skipping track due to error: $@");
+                        $log->debug(Dumper(@all_items));
+                        $pending_requests--;
+                        # 4. Когда все (до 5) запросы завершены, вызываем финальный callback
+                        if ($pending_requests == 0) {
+                            # splice здесь больше не нужен, мы и так работали только с нужным количеством
+                            $cb->({
+                                items => \@all_items, # Передаем весь массив, так как в нем не более 5 элементов
+                                title => 'Favorite tracks',
+                            });
+                        }
+                    },
+                    sub { # Callback на ошибку
+                        my $error = shift;
+                        my $track_id = $track_short_obj->{id};
+                        $log->error("Error fetching track $track_id: $error");
+
+                        $pending_requests--;
+                        if ($pending_requests == 0) {
+                            $cb->({
+                                items => \@all_items,
+                                title => 'Favorite tracks',
+                            });
+                        }
                     }
-                }
-
-                $cb->({
-                    items => \@items,
-                });
-            },
-        };
-
-        $callback->({ items  => $menu });
-    };
-
-    $fetch->();
+                );
+            }
+        },
+        sub { # Callback на случай, если не удалось получить список лайков
+            my $error = shift;
+            $log->error("Error retrieving favorite tracks list: $error");
+            $cb->({
+                items => [{
+                    name => "Error: $error",
+                    type => 'text',
+                }],
+                title => 'Favorite tracks',
+            });
+        },
+    );
 }
+# sub _handleLikedTracks {
+#     my ($client, $cb, $args, $yandex_client) = @_;
 
+#     $yandex_client->users_likes_tracks(
+#         sub {
+#             my $tracks = shift; # $tracks - это массив объектов TrackShort
 
+#             my @all_items;
+#             my $pending_requests = scalar @$tracks;
 
+#             if ($pending_requests == 0) {
+#                 $cb->({
+#                     items => [],
+#                     title => 'Favorite tracks',
+#                 });
+#                 return;
+#             }
 
-# Always end with a 1 to make Perl happy
+#             foreach my $track_short_obj (@$tracks) {
+#                 # Вызываем fetch_track у объекта TrackShort.
+#                 # Он сам знает свой ID и как сделать запрос через клиента.
+#                 $track_short_obj->fetch_track(
+#                     sub { # Callback на успех
+#                         my $track_object_ref = shift;
+#                         my $track_object = ${$track_object_ref};
+
+#                         my $title = $track_object->{title} // 'Unknown';
+#                         my $artist = $track_object->{artists}[0]->{name} // 'Unknown';
+#                         my $track_id = $track_short_obj->{id}; # ID можно взять из исходного объекта
+#                         my $track_url = 'yandexmusic://' . $track_id;
+
+#                         push @all_items, {
+#                             name     => $artist . ' - ' . $title,
+#                             type     => 'audio',
+#                             url      => $track_url,
+#                             image    => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
+#                         };
+
+#                         $pending_requests--;
+#                         if ($pending_requests == 0) {
+#                             my @subset = splice(@all_items, 0, 5);
+#                             $cb->({
+#                                 items => \@subset,
+#                                 title => 'Favorite tracks',
+#                             });
+#                         }
+#                     },
+#                     sub { # Callback на ошибку
+#                         my $error = shift;
+#                         my $track_id = $track_short_obj->{id};
+#                         $log->error("Error fetching track $track_id: $error");
+
+#                         $pending_requests--;
+#                         if ($pending_requests == 0) {
+#                             my @subset = splice(@all_items, 0, 5);
+#                             $cb->({
+#                                 items => \@subset,
+#                                 title => 'Favorite tracks',
+#                             });
+#                         }
+#                     }
+#                 );
+#             }
+#         },
+#         sub { # Callback на случай, если не удалось получить список лайков
+#             my $error = shift;
+#             $log->error("Error retrieving favorite tracks list: $error");
+#             $cb->({
+#                 items => [{
+#                     name => "Error: $error",
+#                     type => 'text',
+#                 }],
+#                 title => 'Favorite tracks',
+#             });
+#         },
+#     );
+# }
+#  метод для доступа к клиенту из других модулей
+sub getClient {
+    return $yandex_client_instance;
+}
 1;
