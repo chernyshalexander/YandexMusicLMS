@@ -8,10 +8,11 @@ use JSON::XS::VersionOneAndTwo;
 
 # !!! ГЛАВНОЕ ИСПРАВЛЕНИЕ: Явно загружаем наш модуль !!!
 require Plugins::yandex::Track;
+require Plugins::yandex::Plugin; # <--- ДОБАВИТЬ ЭТОТ REQUIRE
 
 my $log = logger('plugin.yandex');
 
-# --- 1. КОНСТРУКТОР (как в Qobuz) ---
+# --- 1. КОНСТРУКТОР 
 sub new {
     my $class  = shift;
     my $args   = shift;
@@ -22,7 +23,7 @@ sub new {
     # Берем URL, который должен быть уже установлен в getNextTrack
     my $streamUrl = $song->streamUrl() || return;
 
-    $log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
+    #$log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
 
     my $sock = $class->SUPER::new( {
         url     => $streamUrl,
@@ -30,16 +31,16 @@ sub new {
         client  => $client,
     } ) || return;
 
-    # Устанавливаем тип контента, как в Deezer
+    # Устанавливаем тип контента
     ${*$sock}{contentType} = 'audio/mpeg';
 
     return $sock;
 }
 
-# --- 2. isDirect (как в Qobuz) ---
+# --- 2. isDirect 
 sub isDirect { 1 }
 
-# --- 3. scanUrl (как в Qobuz и Deezer) ---
+# --- 3. scanUrl 
 sub scanUrl {
     my ($class, $url, $args) = @_;
     $args->{cb}->( $args->{song}->currentTrack() );
@@ -60,10 +61,19 @@ sub getNextTrack {
     }
     $track_id = $1;
 
-    # Создаем объект трека. Теперь он должен создаться без ошибок.
-    my $track = Plugins::yandex::Track->new({ id => $track_id });
+    # --- ИЗМЕНЕНИЕ: Получаем экземпляр клиента из Plugin ---
+    my $yandex_client = Plugins::yandex::Plugin->getClient();
 
-    # !!! ГЛАВНОЕ: Вызываем АСИНХРОННЫЙ метод из Track.pm !!!
+    unless ($yandex_client) {
+        $log->error("YANDEX: Could not get Yandex client instance. Plugin might not be initialized.");
+        $errorCb->('Plugin not initialized');
+        return;
+    }
+
+    # Создаем объект трека. Теперь он должен создаться без ошибок.
+    my $track = Plugins::yandex::Track->new({ id => $track_id },$yandex_client);
+
+    # !!! Вызываем АСИНХРОННЫЙ метод из Track.pm !!!
     $track->get_direct_url(sub {
         my ($final_url, $error) = @_;
 
@@ -91,7 +101,7 @@ sub canSeek { 1 }
 
 sub getMetadata {
     my ($class, $client, $url) = @_;
-    # ... ваш код ...
+
 }
 
 sub canDoAction {
