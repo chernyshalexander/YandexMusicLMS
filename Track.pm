@@ -3,9 +3,10 @@ package Plugins::yandex::Track;
 use strict;
 use warnings;
 use Data::Dumper;
-use JSON;
+use JSON::XS::VersionOneAndTwo;
 use Digest::MD5 qw(md5_hex);
 use Slim::Utils::Log;
+use Slim::Networking::SimpleAsyncHTTP;
 
 # XML::Simple может быть причиной проблем
 # use XML::Simple;
@@ -156,9 +157,52 @@ sub get_direct_url {
                     };
                 }
                 my $sign = md5_hex("XGRlBW9FXlekgbPrRHuSiA" . substr($data->{path}, 1) . $data->{s});
-                my $direct_url = "https://$data->{host}/get-mp3/$sign/$data->{ts}$data->{path}";
+                my $initial_direct_url = "https://$data->{host}/get-mp3/$sign/$data->{ts}$data->{path}";
 
-                $cb->($direct_url);
+                # --- NEW LOGIC: Resolve potential 308 Redirect manually ---
+                $log->info("YANDEX: Resolving redirect for: $initial_direct_url");
+                
+                my $http_resolver = Slim::Networking::SimpleAsyncHTTP->new(
+                    sub {
+                        my $http = shift;
+                        
+                        # Пытаемся получить код ответа и заголовки разными способами
+                        my $code = $http->code || 200;
+                        
+                        # Если это редирект (308, 301, 302)
+                        if ($code =~ /^30/) {
+                            my $location;
+                            # Способ 1: через метод headers
+                            if ($http->can('headers')) {
+                                $location = $http->headers->header('Location');
+                            }
+                            # Способ 2: через params (иногда headers там)
+                            elsif ($http->can('params') && $http->params && $http->params->{headers}) {
+                                $location = $http->params->{headers}->{'Location'};
+                            }
+                            
+                            if ($location) {
+                                $log->info("YANDEX: Resolved redirect $code. New URL: $location");
+                                $cb->($location);
+                                return;
+                            }
+                        }
+                        
+                        $log->info("YANDEX: No redirect detected (Code: $code) or Location missing. Using original URL.");
+                        $cb->($initial_direct_url);
+                    },
+                    sub {
+                        my ($http, $error) = @_;
+                        $log->warn("YANDEX: Redirect resolution failed ($error). Using original URL.");
+                        $cb->($initial_direct_url);
+                    },
+                    {
+                        maxRedirects => 0,
+                        timeout => 10,
+                    }
+                );
+                
+                $http_resolver->head($initial_direct_url);
             },
             sub {
                 # ИСПРАВЛЕНИЕ: $error_msg - это строка

@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use Data::Dumper;
 use File::Slurp;
-use JSON;
+use JSON::XS::VersionOneAndTwo;
 use Slim::Utils::Log;
 
 my $log = logger('plugin.yandex');
