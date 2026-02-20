@@ -3,6 +3,7 @@ package Plugins::yandex::ProtocolHandler;
 use strict;
 use warnings;
 use Slim::Utils::Log;
+use Slim::Utils::Cache;
 use base qw(Slim::Player::Protocols::HTTPS);
 use JSON::XS::VersionOneAndTwo;
 
@@ -23,16 +24,56 @@ sub new {
     # Берем URL, который должен быть уже установлен в getNextTrack
     my $streamUrl = $song->streamUrl() || return;
 
-    #$log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
+    $log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
 
     my $sock = $class->SUPER::new( {
         url     => $streamUrl,
         song    => $song,
         client  => $client,
+        seekdata => $args->{seekdata}, # Pass seekdata for range requests
     } ) || return;
 
     # Устанавливаем тип контента
     ${*$sock}{contentType} = 'audio/mpeg';
+
+    # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
+    # и отображал прогресс бар.
+    # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
+    # и отображал прогресс бар.
+    if ($client) {
+         my $duration = $song->duration || 0;
+         my $artist = 'Unknown';
+         my $title = 'Unknown';
+
+         # Используем оригинальный URL трека (yandexmusic://...) для поиска в кеше
+         my $original_url = $song->currentTrack ? $song->currentTrack->url : $streamUrl;
+         
+         if (!$duration && $original_url =~ /yandexmusic:\/\/(\d+)/) {
+             my $track_id = $1;
+             my $cache = Slim::Utils::Cache->new();
+             my $meta = $cache->get('yandex_meta_' . $track_id);
+             
+             if ($meta && $meta->{duration}) {
+                 $duration = $meta->{duration};
+                 $artist = $meta->{artist} if $meta->{artist};
+                 $title = $meta->{title} if $meta->{title};
+                 $log->info("YANDEX: Found cached metadata for $track_id: Duration=$duration");
+             } else {
+                 $log->warn("YANDEX: Metadata cache miss for $track_id");
+             }
+         }
+
+         $log->warn("YANDEX: Setting duration $duration and isLive=0 for song " . ($song->currentTrack ? $song->currentTrack->url : 'unknown'));
+
+         # Устанавливаем на переданном объекте $song (это объект Slim::Player::Song)
+         $song->isLive(0);
+         $song->duration($duration);
+         
+         # Также обновляем мету через Slim::Music::Info, чтобы UI подхватил
+         if ($song->currentTrack) {
+             Slim::Music::Info::setDuration($song->currentTrack, $duration);
+         }
+    }
 
     return $sock;
 }
@@ -101,7 +142,41 @@ sub canSeek { 1 }
 
 sub getMetadata {
     my ($class, $client, $url) = @_;
+    
+    # Пытаемся найти в кеше
+    if ($url =~ /yandexmusic:\/\/(\d+)/) {
+        my $track_id = $1;
+        my $cache = Slim::Utils::Cache->new();
+        if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+            $log->info("YANDEX: Returning cached metadata for $url");
+            return {
+                title    => $cached_meta->{title},
+                artist   => $cached_meta->{artist},
+                duration => $cached_meta->{duration},
+                cover    => $cached_meta->{cover},
+                icon     => $cached_meta->{cover},
+                bitrate  => 192000,
+                type     => 'mp3',
+            };
+        }
+    }
 
+    # Если в кеше нет, возвращаем undef/пусто, чтобы LMS использовал то, что есть в плейлисте
+    return {};
+}
+
+sub getIcon {
+    my ($class, $url) = @_;
+    
+    if ($url =~ /yandexmusic:\/\/(\d+)/) {
+        my $track_id = $1;
+        my $cache = Slim::Utils::Cache->new();
+        if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+            return $cached_meta->{cover} if $cached_meta->{cover};
+        }
+    }
+    
+    return 'plugins/yandex/html/images/yandex.png';
 }
 
 sub canDoAction {

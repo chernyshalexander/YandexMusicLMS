@@ -11,6 +11,7 @@
         <maxVersion>*</maxVersion>
     </targetApplication>
     <optionsURL>plugins/yandex/settings/basic.html</optionsURL>
+    <icon>plugins/yandex/html/images/yandex.png</icon>
     <creator>Alexander Charnysh</creator>
     <homepageURL></homepageURL>
 </extension>
