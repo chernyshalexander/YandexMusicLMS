@@ -84,13 +84,25 @@ sub get_direct_url {
             return;
         }
 
+        my $max_bitrate = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate') || 320;
         my $target_info;
-        foreach my $info_item (@{$info->{result}}) {
-            next unless $info_item->{codec} eq 'mp3';
-            if (!$target_info || $info_item->{bitrateInKbps} > $target_info->{bitrateInKbps}) {
+        
+        # Sort available streams by bitrate descending
+        my @sorted_info = sort { $b->{bitrateInKbps} <=> $a->{bitrateInKbps} } 
+                          grep { $_->{codec} eq 'mp3' } 
+                          @{$info->{result}};
+
+        # Find the highest bitrate that is <= max_bitrate
+        foreach my $info_item (@sorted_info) {
+            if ($info_item->{bitrateInKbps} <= $max_bitrate) {
                 $target_info = $info_item;
-                last if $info_item->{bitrateInKbps} == 320;
+                last;
             }
+        }
+        
+        # Fallback: if all streams are strictly higher than max_bitrate, just pick the lowest available one
+        if (!$target_info && @sorted_info) {
+            $target_info = $sorted_info[-1];
         }
 
         unless ($target_info && $target_info->{downloadInfoUrl}) {

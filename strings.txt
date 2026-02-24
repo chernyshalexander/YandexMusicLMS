@@ -9,3 +9,11 @@ PLUGIN_YANDEX_MUSIC_TOKEN
 
 PLUGIN_YANDEX_MUSIC_TOKEN_DESC
 	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
+
+PLUGIN_YANDEX_MAX_BITRATE
+	EN	Maximum Audio Quality
+	RU	Максимальное качество звука
+
+PLUGIN_YANDEX_MAX_BITRATE_DESC
+	EN	Select the maximum allowed bitrate for streaming tracks.
+	RU	Выберите максимальный разрешенный битрейт для загрузки треков.

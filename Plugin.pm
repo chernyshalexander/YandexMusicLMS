@@ -50,6 +50,7 @@ sub initPlugin {
 
     $prefs->init({
         token => '',
+        max_bitrate => 320,
     });
 
 
