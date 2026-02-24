@@ -23,7 +23,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(token menuLocation streamingQuality translitSearch));
+    return ($prefs, qw(token menuLocation streamingQuality translitSearch max_bitrate));
 }
 
 # Always end with a 1 to make Perl happy

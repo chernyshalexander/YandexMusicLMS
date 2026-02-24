@@ -1,9 +1,20 @@
 [% PROCESS settings/header.html %]
 
-    [% WRAPPER setting title="PLUGIN_YANDEX_MUSIC_TOKEN" desc="PLUGIN_YANDEX_MUSIC_TOKEN_DESC" %]
-    <div class="prefDesc">
-        <input type="text" name="pref_token" id="pref_token" value="[% prefs.token %]" class="stdedit">
-    </div>
-    [% END %]
+[% WRAPPER setting title="PLUGIN_YANDEX_MUSIC_TOKEN" desc="PLUGIN_YANDEX_MUSIC_TOKEN_DESC" %]
+<div class="prefDesc">
+    <input type="text" name="pref_token" id="pref_token" value="[% prefs.token %]" class="stdedit">
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_MAX_BITRATE" desc="PLUGIN_YANDEX_MAX_BITRATE_DESC" %]
+<div class="prefDesc">
+    <select name="pref_max_bitrate" id="pref_max_bitrate" class="stdedit">
+        <option value="64" [% IF prefs.max_bitrate==64 %]selected[% END %]>64 kbps</option>
+        <option value="128" [% IF prefs.max_bitrate==128 %]selected[% END %]>128 kbps</option>
+        <option value="192" [% IF prefs.max_bitrate==192 %]selected[% END %]>192 kbps</option>
+        <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps</option>
+    </select>
+</div>
+[% END %]
 
 [% PROCESS settings/footer.html %]
