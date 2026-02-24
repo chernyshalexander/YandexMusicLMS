@@ -3,3 +3,9 @@ PLUGIN_YANDEX
 
 PLUGIN_YANDEX_DESC
 	EN	Play radio channels from Yandex Music
+
+PLUGIN_YANDEX_MUSIC_TOKEN
+	EN	Yandex Music Token
+
+PLUGIN_YANDEX_MUSIC_TOKEN_DESC
+	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
