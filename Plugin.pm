@@ -96,19 +96,19 @@ sub handleFeed {
 
             my @items = (
                 {
-                    name => 'Favorites',
+                    name => 'My Collection',
                     type => 'link',
                     url  => \&_handleFavorites,
                     passthrough => [$yandex_client_instance],
                     image => 'plugins/yandex/html/images/favorites.png',
                 },
-                {
-                    name => 'My Vibe',
-                    type => 'link',
-                    url  => \&_handleMyVibe,
-                    passthrough => [$yandex_client_instance],
-                    image => 'plugins/yandex/html/images/wave.png',
-                },
+#                {
+#                    name => 'My Vibe',
+#                    type => 'link',
+#                    url  => \&_handleMyVibe,
+#                    passthrough => [$yandex_client_instance],
+#                    image => 'plugins/yandex/html/images/wave.png',
+#                },
             );
 
             $cb->(\@items);
@@ -292,7 +292,7 @@ sub _handleFavorites {
 
     $cb->({
         items => \@items,
-        title => 'Favorites',
+        title => 'My Collection',
     });
 }
 
