@@ -352,10 +352,11 @@ sub search {
         $params,
         sub {
             my $result = shift;
-            if (exists $result->{result}) {
+            if (ref $result eq 'HASH' && exists $result->{result}) {
                 $callback->($result->{result});
             } else {
-                $error_callback->("Search query failed");
+                my $err_msg = ref $result eq '' ? $result : "Search query failed";
+                $error_callback->($err_msg);
             }
         },
         $error_callback,
