@@ -377,6 +377,7 @@ sub _handleSearch {
     );
 }
 
+sub _handleSearchTracks {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
     my $encoded_query = uri_escape_utf8($query);
@@ -399,6 +400,7 @@ sub _handleSearch {
     );
 }
 
+sub _handleSearchAlbums {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
     my $encoded_query = uri_escape_utf8($query);
@@ -444,6 +446,7 @@ sub _handleSearch {
     );
 }
 
+sub _handleSearchArtists {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
     my $encoded_query = uri_escape_utf8($query);
