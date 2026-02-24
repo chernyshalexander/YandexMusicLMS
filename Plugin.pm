@@ -109,6 +109,12 @@ sub handleFeed {
 #                    passthrough => [$yandex_client_instance],
 #                    image => 'plugins/yandex/html/images/wave.png',
 #                },
+                {
+                    name => 'Search',
+                    type => 'search',
+                    url  => \&_handleSearch,
+                    passthrough => [$yandex_client_instance],
+                },
             );
 
             $cb->(\@items);
@@ -297,6 +303,231 @@ sub _handleFavorites {
         items => \@items,
         title => 'My Collection',
     });
+}
+
+sub _handleSearch {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    my $query = $args->{search} || '';
+    if (!$query) {
+        $cb->({ items => [] });
+        return;
+    }
+
+    $yandex_client->search(
+        $query,
+        'all',
+        sub {
+            my $result = shift;
+            
+            my @items;
+
+            if ($result->{tracks} && $result->{tracks}->{results} && @{$result->{tracks}->{results}}) {
+                push @items, {
+                    name => 'Tracks',
+                    type => 'link',
+                    url  => \&_handleSearchTracks,
+                    passthrough => [$yandex_client, $query],
+                };
+            }
+
+            if ($result->{albums} && $result->{albums}->{results} && @{$result->{albums}->{results}}) {
+                push @items, {
+                    name => 'Albums',
+                    type => 'link',
+                    url  => \&_handleSearchAlbums,
+                    passthrough => [$yandex_client, $query],
+                };
+            }
+
+            if ($result->{artists} && $result->{artists}->{results} && @{$result->{artists}->{results}}) {
+                push @items, {
+                    name => 'Artists',
+                    type => 'link',
+                    url  => \&_handleSearchArtists,
+                    passthrough => [$yandex_client, $query],
+                };
+            }
+
+            if ($result->{playlists} && $result->{playlists}->{results} && @{$result->{playlists}->{results}}) {
+                push @items, {
+                    name => 'Playlists',
+                    type => 'link',
+                    url  => \&_handleSearchPlaylists,
+                    passthrough => [$yandex_client, $query],
+                };
+            }
+
+            if (!@items) {
+                 push @items, { name => 'No results found', type => 'text' };
+            }
+
+            $cb->({
+                items => \@items,
+                title => "Search: $query"
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Search Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleSearchTracks {
+    my ($client, $cb, $args, $yandex_client, $query) = @_;
+
+    $yandex_client->search(
+        $query,
+        'track',
+        sub {
+            my $result = shift;
+            my $tracks = [];
+            if ($result->{tracks} && $result->{tracks}->{results}) {
+                $tracks = $result->{tracks}->{results};
+            }
+            _renderTrackList($tracks, $cb, "Tracks: $query");
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleSearchAlbums {
+    my ($client, $cb, $args, $yandex_client, $query) = @_;
+
+    $yandex_client->search(
+        $query,
+        'album',
+        sub {
+            my $result = shift;
+            my @items;
+
+            if ($result->{albums} && $result->{albums}->{results}) {
+                foreach my $album (@{$result->{albums}->{results}}) {
+                    my $title = $album->{title} // 'Unknown Album';
+                    my $artist = $album->{artists} && @{$album->{artists}} ? $album->{artists}[0]->{name} : 'Unknown Artist';
+                    
+                    my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                    if ($album->{coverUri}) {
+                        $icon = $album->{coverUri};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon";
+                    }
+
+                    push @items, {
+                        name => $title . ' (' . $artist . ')',
+                        type => 'link',
+                        url => \&_handleAlbum,
+                        passthrough => [$yandex_client, $album->{id}],
+                        image => $icon,
+                    };
+                }
+            }
+
+            $cb->({
+                items => \@items,
+                title => "Albums: $query",
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleSearchArtists {
+    my ($client, $cb, $args, $yandex_client, $query) = @_;
+
+    $yandex_client->search(
+        $query,
+        'artist',
+        sub {
+            my $result = shift;
+            my @items;
+
+            if ($result->{artists} && $result->{artists}->{results}) {
+                foreach my $artist (@{$result->{artists}->{results}}) {
+                    my $name = $artist->{name} // 'Unknown Artist';
+                    
+                    my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                    if ($artist->{cover} && $artist->{cover}->{uri}) {
+                        $icon = $artist->{cover}->{uri};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon";
+                    }
+
+                    push @items, {
+                        name => $name,
+                        type => 'link',
+                        url => \&_handleArtist,
+                        passthrough => [$yandex_client, $artist->{id}],
+                        image => $icon,
+                    };
+                }
+            }
+
+            $cb->({
+                items => \@items,
+                title => "Artists: $query",
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleSearchPlaylists {
+    my ($client, $cb, $args, $yandex_client, $query) = @_;
+
+    $yandex_client->search(
+        $query,
+        'playlist',
+        sub {
+            my $result = shift;
+            my @items;
+
+            if ($result->{playlists} && $result->{playlists}->{results}) {
+                foreach my $playlist (@{$result->{playlists}->{results}}) {
+                    my $title = $playlist->{title} // 'Unknown Playlist';
+                    my $owner = $playlist->{owner} && $playlist->{owner}->{name} ? $playlist->{owner}->{name} : 'Unknown User';
+                    
+                    my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                    if ($playlist->{cover} && $playlist->{cover}->{uri}) {
+                        $icon = $playlist->{cover}->{uri};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon";
+                    } elsif ($playlist->{ogImage}) {
+                        $icon = $playlist->{ogImage};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon";
+                    }
+
+                    push @items, {
+                        name => $title . ' (' . $owner . ')',
+                        type => 'link',
+                        url => \&_handlePlaylist,
+                        passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
+                        image => $icon,
+                    };
+                }
+            }
+
+            $cb->({
+                items => \@items,
+                title => "Playlists: $query",
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
 }
 
 sub _handleLikedAlbums {

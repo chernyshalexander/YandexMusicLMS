@@ -336,4 +336,30 @@ sub rotor_station_tracks {
     );
 }
 
+sub search {
+    my ($self, $query, $type, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/search';
+    my $params = {
+        'text' => $query,
+        'type' => $type, # 'all', 'track', 'album', 'artist', 'playlist'
+        'page' => 0,
+        'noclear' => 'false'
+    };
+
+    $self->{request}->get(
+        $url,
+        $params,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                $callback->($result->{result});
+            } else {
+                $error_callback->("Search query failed");
+            }
+        },
+        $error_callback,
+    );
+}
+
 1;
