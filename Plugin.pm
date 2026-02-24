@@ -314,8 +314,7 @@ sub _handleSearch {
         return;
     }
 
-    # Ensure UTF-8 string is properly escaped for HTTP GET params
-    my $encoded_query = uri_escape_utf8($query);
+    my $encoded_query = encode('utf8', $query);
 
     $yandex_client->search(
         $encoded_query,
@@ -380,7 +379,7 @@ sub _handleSearch {
 sub _handleSearchTracks {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
-    my $encoded_query = uri_escape_utf8($query);
+    my $encoded_query = encode('utf8', $query);
 
     $yandex_client->search(
         $encoded_query,
@@ -403,7 +402,7 @@ sub _handleSearchTracks {
 sub _handleSearchAlbums {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
-    my $encoded_query = uri_escape_utf8($query);
+    my $encoded_query = encode('utf8', $query);
 
     $yandex_client->search(
         $encoded_query,
@@ -449,7 +448,7 @@ sub _handleSearchAlbums {
 sub _handleSearchArtists {
     my ($client, $cb, $args, $yandex_client, $query) = @_;
 
-    my $encoded_query = uri_escape_utf8($query);
+    my $encoded_query = encode('utf8', $query);
 
     $yandex_client->search(
         $encoded_query,
