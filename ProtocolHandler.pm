@@ -163,7 +163,7 @@ sub getMetadataFor {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
         if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
-            $log->info("YANDEX: Returning cached metadata for $url");
+            $log->debug("YANDEX: Returning cached metadata for $url");
             
             my $bitrate = $cached_meta->{bitrate} || 192000;
             
