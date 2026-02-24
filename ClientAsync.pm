@@ -8,7 +8,7 @@ use Plugins::yandex::RequestAsync;
 use Plugins::yandex::TrackShort;
 use Plugins::yandex::Track;
 
-#our $VERSION = '0.01';
+
 my $log = logger('plugin.yandex');
 sub new {
     my ($class, $token, %args) = @_;

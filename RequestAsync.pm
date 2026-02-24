@@ -36,11 +36,6 @@ sub _create_http_object {
         headers => $self->{default_headers},
     };
 
-    # if ($self->{proxy_url}) {
-    #     warn "SOCKS5 не поддерживается напрямую. Используйте HTTP-прокси.";
-    #     $params->{proxy} = $self->{proxy_url};
-    # }
-
     return Slim::Networking::SimpleAsyncHTTP->new(
         $callback,
         $error_callback,
@@ -147,7 +142,6 @@ sub post_form {
 }
 
 
-# --- ДОБАВИТЬ ЭТОТ НОВЫЙ МЕТОД ---
 sub get_raw {
     my ($self, $url, $params, $callback, $error_callback) = @_;
 
