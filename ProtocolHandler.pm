@@ -7,13 +7,12 @@ use Slim::Utils::Cache;
 use base qw(Slim::Player::Protocols::HTTPS);
 use JSON::XS::VersionOneAndTwo;
 
-# !!! ГЛАВНОЕ ИСПРАВЛЕНИЕ: Явно загружаем наш модуль !!!
+
 require Plugins::yandex::Track;
-require Plugins::yandex::Plugin; # <--- ДОБАВИТЬ ЭТОТ REQUIRE
 
 my $log = logger('plugin.yandex');
 
-# --- 1. КОНСТРУКТОР 
+# 1. КОНСТРУКТОР 
 sub new {
     my $class  = shift;
     my $args   = shift;
@@ -30,7 +29,6 @@ sub new {
         url     => $streamUrl,
         song    => $song,
         client  => $client,
-        seekdata => $args->{seekdata}, # Pass seekdata for range requests
     } ) || return;
 
     # Устанавливаем тип контента
@@ -38,8 +36,7 @@ sub new {
 
     # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
     # и отображал прогресс бар.
-    # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
-    # и отображал прогресс бар.
+
     if ($client) {
          my $duration = $song->duration || 0;
          my $artist = 'Unknown';
@@ -78,16 +75,26 @@ sub new {
     return $sock;
 }
 
-# --- 2. isDirect 
-sub isDirect { 1 }
+# --- 2. canDirectStreamSong
+# ПОЧЕМУ 0 (PROXY): Яндекс обрывает длительные соединения (Connection reset by peer).
+# Железные плееры и софтовые (SqueezeLite, SqueezePlay) и даже  качают поток со скоростью битрейта (~40kbps).
+# Через пару минут Яндекс разрывает соединение из-за "медленного" клиента.
+# Proxy-режим (0) заставляет сервер LMS быстро выкачать весь трек целиком (как браузер) 
+# во временный локальный файл (Buffered), а плееры уже тянут его по локальной сети без обрывов.
 
-# --- 3. scanUrl 
+sub canDirectStreamSong {
+    my ($class, $client, $song) = @_;
+    $log->info("YANDEX: Forcing proxy for streamUrl: " . $song->streamUrl());
+    return 0;
+}
+
+# 3. scanUrl 
 sub scanUrl {
     my ($class, $url, $args) = @_;
     $args->{cb}->( $args->{song}->currentTrack() );
 }
 
-# --- 4. getNextTrack (ПЕРЕПИСЫВАЕМ НА АСИНХРОННЫЙ ВЫЗОВ) ---
+# 4. getNextTrack (АСИНХРОННЫЙ ВЫЗОВ) 
 sub getNextTrack {
     my ($class, $song, $successCb, $errorCb) = @_;
 
@@ -102,7 +109,7 @@ sub getNextTrack {
     }
     $track_id = $1;
 
-    # --- ИЗМЕНЕНИЕ: Получаем экземпляр клиента из Plugin ---
+    # Получаем экземпляр клиента из Plugin
     my $yandex_client = Plugins::yandex::Plugin->getClient();
 
     unless ($yandex_client) {
@@ -111,16 +118,25 @@ sub getNextTrack {
         return;
     }
 
-    # Создаем объект трека. Теперь он должен создаться без ошибок.
+    # Создаем объект трека. 
     my $track = Plugins::yandex::Track->new({ id => $track_id },$yandex_client);
 
-    # !!! Вызываем АСИНХРОННЫЙ метод из Track.pm !!!
+    #  Вызываем АСИНХРОННЫЙ метод из Track.pm 
     $track->get_direct_url(sub {
-        my ($final_url, $error) = @_;
+        my ($final_url, $error, $bitrate) = @_;
 
         if ($final_url) {
-            $log->error("YANDEX: ASYNC URL resolved: $final_url");
+            $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || "unknown"));
             
+            # Сохраняем битрейт в кеш, если он есть
+            if ($bitrate) {
+                my $cache = Slim::Utils::Cache->new();
+                if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+                    $cached_meta->{bitrate} = $bitrate;
+                    $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
+                }
+            }
+
             # Устанавливаем реальную ссылку в объект песни
             $song->streamUrl($final_url);
             
@@ -134,13 +150,12 @@ sub getNextTrack {
     });
 }
 
-# --- 5. Остальные методы (без изменений) ---
+
 sub getFormatForURL { 'mp3' }
 sub isRemote { 1 }
 sub isAudio { 1 }
-sub canSeek { 1 }
 
-sub getMetadata {
+sub getMetadataFor {
     my ($class, $client, $url) = @_;
     
     # Пытаемся найти в кеше
@@ -149,19 +164,33 @@ sub getMetadata {
         my $cache = Slim::Utils::Cache->new();
         if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
             $log->info("YANDEX: Returning cached metadata for $url");
+            
+            my $bitrate = $cached_meta->{bitrate} || 192000;
+            
+            # Сохраняем значения в БД LMS для корректной работы перемотки (canSeek)
+            eval {
+                Slim::Music::Info::setBitrate($url, $bitrate);
+                Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
+                
+                # Обновляем также объекты трека, если сейчас что-то играет
+                if ($client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url) {
+                    $client->playingSong()->bitrate($bitrate);
+                    $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
+                }
+            };
+
             return {
                 title    => $cached_meta->{title},
                 artist   => $cached_meta->{artist},
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover},
                 icon     => $cached_meta->{cover},
-                bitrate  => 192000,
+                bitrate  => sprintf("%.0fkbps", $bitrate/1000), # UI format
                 type     => 'mp3',
             };
         }
     }
 
-    # Если в кеше нет, возвращаем undef/пусто, чтобы LMS использовал то, что есть в плейлисте
     return {};
 }
 

@@ -251,84 +251,7 @@ sub _handleLikedTracks {
             });
         },
     );
-}
-# sub _handleLikedTracks {
-#     my ($client, $cb, $args, $yandex_client) = @_;
 
-#     $yandex_client->users_likes_tracks(
-#         sub {
-#             my $tracks = shift; # $tracks - это массив объектов TrackShort
-
-#             my @all_items;
-#             my $pending_requests = scalar @$tracks;
-
-#             if ($pending_requests == 0) {
-#                 $cb->({
-#                     items => [],
-#                     title => 'Favorite tracks',
-#                 });
-#                 return;
-#             }
-
-#             foreach my $track_short_obj (@$tracks) {
-#                 # Вызываем fetch_track у объекта TrackShort.
-#                 # Он сам знает свой ID и как сделать запрос через клиента.
-#                 $track_short_obj->fetch_track(
-#                     sub { # Callback на успех
-#                         my $track_object_ref = shift;
-#                         my $track_object = ${$track_object_ref};
-
-#                         my $title = $track_object->{title} // 'Unknown';
-#                         my $artist = $track_object->{artists}[0]->{name} // 'Unknown';
-#                         my $track_id = $track_short_obj->{id}; # ID можно взять из исходного объекта
-#                         my $track_url = 'yandexmusic://' . $track_id;
-
-#                         push @all_items, {
-#                             name     => $artist . ' - ' . $title,
-#                             type     => 'audio',
-#                             url      => $track_url,
-#                             image    => 'plugins/yandex/html/images/foundbroadcast1_svg.png',
-#                         };
-
-#                         $pending_requests--;
-#                         if ($pending_requests == 0) {
-#                             my @subset = splice(@all_items, 0, 5);
-#                             $cb->({
-#                                 items => \@subset,
-#                                 title => 'Favorite tracks',
-#                             });
-#                         }
-#                     },
-#                     sub { # Callback на ошибку
-#                         my $error = shift;
-#                         my $track_id = $track_short_obj->{id};
-#                         $log->error("Error fetching track $track_id: $error");
-
-#                         $pending_requests--;
-#                         if ($pending_requests == 0) {
-#                             my @subset = splice(@all_items, 0, 5);
-#                             $cb->({
-#                                 items => \@subset,
-#                                 title => 'Favorite tracks',
-#                             });
-#                         }
-#                     }
-#                 );
-#             }
-#         },
-#         sub { # Callback на случай, если не удалось получить список лайков
-#             my $error = shift;
-#             $log->error("Error retrieving favorite tracks list: $error");
-#             $cb->({
-#                 items => [{
-#                     name => "Error: $error",
-#                     type => 'text',
-#                 }],
-#                 title => 'Favorite tracks',
-#             });
-#         },
-#     );
-# }
 #  метод для доступа к клиенту из других модулей
 sub getClient {
     return $yandex_client_instance;
@@ -557,7 +480,7 @@ sub _handleAlbum {
             my $album = shift;
             my $tracks = $album->{volumes} ? [ map { @$_ } @{$album->{volumes}} ] : [];
             
-            # The 'volumes' is array of arrays (discs). We flatten it.
+            # The 'volumes' is array of arrays (discs).  Flatten it.
             # Also, tracks inside might need processing if structure differs, 
             # but usually 'with-tracks' returns full track objects.
             
