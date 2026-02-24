@@ -251,6 +251,7 @@ sub _handleLikedTracks {
             });
         },
     );
+}
 
 #  метод для доступа к клиенту из других модулей
 sub getClient {
