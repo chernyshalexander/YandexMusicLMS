@@ -161,12 +161,14 @@ sub _renderTrackList {
              $icon = "https://$icon";
          }
 
+         my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
+
          push @items, {
             name     => $artist_name . ' - ' . $track_title,
             type     => 'audio',
             url      => $track_url,
             image    => $icon,
-            duration => $track_object->{durationMs} ? int($track_object->{durationMs} / 1000) : undef,
+            duration => $duration_ms ? int($duration_ms / 1000) : undef,
          };
 
          # Cache metadata for ProtocolHandler
@@ -175,7 +177,7 @@ sub _renderTrackList {
              $cache->set('yandex_meta_' . $track_id, {
                  title    => $track_title,
                  artist   => $artist_name,
-                 duration => $track_object->{durationMs} ? int($track_object->{durationMs} / 1000) : 0,
+                 duration => $duration_ms ? int($duration_ms / 1000) : 0,
                  cover    => $icon,
                  bitrate  => 192, # Default/fallback
              }, '24h');
