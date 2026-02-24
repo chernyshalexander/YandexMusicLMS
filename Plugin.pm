@@ -330,6 +330,7 @@ sub _handleSearch {
                     type => 'link',
                     url  => \&_handleSearchTracks,
                     passthrough => [$yandex_client, $query],
+                    image => 'html/images/musicfolder.png',
                 };
             }
 
@@ -339,6 +340,7 @@ sub _handleSearch {
                     type => 'link',
                     url  => \&_handleSearchAlbums,
                     passthrough => [$yandex_client, $query],
+                    image => 'html/images/albums.png',
                 };
             }
 
@@ -348,6 +350,7 @@ sub _handleSearch {
                     type => 'link',
                     url  => \&_handleSearchArtists,
                     passthrough => [$yandex_client, $query],
+                    image => 'html/images/artists.png',
                 };
             }
 
@@ -357,6 +360,7 @@ sub _handleSearch {
                     type => 'link',
                     url  => \&_handleSearchPlaylists,
                     passthrough => [$yandex_client, $query],
+                    image => 'html/images/playlists.png',
                 };
             }
 
