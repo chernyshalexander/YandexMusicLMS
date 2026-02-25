@@ -2,7 +2,7 @@
 <extension>
     <name>PLUGIN_YANDEX</name>
     <module>Plugins::yandex::Plugin</module>
-    <version>0.1</version>
+    <version>0.2</version>
     <description>PLUGIN_YANDEX_DESC</description>
     <defaultState>enabled</defaultState>
     <targetApplication>
