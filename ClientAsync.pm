@@ -336,6 +336,60 @@ sub rotor_station_tracks {
     );
 }
 
+sub rotor_station_info {
+    my ($self, $station, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/rotor/station/' . $station . '/info';
+
+    $self->{request}->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                $callback->($result->{result});
+            } else {
+                $error_callback->("Failed to get station info");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub rotor_station_feedback {
+    my ($self, $station, $type, $batch_id, $track_id, $total_played_seconds, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/rotor/station/' . $station . '/feedback';
+
+    if ($batch_id) {
+        require URI::Escape;
+        $url .= '?batch-id=' . URI::Escape::uri_escape_utf8($batch_id);
+    }
+
+    my $data = {
+        'type' => $type,
+        'timestamp' => time(),
+    };
+
+    if (defined $track_id) {
+        $data->{'trackId'} = $track_id;
+    }
+
+    if (defined $total_played_seconds) {
+        $data->{'totalPlayedSeconds'} = $total_played_seconds;
+    }
+
+    $self->{request}->post_form(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            $callback->(1);
+        },
+        $error_callback,
+    );
+}
+
 sub search {
     my ($self, $query, $type, $callback, $error_callback) = @_;
 

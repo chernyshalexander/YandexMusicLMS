@@ -6,8 +6,11 @@ use Slim::Utils::Log;
 use Slim::Utils::Cache;
 use base qw(Slim::Player::Protocols::HTTPS);
 use JSON::XS::VersionOneAndTwo;
+use URI::Escape;
 
-
+require Slim::Player::Playlist;
+require Slim::Player::Source;
+require Slim::Control::Request;
 require Plugins::yandex::Track;
 
 my $log = logger('plugin.yandex');
@@ -59,6 +62,45 @@ sub new {
                  $log->warn("YANDEX: Metadata cache miss for $track_id");
              }
          }
+
+         # -----------------------------------------------------------------------------------------
+         # РОТОР: Бесконечное радио и отправка фидбека при старте трека
+         # -----------------------------------------------------------------------------------------
+         if ($original_url =~ /rotor_station=([^&]+)&batch_id=([^&]+)/) {
+             my $station = URI::Escape::uri_unescape($1);
+             my $batch_id = URI::Escape::uri_unescape($2);
+             my $track_id = ($original_url =~ /yandexmusic:\/\/(\d+)/)[0];
+             
+             my $yandex_client = Plugins::yandex::Plugin->getClient();
+             if ($yandex_client) {
+                 $log->info("YANDEX ROTOR: Sending trackStarted for $station, batch $batch_id, track $track_id");
+                 $yandex_client->rotor_station_feedback($station, 'trackStarted', $batch_id, $track_id, 0, sub {}, sub {});
+                 
+                 # Проверяем длину очереди: если до конца осталось 2 или меньше треков, докидываем 5 новых
+                 my $playlist_size = Slim::Player::Playlist::count($client);
+                 my $current_index = Slim::Player::Source::playingSongIndex($client);
+                 
+                 if (defined $playlist_size && defined $current_index && ($playlist_size - $current_index) <= 2) {
+                     $log->info("YANDEX ROTOR: Queue running low ($current_index/$playlist_size). Fetching next batch...");
+                     $yandex_client->rotor_station_tracks($station, $track_id, sub {
+                         my $result = shift;
+                         if ($result->{tracks}) {
+                             foreach my $track_obj (@{$result->{tracks}}) {
+                                 Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+                                 my $new_url = 'yandexmusic://' . $track_obj->{id} . 
+                                               '?rotor_station=' . URI::Escape::uri_escape_utf8($station) . 
+                                               '&batch_id=' . URI::Escape::uri_escape_utf8($result->{batch_id});
+                                 Slim::Control::Request::executeRequest($client, ['playlist', 'add', $new_url]);
+                             }
+                         }
+                     }, sub {
+                         my $err = shift;
+                         $log->error("YANDEX ROTOR: Failed to fetch next batch: $err");
+                     });
+                 }
+             }
+         }
+         # -----------------------------------------------------------------------------------------
 
          $log->warn("YANDEX: Setting duration $duration and isLive=0 for song " . ($song->currentTrack ? $song->currentTrack->url : 'unknown'));
 
@@ -225,8 +267,29 @@ sub explodePlaylist {
 		return;
 	}
 
+	if ($url =~ /yandexmusic:\/\/rotor\/(.+)/) {
+		my $station_id = $1;
+		
+		# Шлем сигнал начала радио (radioStarted)
+		$yandex_client->rotor_station_feedback($station_id, 'radioStarted', undef, undef, 0, sub {}, sub {});
+		
+		# Получаем первые 5 треков
+		$yandex_client->rotor_station_tracks($station_id, undef, sub {
+			my $result = shift;
+			my @tracks;
+			if ($result->{tracks}) {
+				foreach my $track_obj (@{$result->{tracks}}) {
+					Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+					push @tracks, 'yandexmusic://' . $track_obj->{id} . 
+                                  '?rotor_station=' . URI::Escape::uri_escape_utf8($station_id) . 
+                                  '&batch_id=' . URI::Escape::uri_escape_utf8($result->{batch_id});
+				}
+			}
+			$cb->(\@tracks);
+		}, sub { $cb->([]) });
+	}
 	# yandexmusic://album/123
-	if ($url =~ /yandexmusic:\/\/album\/(\d+)/) {
+	elsif ($url =~ /yandexmusic:\/\/album\/(\d+)/) {
 		my $album_id = $1;
 		$yandex_client->get_album_with_tracks($album_id, sub {
 			my $album = shift;
