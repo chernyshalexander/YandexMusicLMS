@@ -58,6 +58,12 @@ sub initPlugin {
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
+    # Подписка на события плеера (newsong, jump, stop, clear) для отслеживания пропусков
+    Slim::Control::Request::subscribe(
+        \&playerEventCallback,
+        [['playlist'], ['newsong', 'jump', 'stop', 'clear']]
+    );
+
     $class->SUPER::initPlugin(
         feed   => \&handleFeed,
         tag    => 'yandex',
@@ -68,6 +74,73 @@ sub initPlugin {
     if (main::WEBUI) {
         require Plugins::yandex::Settings;
         Plugins::yandex::Settings->new();
+    }
+}
+
+sub shutdownPlugin {
+    my $class = shift;
+    Slim::Control::Request::unsubscribe(\&playerEventCallback);
+    $class->SUPER::shutdownPlugin();
+}
+
+# Обработчик событий плеера для отправки обратной связи о пропуске трека (skip)
+sub playerEventCallback {
+    my $request = shift;
+    my $client  = $request->client() || return;
+
+    if ($client->isSynced()) {
+        return unless Slim::Player::Sync::isMaster($client);
+    }
+
+    my $command = $request->getRequest(1);
+
+    if ($command eq 'newsong') {
+        # Запоминаем время начала трека
+        $client->pluginData('yandex_track_start_time', time());
+    }
+    elsif ($command eq 'jump' || $command eq 'stop' || $command eq 'clear') {
+        _handleSkipCheck($client, $command);
+    }
+}
+
+sub _handleSkipCheck {
+    my ($client, $command) = @_;
+    
+    my $song = $client->playingSong();
+    return unless $song;
+
+    my $url = $song->track()->url;
+    
+    # Проверяем, играет ли станция Яндекс Радио
+    if ($url && $url =~ /rotor_station=([^&]+)&batch_id=([^&]+)/) {
+        my $station = URI::Escape::uri_unescape($1);
+        my $batch_id = URI::Escape::uri_unescape($2);
+        my $track_id = ($url =~ /yandexmusic:\/\/(\d+)/)[0];
+        
+        my $start_time = $client->pluginData('yandex_track_start_time');
+        my $duration = $song->duration() || 0;
+        
+        # Получаем фактически проигранное время
+        my $played_seconds = Slim::Player::Source::songTime($client);
+        
+        # Если played_seconds = 0 (например, при быстром переключении) 
+        # или метод вернул undef (что бывает), пробуем рассчитать через start_time
+        if (!$played_seconds && $start_time) {
+            $played_seconds = time() - $start_time;
+        }
+        $played_seconds ||= 0;
+
+        # Если трек проигран меньше чем на 90% и прошло хотя бы 2 секунды (чтобы не спамить при очень быстрых скипах)
+        my $threshold = $duration > 0 ? $duration * 0.9 : 0;
+        
+        # Если проиграли меньше 90% трека, значит это skip
+        if (($duration > 0 && $played_seconds < $threshold) || ($duration == 0 && $played_seconds > 2)) {
+            my $yandex_client = Plugins::yandex::Plugin->getClient();
+            if ($yandex_client && $track_id) {
+                $log->info("YANDEX ROTOR: Track skipped! Sending 'skip' feedback. Played: $played_seconds s. Station: $station, batch: $batch_id, track: $track_id, trigger: $command");
+                $yandex_client->rotor_station_feedback($station, 'skip', $batch_id, $track_id, $played_seconds, sub {}, sub {});
+            }
+        }
     }
 }
 
@@ -103,13 +176,14 @@ sub handleFeed {
                     passthrough => [$yandex_client_instance],
                     image => 'plugins/yandex/html/images/favorites.png',
                 },
-#                {
-#                    name => 'My Vibe',
-#                    type => 'link',
-#                    url  => \&_handleMyVibe,
-#                    passthrough => [$yandex_client_instance],
-#                    image => 'plugins/yandex/html/images/wave.png',
-#                },
+                {
+                    name => 'Моя Волна',
+                    type => 'playlist',
+                    url  => 'yandexmusic://rotor/user:onyourwave',
+                    play => 'yandexmusic://rotor/user:onyourwave',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
                 {
                     name => 'Search',
                     type => 'search',
