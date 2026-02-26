@@ -193,22 +193,54 @@ sub _renderTrackList {
          };
 
          # Cache metadata for ProtocolHandler
-         if ($track_id) {
-             my $cache = Slim::Utils::Cache->new();
-             $cache->set('yandex_meta_' . $track_id, {
-                 title    => $track_title,
-                 artist   => $artist_name,
-                 duration => $duration_ms ? int($duration_ms / 1000) : 0,
-                 cover    => $icon,
-                 bitrate  => 192, # Default/fallback
-             }, '24h');
-         }
+         cache_track_metadata($track_object);
     }
 
     $cb->({
         items => \@items,
         title => $title,
     });
+}
+
+sub cache_track_metadata {
+    my ($track_object) = @_;
+    my $track_id = $track_object->{id};
+    return unless $track_id;
+
+    my $track_title = $track_object->{title} // 'Unknown';
+    my $artist_name = 'Unknown';
+    if ($track_object->{artists} && ref $track_object->{artists} eq 'ARRAY' && @{$track_object->{artists}}) {
+        $artist_name = $track_object->{artists}[0]->{name};
+    }
+
+    my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+    my $cover_uri;
+    if ($track_object->{coverUri}) {
+        $cover_uri = $track_object->{coverUri};
+    } elsif ($track_object->{raw} && $track_object->{raw}->{coverUri}) {
+        $cover_uri = $track_object->{raw}->{coverUri};
+    } elsif ($track_object->{ogImage}) {
+        $cover_uri = $track_object->{ogImage};
+    } elsif ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && @{$track_object->{albums}} && $track_object->{albums}[0]->{coverUri}) {
+        $cover_uri = $track_object->{albums}[0]->{coverUri};
+    }
+    
+    if ($cover_uri) {
+        $icon = $cover_uri;
+        $icon =~ s/%%/200x200/;
+        $icon = "https://$icon";
+    }
+
+    my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
+
+    my $cache = Slim::Utils::Cache->new();
+    $cache->set('yandex_meta_' . $track_id, {
+        title    => $track_title,
+        artist   => $artist_name,
+        duration => $duration_ms ? int($duration_ms / 1000) : 0,
+        cover    => $icon,
+        bitrate  => 192,
+    }, '24h');
 }
 
 sub _handleLikedTracks {
@@ -286,10 +318,11 @@ sub _handleFavorites {
     my @items = (
         {
             name => 'Tracks',
-            type => 'link',
+            type => 'playlist',
             url  => \&_handleLikedTracks,
             passthrough => [$yandex_client],
             image => 'html/images/musicfolder.png',
+            play => 'yandexmusic://favorites/tracks',
         },
         {
             name => 'Albums',
@@ -444,10 +477,11 @@ sub _handleSearchAlbums {
 
                     push @items, {
                         name => $title . ' (' . $artist . ')',
-                        type => 'link',
+                        type => 'album',
                         url => \&_handleAlbum,
                         passthrough => [$yandex_client, $album->{id}],
                         image => $icon,
+                        play => 'yandexmusic://album/' . $album->{id},
                     };
                 }
             }
@@ -537,10 +571,11 @@ sub _handleSearchPlaylists {
 
                     push @items, {
                         name => $title . ' (' . $owner . ')',
-                        type => 'link',
+                        type => 'playlist',
                         url => \&_handlePlaylist,
                         passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
                         image => $icon,
+                        play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
                     };
                 }
             }
@@ -578,10 +613,11 @@ sub _handleLikedAlbums {
 
                 push @items, {
                     name => $title . ' (' . $artist . ')',
-                    type => 'link',
+                    type => 'album',
                     url => \&_handleAlbum,
                     passthrough => [$yandex_client, $album->{id}],
                     image => $icon,
+                    play => 'yandexmusic://album/' . $album->{id},
                 };
             }
 
@@ -682,10 +718,11 @@ sub _handleLikedPlaylists {
 
                         push @items, {
                             name => $title . ' (' . $owner . ')',
-                            type => 'link',
+                            type => 'playlist',
                             url => \&_handlePlaylist,
                             passthrough => [$yandex_client, $uid, $kind],
                             image => $icon,
+                            play => 'yandexmusic://playlist/' . $uid . '/' . $kind,
                         };
                     }
 
@@ -709,10 +746,11 @@ sub _handleLikedPlaylists {
                         }
                         push @items, {
                             name => $title . ' (' . $owner . ')',
-                            type => 'link', 
+                            type => 'playlist', 
                             url => \&_handlePlaylist,
                             passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
                             image => $icon,
+                            play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
                         };
                     }
                     $cb->({
@@ -760,9 +798,10 @@ sub _handleArtist {
     my @items = (
         {
             name => 'Popular Tracks',
-            type => 'link',
+            type => 'playlist',
             url => \&_handleArtistTracks,
             passthrough => [$yandex_client, $artist_id],
+            play => 'yandexmusic://artist/' . $artist_id,
         },
         {
             name => 'Albums',
@@ -817,10 +856,11 @@ sub _handleArtistAlbums {
 
                 push @items, {
                     name => $title,
-                    type => 'link',
+                    type => 'album',
                     url => \&_handleAlbum,
                     passthrough => [$yandex_client, $album->{id}],
                     image => $icon,
+                    play => 'yandexmusic://album/' . $album->{id},
                 };
             }
 
