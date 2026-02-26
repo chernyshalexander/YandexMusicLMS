@@ -88,6 +88,14 @@ sub canDirectStreamSong {
     return 0;
 }
 
+# --- 3. canEnhanceHTTP
+# ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ БУФЕРИЗАЦИЮ (Buffered Mode = 2).
+# Без этого LMS может работать в режиме прямого прокси, скачивая данные со скоростью плеера.
+# Режим 2 заставляет LMS максимально быстро выкачать весь файл целиком в локальный .buf файл.
+sub canEnhanceHTTP {
+    return 2; # 2 = BUFFERED constant in Slim::Player::Protocols::HTTP
+}
+
 # 3. scanUrl 
 sub scanUrl {
     my ($class, $url, $args) = @_;
@@ -206,6 +214,65 @@ sub getIcon {
     }
     
     return 'plugins/yandex/html/images/yandex.png';
+}
+
+sub explodePlaylist {
+	my ($class, $client, $url, $cb) = @_;
+
+	my $yandex_client = Plugins::yandex::Plugin->getClient();
+	unless ($yandex_client) {
+		$cb->([]);
+		return;
+	}
+
+	# yandexmusic://album/123
+	if ($url =~ /yandexmusic:\/\/album\/(\d+)/) {
+		my $album_id = $1;
+		$yandex_client->get_album_with_tracks($album_id, sub {
+			my $album = shift;
+			my @tracks;
+			if ($album->{volumes}) {
+				foreach my $disks (@{$album->{volumes}}) {
+					push @tracks, map { 'yandexmusic://' . $_->{id} } @$disks;
+				}
+			}
+			$cb->(\@tracks);
+		}, sub { $cb->([]) });
+	}
+	# yandexmusic://playlist/USER_ID/KIND
+	elsif ($url =~ /yandexmusic:\/\/playlist\/([^\/]+)\/(\d+)/) {
+		my ($user_id, $kind) = ($1, $2);
+		$yandex_client->get_playlist($user_id, $kind, sub {
+			my $playlist = shift;
+			my @tracks;
+			if ($playlist->{tracks}) {
+				foreach my $item (@{$playlist->{tracks}}) {
+					push @tracks, 'yandexmusic://' . ($item->{track} ? $item->{track}->{id} : $item->{id});
+				}
+			}
+			$cb->(\@tracks);
+		}, sub { $cb->([]) });
+	}
+	# yandexmusic://artist/123
+	elsif ($url =~ /yandexmusic:\/\/artist\/(\d+)/) {
+		my $artist_id = $1;
+		$yandex_client->get_artist_tracks($artist_id, sub {
+			my $tracks = shift;
+			my @items = map { 'yandexmusic://' . $_->{id} } @$tracks;
+			$cb->(\@items);
+		}, sub { $cb->([]) });
+	}
+	# yandexmusic://favorites/tracks
+	elsif ($url =~ /yandexmusic:\/\/favorites\/tracks/) {
+		$yandex_client->users_likes_tracks(sub {
+			my $tracks = shift;
+			my @items = map { 'yandexmusic://' . $_->{id} } @$tracks;
+			$cb->(\@items);
+		}, sub { $cb->([]) });
+	}
+	else {
+		$cb->([$url]);
+	}
 }
 
 sub canDoAction {
