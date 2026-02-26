@@ -131,9 +131,20 @@ sub handleFeed {
     );
 }
 sub _renderTrackList {
-    my ($tracks, $cb, $title) = @_;
+    my ($tracks, $cb, $title, $container_url) = @_;
 
     my @items;
+    
+    if ($container_url && @$tracks > 1) {
+        push @items, {
+            name => 'Play All',
+            type => 'link',
+            url  => $container_url,
+            play => $container_url,
+            on_select => 'play',
+            image => 'html/images/playall.png',
+        };
+    }
     foreach my $track_object (@$tracks) {
          my $track_title = $track_object->{title} // 'Unknown';
          # Handle nested 'artists' array or simple object
@@ -233,17 +244,17 @@ sub _handleLikedTracks {
                         push @all_tracks_detailed, @$tracks_chunk;
                         
                         $pending_chunks--;
-                        if ($pending_chunks == 0) {
-                             _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks');
-                        }
+                         if ($pending_chunks == 0) {
+                              _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks', 'yandexmusic://favorites/tracks');
+                         }
                     },
                     sub {
                         my $error = shift;
                         $log->error("Error fetching tracks chunk: $error");
                         $pending_chunks--;
-                        if ($pending_chunks == 0) {
-                             _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks (Partial)');
-                        }
+                         if ($pending_chunks == 0) {
+                              _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks (Partial)', 'yandexmusic://favorites/tracks');
+                         }
                     }
                 );
             }
@@ -731,7 +742,7 @@ sub _handleAlbum {
             # Also, tracks inside might need processing if structure differs, 
             # but usually 'with-tracks' returns full track objects.
             
-            _renderTrackList($tracks, $cb, $album->{title});
+            _renderTrackList($tracks, $cb, $album->{title}, 'yandexmusic://album/' . $album_id);
         },
         sub {
             my $error = shift;
@@ -771,7 +782,7 @@ sub _handleArtistTracks {
         $artist_id,
         sub {
             my $tracks = shift;
-            _renderTrackList($tracks, $cb, 'Popular Tracks');
+            _renderTrackList($tracks, $cb, 'Popular Tracks', 'yandexmusic://artist/' . $artist_id);
         },
         sub {
             my $error = shift;
@@ -844,7 +855,7 @@ sub _handlePlaylist {
                 }
             }
 
-            _renderTrackList(\@tracks, $cb, $playlist->{title});
+            _renderTrackList(\@tracks, $cb, $playlist->{title}, 'yandexmusic://playlist/' . $user_id . '/' . $kind);
         },
         sub {
             my $error = shift;
