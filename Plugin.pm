@@ -135,16 +135,16 @@ sub _renderTrackList {
 
     my @items;
     
-    if ($container_url && @$tracks > 1) {
-        push @items, {
-            name => 'Play All',
-            type => 'link',
-            url  => $container_url,
-            play => $container_url,
-            on_select => 'play',
-            image => 'html/images/playall.png',
-        };
-    }
+    # if ($container_url && @$tracks > 1) {
+    #     push @items, {
+    #         name => 'Play All',
+    #         type => 'link',
+    #         url  => $container_url,
+    #         play => $container_url,
+    #         on_select => 'play',
+    #         image => 'html/images/playall.png',
+    #     };
+    # }
     foreach my $track_object (@$tracks) {
          my $track_title = $track_object->{title} // 'Unknown';
          # Handle nested 'artists' array or simple object
@@ -182,11 +182,14 @@ sub _renderTrackList {
          my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
          push @items, {
-            name     => $artist_name . ' - ' . $track_title,
-            type     => 'audio',
-            url      => $track_url,
-            image    => $icon,
-            duration => $duration_ms ? int($duration_ms / 1000) : undef,
+            name      => $artist_name . ' - ' . $track_title,
+            type      => 'audio',
+            url       => $track_url,
+            image     => $icon,
+            duration  => $duration_ms ? int($duration_ms / 1000) : undef,
+            playall   => 1,
+            on_select => 'play',
+            play      => $track_url,
          };
 
          # Cache metadata for ProtocolHandler
