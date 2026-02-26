@@ -233,7 +233,10 @@ sub explodePlaylist {
 			my @tracks;
 			if ($album->{volumes}) {
 				foreach my $disks (@{$album->{volumes}}) {
-					push @tracks, map { 'yandexmusic://' . $_->{id} } @$disks;
+					push @tracks, map { 
+                        Plugins::yandex::Plugin::cache_track_metadata($_);
+                        'yandexmusic://' . $_->{id} 
+                    } @$disks;
 				}
 			}
 			$cb->(\@tracks);
@@ -247,7 +250,9 @@ sub explodePlaylist {
 			my @tracks;
 			if ($playlist->{tracks}) {
 				foreach my $item (@{$playlist->{tracks}}) {
-					push @tracks, 'yandexmusic://' . ($item->{track} ? $item->{track}->{id} : $item->{id});
+                    my $track_obj = $item->{track} ? $item->{track} : $item;
+                    Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+					push @tracks, 'yandexmusic://' . ($track_obj->{id});
 				}
 			}
 			$cb->(\@tracks);
@@ -258,16 +263,59 @@ sub explodePlaylist {
 		my $artist_id = $1;
 		$yandex_client->get_artist_tracks($artist_id, sub {
 			my $tracks = shift;
-			my @items = map { 'yandexmusic://' . $_->{id} } @$tracks;
+			my @items = map { 
+                Plugins::yandex::Plugin::cache_track_metadata($_);
+                'yandexmusic://' . $_->{id} 
+            } @$tracks;
 			$cb->(\@items);
 		}, sub { $cb->([]) });
 	}
 	# yandexmusic://favorites/tracks
 	elsif ($url =~ /yandexmusic:\/\/favorites\/tracks/) {
 		$yandex_client->users_likes_tracks(sub {
-			my $tracks = shift;
-			my @items = map { 'yandexmusic://' . $_->{id} } @$tracks;
-			$cb->(\@items);
+			my $tracks_short = shift;
+            my @track_ids = map { $_->{id} } @$tracks_short;
+            
+            if (!@track_ids) {
+                $cb->([]);
+                return;
+            }
+
+            my @all_tracks_detailed;
+            my $chunk_size = 50; 
+            my @chunks;
+            while (@track_ids) {
+                push @chunks, [ splice(@track_ids, 0, $chunk_size) ];
+            }
+            my $pending_chunks = scalar @chunks;
+
+            foreach my $chunk_ids (@chunks) {
+                $yandex_client->tracks(
+                    $chunk_ids,
+                    sub {
+                        my $tracks_chunk = shift;
+                        push @all_tracks_detailed, @$tracks_chunk;
+                        $pending_chunks--;
+                        if ($pending_chunks == 0) {
+                            my @items = map { 
+                                Plugins::yandex::Plugin::cache_track_metadata($_);
+                                'yandexmusic://' . $_->{id} 
+                            } @all_tracks_detailed;
+                            $cb->(\@items);
+                        }
+                    },
+                    sub {
+                        $pending_chunks--;
+                        if ($pending_chunks == 0) {
+                            my @items = map { 
+                                Plugins::yandex::Plugin::cache_track_metadata($_);
+                                'yandexmusic://' . $_->{id} 
+                            } @all_tracks_detailed;
+                            $cb->(\@items);
+                        }
+                    }
+                );
+            }
 		}, sub { $cb->([]) });
 	}
 	else {
