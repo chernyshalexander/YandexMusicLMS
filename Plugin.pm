@@ -178,7 +178,7 @@ sub handleFeed {
                 },
                 {
                     name => 'My Vibe',
-                    type => 'playlist',
+                    type => 'audio',
                     url  => 'yandexmusic://rotor/user:onyourwave',
                     play => 'yandexmusic://rotor/user:onyourwave',
                     on_select => 'play',
