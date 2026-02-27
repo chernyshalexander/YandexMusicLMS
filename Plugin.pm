@@ -40,6 +40,7 @@ $log = Slim::Utils::Log->addLogCategory({
 });
 
 
+use constant MAX_RECENT => 10;
 my $prefs = preferences('plugin.yandex');
 # Добавляем переменную для хранения экземпляра клиента
 my $yandex_client_instance;
@@ -80,7 +81,6 @@ sub initPlugin {
 sub shutdownPlugin {
     my $class = shift;
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
-    $class->SUPER::shutdownPlugin();
 }
 
 # Обработчик событий плеера для отправки обратной связи о пропуске трека (skip)
@@ -177,7 +177,7 @@ sub handleFeed {
                     image => 'plugins/yandex/html/images/favorites.png',
                 },
                 {
-                    name => 'Моя Волна',
+                    name => 'My Vibe',
                     type => 'playlist',
                     url  => 'yandexmusic://rotor/user:onyourwave',
                     play => 'yandexmusic://rotor/user:onyourwave',
@@ -186,9 +186,10 @@ sub handleFeed {
                 },
                 {
                     name => 'Search',
-                    type => 'search',
-                    url  => \&_handleSearch,
+                    type => 'link',
+                    url  => \&_handleRecentSearches,
                     passthrough => [$yandex_client_instance],
+                    image => 'html/images/search.png',
                 },
             );
 
@@ -405,6 +406,42 @@ sub _handleFavorites {
             passthrough => [$yandex_client],
             image => 'html/images/albums.png',
         },
+    );
+
+    # Check if we should show Audiobooks & Podcasts
+    my $has_podcasts = $prefs->get('yandex_has_podcasts');
+    if (!defined $has_podcasts) {
+        # Default to showing it until we know for sure, 
+        # but trigger a background fetch to update the pref for next time.
+        $has_podcasts = 1; 
+        $yandex_client->users_likes_albums(
+            sub {
+                my $albums = shift;
+                my $found = 0;
+                foreach my $album (@$albums) {
+                    if ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                        $found = 1;
+                        last;
+                    }
+                }
+                $prefs->set('yandex_has_podcasts', $found);
+            },
+            sub {} # ignore errors in background
+        );
+    }
+
+    if ($has_podcasts) {
+        push @items, {
+            name => 'Audiobooks & Podcasts',
+            type => 'link',
+            url  => \&_handleLikedPodcasts,
+            passthrough => [$yandex_client],
+            # Use Spotty podcast icon or a fallback
+            image => 'plugins/yandex/html/images/podcast.png',
+        };
+    }
+
+    push @items, (
         {
             name => 'Artists',
             type => 'link',
@@ -418,7 +455,7 @@ sub _handleFavorites {
             url  => \&_handleLikedPlaylists,
             passthrough => [$yandex_client],
             image => 'html/images/playlists.png',
-        },
+        }
     );
 
     $cb->({
@@ -428,13 +465,15 @@ sub _handleFavorites {
 }
 
 sub _handleSearch {
-    my ($client, $cb, $args, $yandex_client) = @_;
+    my ($client, $cb, $args, $yandex_client, $extra_args) = @_;
 
-    my $query = $args->{search} || '';
+    my $query = $args->{search} || ($extra_args && $extra_args->{query}) || '';
     if (!$query) {
         $cb->({ items => [] });
         return;
     }
+
+    addRecentSearch($query) unless ($extra_args && $extra_args->{recent});
 
     my $encoded_query = encode('utf8', $query);
 
@@ -673,8 +712,14 @@ sub _handleLikedAlbums {
         sub {
             my $albums = shift;
             my @items;
+            my $has_podcasts = 0;
 
             foreach my $album (@$albums) {
+                if ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                    $has_podcasts = 1;
+                    next; # Skip podcasts/audiobooks from Albums view
+                }
+
                 my $title = $album->{title} // 'Unknown Album';
                 my $artist = $album->{artists}[0]->{name} // 'Unknown Artist';
                 
@@ -695,6 +740,9 @@ sub _handleLikedAlbums {
                 };
             }
 
+            # Update preference
+            $prefs->set('yandex_has_podcasts', $has_podcasts);
+
             $cb->({
                 items => \@items,
                 title => 'Favorite Albums',
@@ -705,6 +753,59 @@ sub _handleLikedAlbums {
             $cb->({
                 items => [{ name => "Error: $error", type => 'text' }],
                 title => 'Favorite Albums',
+            });
+        }
+    );
+}
+
+sub _handleLikedPodcasts {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->users_likes_albums(
+        sub {
+            my $albums = shift;
+            my @items;
+            my $has_podcasts = 0;
+
+            foreach my $album (@$albums) {
+                # Only include podcasts and audiobooks
+                unless ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                    next;
+                }
+                $has_podcasts = 1;
+
+                my $title = $album->{title} // 'Unknown Podcast/Audiobook';
+                my $artist = $album->{artists}[0]->{name} // 'Unknown Artist';
+                
+                my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                if ($album->{coverUri}) {
+                    $icon = $album->{coverUri};
+                    $icon =~ s/%%/200x200/;
+                    $icon = "https://$icon";
+                }
+
+                push @items, {
+                    name => $title . ' (' . $artist . ')',
+                    type => 'album',
+                    url => \&_handleAlbum,
+                    passthrough => [$yandex_client, $album->{id}],
+                    image => $icon,
+                    play => 'yandexmusic://album/' . $album->{id},
+                };
+            }
+
+            $prefs->set('yandex_has_podcasts', $has_podcasts);
+
+            $cb->({
+                items => \@items,
+                title => 'Audiobooks & Podcasts',
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({
+                items => [{ name => "Error: $error", type => 'text' }],
+                title => 'Audiobooks & Podcasts',
             });
         }
     );
@@ -1045,6 +1146,73 @@ sub _handleMyVibe {
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         }
     );
+}
+
+sub hasRecentSearches {
+    return scalar @{ $prefs->get('yandex_recent_search') || [] };
+}
+
+sub addRecentSearch {
+    my ( $search ) = @_;
+
+    my $list = $prefs->get('yandex_recent_search') || [];
+
+    # remove potential duplicates
+    $list = [ grep { lc($_) ne lc($search) } @$list ];
+
+    unshift @$list, $search;
+
+    # we only want MAX_RECENT items
+    $list = [ @$list[0..(MAX_RECENT-1)] ] if scalar @$list > MAX_RECENT;
+
+    $prefs->set( 'yandex_recent_search', $list );
+}
+
+sub clearRecentSearches {
+    $prefs->set( 'yandex_recent_search', [] );
+}
+
+sub _handleRecentSearches {
+    my ($client, $cb, $args, $yandex_client, $extra_args) = @_;
+
+    # Если мы пришли сюда для очистки истории
+    if ($extra_args && $extra_args->{clear_history}) {
+        clearRecentSearches();
+        # После очистки просто показываем обновленное меню
+    }
+
+    my $items = [];
+
+    push @$items, {
+        name  => 'New Search',
+        type  => 'search',
+        url   => \&_handleSearch,
+        passthrough => [$yandex_client],
+        image => 'html/images/search.png',
+    };
+
+    my $history = $prefs->get('yandex_recent_search') || [];
+    for my $recent ( @$history ) {
+        push @$items, {
+            name  => $recent,
+            type  => 'link',
+            url   => \&_handleSearch,
+            passthrough => [$yandex_client, { query => $recent, recent => 1 }],
+            image => 'plugins/yandex/html/images/history.png',
+        };
+    }
+
+    if (@$history) {
+        push @$items, {
+            name => 'Clear Search History',
+            type => 'link',
+            url  => \&_handleRecentSearches,
+            passthrough => [$yandex_client, { clear_history => 1 }],
+            image => 'plugins/yandex/html/images/icon_blank.png'
+        };
+    }
+
+    $cb->({ items => $items, title => 'Search' });
 }
 
 1;
