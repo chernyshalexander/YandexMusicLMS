@@ -177,11 +177,10 @@ sub handleFeed {
                     image => 'plugins/yandex/html/images/favorites.png',
                 },
                 {
-                    name => 'My Vibe',
-                    type => 'audio',
-                    url  => 'yandexmusic://rotor/user:onyourwave',
-                    play => 'yandexmusic://rotor/user:onyourwave',
-                    on_select => 'play',
+                    name => 'Radio Stations',
+                    type => 'link',
+                    url  => \&_handleRadioCategories,
+                    passthrough => [$yandex_client_instance],
                     image => 'plugins/yandex/html/images/radio.png',
                 },
                 {
@@ -1213,6 +1212,90 @@ sub _handleRecentSearches {
     }
 
     $cb->({ items => $items, title => 'Search' });
+}
+
+sub _handleRadioCategories {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    my @items = (
+        {
+            name => 'My Vibe',
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave',
+            play => 'yandexmusic://rotor/user:onyourwave',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => 'Genres',
+            type => 'link',
+            url  => \&_handleRadioCategoryList,
+            passthrough => [$yandex_client, 'genre'],
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => 'Moods',
+            type => 'link',
+            url  => \&_handleRadioCategoryList,
+            passthrough => [$yandex_client, 'mood'],
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => 'Activities',
+            type => 'link',
+            url  => \&_handleRadioCategoryList,
+            passthrough => [$yandex_client, 'activity'],
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => 'Eras',
+            type => 'link',
+            url  => \&_handleRadioCategoryList,
+            passthrough => [$yandex_client, 'epoch'],
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+    );
+
+    $cb->(\@items);
+}
+
+sub _handleRadioCategoryList {
+    my ($client, $cb, $args, $yandex_client, $category_type) = @_;
+
+    $yandex_client->rotor_stations_list(
+        sub {
+            my $stations = shift;
+            my @items;
+
+            foreach my $item (@$stations) {
+                my $st = $item->{station};
+                if ($st && $st->{id} && $st->{id}->{type} eq $category_type) {
+                    my $tag = $st->{id}->{tag};
+                    
+                    my $icon = 'plugins/yandex/html/images/radio.png';
+
+                    push @items, {
+                        name => $st->{name},
+                        type => 'audio',
+                        url  => "yandexmusic://rotor/$category_type:$tag",
+                        play => "yandexmusic://rotor/$category_type:$tag",
+                        on_select => 'play',
+                        image => $icon,
+                    };
+                }
+            }
+
+            # Sort alphabetically
+            @items = sort { $a->{name} cmp $b->{name} } @items;
+
+            $cb->(\@items);
+        },
+        sub {
+            my $error = shift;
+            main::INFOLOG && $log->error("Failed to fetch radio stations: $error");
+            $cb->([{ name => "Error: $error", type => 'text' }]);
+        }
+    );
 }
 
 1;
