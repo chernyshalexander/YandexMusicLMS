@@ -417,4 +417,22 @@ sub search {
     );
 }
 
+sub rotor_stations_list {
+    my ($self, $callback, $error_callback) = @_;
+
+    $self->{request}->get(
+        'https://api.music.yandex.net/rotor/stations/list',
+        { language => 'any' },
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && ref $result->{result} eq 'ARRAY') {
+                $callback->($result->{result});
+            } else {
+                $error_callback->("Failed to get stations list");
+            }
+        },
+        $error_callback,
+    );
+}
+
 1;
