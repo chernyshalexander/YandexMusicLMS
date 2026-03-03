@@ -95,51 +95,105 @@ sub playerEventCallback {
     my $command = $request->getRequest(1);
 
     if ($command eq 'newsong') {
-        # Запоминаем время начала трека
-        $client->pluginData('yandex_track_start_time', time());
+        # 1. Did the previous track finish naturally?
+        _handleRotorFeedback($client, 'natural_finish');
+        
+        # 2. Setup the NEW track
+        my $song = $client->playingSong();
+        if ($song && $song->track() && $song->track()->url() =~ /rotor_station=/) {
+            $client->pluginData('yandex_radio_url', $song->track()->url());
+            $client->pluginData('yandex_track_duration', $song->duration() || 0);
+            $client->pluginData('yandex_track_start_time', time());
+            $client->pluginData('yandex_track_active', 1);
+            
+            # Отправляем trackStarted, если это радио
+            _handleRotorFeedback($client, 'trackStarted');
+        } else {
+            $client->pluginData('yandex_track_active', 0);
+        }
     }
     elsif ($command eq 'jump' || $command eq 'stop' || $command eq 'clear') {
-        _handleSkipCheck($client, $command);
+        # User manually skipped or stopped
+        _handleRotorFeedback($client, 'manual_skip_or_stop');
     }
 }
 
-sub _handleSkipCheck {
-    my ($client, $command) = @_;
+sub _handleRotorFeedback {
+    my ($client, $action) = @_;
     
-    my $song = $client->playingSong();
-    return unless $song;
+    my $yandex_client = Plugins::yandex::Plugin->getClient();
+    return unless $yandex_client;
 
-    my $url = $song->track()->url;
-    
-    # Проверяем, играет ли станция Яндекс Радио
-    if ($url && $url =~ /rotor_station=([^&]+)&batch_id=([^&]+)/) {
-        my $station = URI::Escape::uri_unescape($1);
-        my $batch_id = URI::Escape::uri_unescape($2);
-        my $track_id = ($url =~ /yandexmusic:\/\/(\d+)/)[0];
+    if ($action eq 'trackStarted') {
+        my $song = $client->playingSong();
+        return unless $song;
+        my $url = $song->track()->url;
         
-        my $start_time = $client->pluginData('yandex_track_start_time');
-        my $duration = $song->duration() || 0;
-        
-        # Получаем фактически проигранное время
-        my $played_seconds = Slim::Player::Source::songTime($client);
-        
-        # Если played_seconds = 0 (например, при быстром переключении) 
-        # или метод вернул undef (что бывает), пробуем рассчитать через start_time
-        if (!$played_seconds && $start_time) {
-            $played_seconds = time() - $start_time;
+        if ($url && $url =~ /rotor_station=([^&]+)/) {
+            my $station = URI::Escape::uri_unescape($1);
+            my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
+            my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
+            
+            return unless $track_id;
+            
+            $log->info("YANDEX ROTOR: Track started. Station: $station, batch: " . ($batch_id||'none') . ", track: $track_id");
+            $yandex_client->rotor_station_feedback($station, 'trackStarted', $batch_id, $track_id, 0, sub {}, sub {});
         }
-        $played_seconds ||= 0;
-
-        # Если трек проигран меньше чем на 90% и прошло хотя бы 2 секунды (чтобы не спамить при очень быстрых скипах)
-        my $threshold = $duration > 0 ? $duration * 0.9 : 0;
+    }
+    elsif ($action eq 'natural_finish' || $action eq 'manual_skip_or_stop') {
+        # Feedback for the OLD track
+        my $active = $client->pluginData('yandex_track_active');
+        return unless $active; # No active yandex radio track to send feedback for
         
-        # Если проиграли меньше 90% трека, значит это skip
-        if (($duration > 0 && $played_seconds < $threshold) || ($duration == 0 && $played_seconds > 2)) {
-            my $yandex_client = Plugins::yandex::Plugin->getClient();
-            if ($yandex_client && $track_id) {
-                $log->info("YANDEX ROTOR: Track skipped! Sending 'skip' feedback. Played: $played_seconds s. Station: $station, batch: $batch_id, track: $track_id, trigger: $command");
-                $yandex_client->rotor_station_feedback($station, 'skip', $batch_id, $track_id, $played_seconds, sub {}, sub {});
+        my $url = $client->pluginData('yandex_radio_url');
+        my $duration = $client->pluginData('yandex_track_duration') || 0;
+        
+        if ($url && $url =~ /rotor_station=([^&]+)/) {
+            my $station = URI::Escape::uri_unescape($1);
+            my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
+            my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
+            return unless $track_id;
+            
+            my $type;
+            my $played_seconds = 0;
+            
+            if ($action eq 'natural_finish') {
+                $type = 'trackFinished';
+                # If we transition naturally, the track played its full duration
+                $played_seconds = $duration; 
+            } else {
+                # manual_skip_or_stop -> we can still grab songTime() before LMS clears it
+                $played_seconds = Slim::Player::Source::songTime($client) || 0;
+                
+                # FALLBACK: songTime can be 0 if LMS already cleared it on jump
+                if (!$played_seconds) {
+                    my $start_time = $client->pluginData('yandex_track_start_time');
+                    if ($start_time) {
+                        $played_seconds = time() - $start_time;
+                    }
+                }
+                
+                my $threshold = $duration > 0 ? $duration * 0.9 : 0;
+                
+                if (($duration > 0 && $played_seconds < $threshold) || ($duration == 0 && $played_seconds > 2)) {
+                    $type = 'skip';
+                } else {
+                    $type = 'trackFinished';
+                }
             }
+            
+            # Avoid spamming skips if less than 2 seconds were played
+            if ($type eq 'skip' && $played_seconds < 2) {
+                # Just mark inactive and return
+                $client->pluginData('yandex_track_active', 0);
+                return;
+            }
+
+            $log->info("YANDEX ROTOR: Sending '$type' feedback. Played: $played_seconds s. Station: $station, batch: " . ($batch_id||'none') . ", track: $track_id");
+            $yandex_client->rotor_station_feedback($station, $type, $batch_id, $track_id, $played_seconds, sub {}, sub {});
+            
+            # Mark feedback as sent so we don't send it again on natural_finish
+            $client->pluginData('yandex_track_active', 0);
         }
     }
 }
@@ -150,7 +204,6 @@ sub handleFeed {
     my ($client, $cb, $args) = @_;
     
     my $token = $prefs->get('token');
-    #$log->info("handleFeed: token: $token");
     unless ($token) {
         $log->error("Токен не установлен. Проверьте настройки плагина.");
         $cb->([{
@@ -160,39 +213,17 @@ sub handleFeed {
         return;
     }
 
+    if ($yandex_client_instance && $yandex_client_instance->{token} eq $token && $yandex_client_instance->{me}) {
+        _renderRootMenu($client, $cb, $yandex_client_instance);
+        return;
+    }
+
     my $yandex_client = Plugins::yandex::ClientAsync->new($token);
-    #$log->info("yandex_client created: yandex_client token: $token");
 
     $yandex_client->init(
         sub {
-            #my $client_async = shift;
             $yandex_client_instance = shift;
-
-            my @items = (
-                {
-                    name => 'My Collection',
-                    type => 'link',
-                    url  => \&_handleFavorites,
-                    passthrough => [$yandex_client_instance],
-                    image => 'plugins/yandex/html/images/favorites.png',
-                },
-                {
-                    name => 'Radio Stations',
-                    type => 'link',
-                    url  => \&_handleRadioCategories,
-                    passthrough => [$yandex_client_instance],
-                    image => 'plugins/yandex/html/images/radio.png',
-                },
-                {
-                    name => 'Search',
-                    type => 'link',
-                    url  => \&_handleRecentSearches,
-                    passthrough => [$yandex_client_instance],
-                    image => 'html/images/search.png',
-                },
-            );
-
-            $cb->(\@items);
+            _renderRootMenu($client, $cb, $yandex_client_instance);
         },
         sub {
             my $error = shift;
@@ -203,6 +234,43 @@ sub handleFeed {
             }]);
         },
     );
+}
+
+sub _renderRootMenu {
+    my ($client, $cb, $client_instance) = @_;
+    
+    my @items = (
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_FOR_YOU'),
+            type => 'link',
+            url  => \&_handleForYou,
+            passthrough => [$client_instance],
+            image => 'plugins/yandex/html/images/personal.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MY_COLLECTION'),
+            type => 'link',
+            url  => \&_handleFavorites,
+            passthrough => [$client_instance],
+            image => 'plugins/yandex/html/images/favorites.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_RADIOSTATIONS'),
+            type => 'link',
+            url  => \&_handleRadioCategories,
+            passthrough => [$client_instance],
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_SEARCH'),
+            type => 'link',
+            url  => \&_handleRecentSearches,
+            passthrough => [$client_instance],
+            image => 'html/images/search.png',
+        },
+    );
+
+    $cb->(\@items);
 }
 sub _renderTrackList {
     my ($tracks, $cb, $title, $container_url) = @_;
@@ -391,7 +459,7 @@ sub _handleFavorites {
 
     my @items = (
         {
-            name => 'Tracks',
+            name => cstring($client, 'PLUGIN_YANDEX_TRACKS'),
             type => 'playlist',
             url  => \&_handleLikedTracks,
             passthrough => [$yandex_client],
@@ -399,7 +467,7 @@ sub _handleFavorites {
             play => 'yandexmusic://favorites/tracks',
         },
         {
-            name => 'Albums',
+            name => cstring($client, 'PLUGIN_YANDEX_ALBUMS'),
             type => 'link',
             url  => \&_handleLikedAlbums,
             passthrough => [$yandex_client],
@@ -442,14 +510,14 @@ sub _handleFavorites {
 
     push @items, (
         {
-            name => 'Artists',
+            name => cstring($client, 'PLUGIN_YANDEX_ARTISTS'),
             type => 'link',
             url  => \&_handleLikedArtists,
             passthrough => [$yandex_client],
             image => 'html/images/artists.png',
         },
         {
-            name => 'Playlists',
+            name => cstring($client, 'PLUGIN_YANDEX_PLAYLISTS'),
             type => 'link',
             url  => \&_handleLikedPlaylists,
             passthrough => [$yandex_client],
@@ -459,7 +527,7 @@ sub _handleFavorites {
 
     $cb->({
         items => \@items,
-        title => 'My Collection',
+        title => cstring($client, 'PLUGIN_YANDEX_MY_COLLECTION'),
     });
 }
 
@@ -486,7 +554,7 @@ sub _handleSearch {
 
             if ($result->{tracks} && $result->{tracks}->{results} && @{$result->{tracks}->{results}}) {
                 push @items, {
-                    name => 'Tracks',
+                    name => cstring($client, 'PLUGIN_YANDEX_TRACKS'),
                     type => 'link',
                     url  => \&_handleSearchTracks,
                     passthrough => [$yandex_client, $query],
@@ -496,7 +564,7 @@ sub _handleSearch {
 
             if ($result->{albums} && $result->{albums}->{results} && @{$result->{albums}->{results}}) {
                 push @items, {
-                    name => 'Albums',
+                    name => cstring($client, 'PLUGIN_YANDEX_ALBUMS'),
                     type => 'link',
                     url  => \&_handleSearchAlbums,
                     passthrough => [$yandex_client, $query],
@@ -506,7 +574,7 @@ sub _handleSearch {
 
             if ($result->{artists} && $result->{artists}->{results} && @{$result->{artists}->{results}}) {
                 push @items, {
-                    name => 'Artists',
+                    name => cstring($client, 'PLUGIN_YANDEX_ARTISTS'),
                     type => 'link',
                     url  => \&_handleSearchArtists,
                     passthrough => [$yandex_client, $query],
@@ -516,7 +584,7 @@ sub _handleSearch {
 
             if ($result->{playlists} && $result->{playlists}->{results} && @{$result->{playlists}->{results}}) {
                 push @items, {
-                    name => 'Playlists',
+                    name => cstring($client, 'PLUGIN_YANDEX_PLAYLISTS'),
                     type => 'link',
                     url  => \&_handleSearchPlaylists,
                     passthrough => [$yandex_client, $query],
@@ -530,7 +598,7 @@ sub _handleSearch {
 
             $cb->({
                 items => \@items,
-                title => "Search: $query"
+                title => cstring($client, 'PLUGIN_YANDEX_SEARCH') . ": $query"
             });
         },
         sub {
@@ -1081,71 +1149,7 @@ sub _handlePlaylist {
     );
 }
 
-sub _handleMyVibe {
-    my ($client, $cb, $args, $yandex_client) = @_;
 
-    # Use 'queue' from args if available (for pagination)
-    my $queue = $args->{queue};
-
-    $yandex_client->rotor_station_tracks(
-        'user:ON_AIR',
-        $queue,
-        sub {
-            my $result = shift;
-            my $tracks = $result->{tracks};
-            my $batch_id = $result->{batch_id};
-            
-            # Render the track list
-            # For infinite scroll/pagination, we need to pass a 'next' item or handle it via callback
-            # But Slim::Plugin::OPMLBased usually handles a single list. 
-            # To support "next batch", we can append a special item at the end "Load more..."
-            # OR we can just return the list and rely on the user to re-click "My Vibe"? No that resets it.
-            # A common pattern for "infinite" lists in LMS plugins is to just return a moderate number of tracks (e.g. 50).
-            # If we want a true infinite stream, we might need a different approach (e.g. Custom protocol handler for the station itself).
-            # For now, let's just return the batch of tracks. 
-            # But wait, if we play them, we want the *next* batch to play automatically.
-            # This requires strict playlist management which is hard in OPMLBased.
-            # Let's start by just rendering the batch.
-            # Crucially, we MUST fix the callback to use $result->{tracks} instead of $result directly.
-            
-            # To allow "More", let's add a "Next Batch" item at the end.
-            
-             my $items = [];
-             
-             # Use the helper to get track items
-             # We can't use _renderTrackList directly because we want to modify the list
-             # implementation of _renderTrackList uses $cb->({ items => ... }) which finalizes the response.
-             # We should probably modify _renderTrackList to return items if $cb is not passed?
-             # Or just inline the logic for now or wrap the callback.
-             
-             # Let's wrap the callback to append the "Next" button
-             my $wrapped_cb = sub {
-                 my $response = shift;
-                 my $items = $response->{items} // [];
-                 
-                 if (@$items && $tracks->[-1]) {
-                     my $last_track_id = $tracks->[-1]->{id};
-                     push @$items, {
-                         name => "Next Batch...",
-                         type => 'link',
-                         url => \&_handleMyVibe,
-                         passthrough => [$yandex_client],
-                         args => { queue => $last_track_id },
-                         image => 'plugins/yandex/html/images/wave.png',
-                     };
-                 }
-                 
-                 $cb->($response);
-             };
-
-             _renderTrackList($tracks, $wrapped_cb, 'My Vibe');
-        },
-        sub {
-            my $error = shift;
-            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
-        }
-    );
-}
 
 sub hasRecentSearches {
     return scalar @{ $prefs->get('yandex_recent_search') || [] };
@@ -1219,36 +1223,35 @@ sub _handleRadioCategories {
 
     my @items = (
         {
-            name => 'My Vibe',
-            type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave',
-            play => 'yandexmusic://rotor/user:onyourwave',
-            on_select => 'play',
+            name => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
+            type => 'link',
+            url  => \&_handleWaveModes,
+            passthrough => [$yandex_client],
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
-            name => 'Genres',
+            name => cstring($client, 'PLUGIN_YANDEX_RADIO_GENRES'),
             type => 'link',
             url  => \&_handleRadioCategoryList,
             passthrough => [$yandex_client, 'genre'],
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
-            name => 'Moods',
+            name => cstring($client, 'PLUGIN_YANDEX_RADIO_MOODS'),
             type => 'link',
             url  => \&_handleRadioCategoryList,
             passthrough => [$yandex_client, 'mood'],
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
-            name => 'Activities',
+            name => cstring($client, 'PLUGIN_YANDEX_RADIO_ACTIVITIES'),
             type => 'link',
             url  => \&_handleRadioCategoryList,
             passthrough => [$yandex_client, 'activity'],
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
-            name => 'Eras',
+            name => cstring($client, 'PLUGIN_YANDEX_RADIO_ERAS'),
             type => 'link',
             url  => \&_handleRadioCategoryList,
             passthrough => [$yandex_client, 'epoch'],
@@ -1294,6 +1297,371 @@ sub _handleRadioCategoryList {
             my $error = shift;
             main::INFOLOG && $log->error("Failed to fetch radio stations: $error");
             $cb->([{ name => "Error: $error", type => 'text' }]);
+        }
+    );
+}
+
+sub _handleWaveModes {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    my @items = (
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave',
+            play => 'yandexmusic://rotor/user:onyourwave',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_DISCOVER'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?diversity=discover',
+            play => 'yandexmusic://rotor/user:onyourwave?diversity=discover',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_FAVORITE'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?diversity=favorite',
+            play => 'yandexmusic://rotor/user:onyourwave?diversity=favorite',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_POPULAR'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?diversity=popular',
+            play => 'yandexmusic://rotor/user:onyourwave?diversity=popular',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_CALM'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=calm',
+            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=calm',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_ACTIVE'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=active',
+            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=active',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_FUN'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=fun',
+            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=fun',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_MODE_SAD'),
+            type => 'audio',
+            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=sad',
+            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=sad',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+    );
+
+    $cb->({
+        items => \@items,
+        title => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
+    });
+}
+# --- For You (Picks & Mixes) ---
+
+my %TAG_SLUG_CATEGORY = (
+    # Mood
+    "chill" => "mood", "sad" => "mood", "romantic" => "mood", "party" => "mood", "relax" => "mood", "in the mood" => "mood",
+    # Activity
+    "workout" => "activity", "focus" => "activity", "morning" => "activity", "evening" => "activity", "driving" => "activity", "background" => "activity",
+    # Era
+    "80s" => "era", "90s" => "era", "2000s" => "era", "retro" => "era",
+    # Genres
+    "rock" => "genres", "jazz" => "genres", "classical" => "genres", "electronic" => "genres", "rnb" => "genres", "hiphop" => "genres", "top" => "genres", "newbies" => "genres",
+    # Seasonal (for mixes)
+    "winter" => "seasonal", "spring" => "seasonal", "summer" => "seasonal", "autumn" => "seasonal", "newyear" => "seasonal",
+);
+
+
+sub _translate {
+    my ($client, $str) = @_;
+    my $key;
+    if ($str =~ /^(mood|activity|era|genres)$/) {
+        $key = 'PLUGIN_YANDEX_CAT_' . uc($str);
+    } elsif ($str =~ /^(picks|mixes)$/) {
+        $key = 'PLUGIN_YANDEX_' . uc($str);
+    } else {
+        $key = 'PLUGIN_YANDEX_TAG_' . uc($str);
+        $key =~ s/\-/_/g; 
+        $key =~ s/\s/_/g; 
+    }
+    my $translation = cstring($client, $key);
+    return ($translation && $translation ne $key) ? $translation : ucfirst($str);
+}
+
+sub _handleForYou {
+    my ($client, $cb, $args, $yandex_client) = @_;
+    my @items = (
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_SMART_PLAYLISTS'),
+            type => 'link',
+            url  => \&_handleSmartPlaylists,
+            passthrough => [$yandex_client],
+            image => 'plugins/yandex/html/images/personal.png',
+        },
+        {
+            name => _translate($client, 'picks'),
+            type => 'link',
+            url  => \&_handlePicks,
+            passthrough => [$yandex_client],
+            image => 'plugins/yandex/html/images/personal.png',
+        },
+        {
+            name => _translate($client, 'mixes'),
+            type => 'link',
+            url  => \&_handleMixes,
+            passthrough => [$yandex_client],
+            image => 'plugins/yandex/html/images/personal.png',
+        }
+    );
+    $cb->({ items => \@items, title => cstring($client, 'PLUGIN_YANDEX_FOR_YOU') });
+}
+
+sub _handleSmartPlaylists {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->landing_personal_playlists(
+        sub {
+            my $blocks = shift;
+            my @items;
+
+            foreach my $block (@$blocks) {
+                if ($block->{entities}) {
+                    foreach my $entity (@{$block->{entities}}) {
+                        if ($entity->{type} eq 'personal-playlist' && $entity->{data} && $entity->{data}->{data}) {
+                            my $pl = $entity->{data}->{data};
+                            my $uid = $pl->{owner}->{uid};
+                            my $kind = $pl->{kind};
+                            my $title = $pl->{title};
+
+                            my $icon = 'plugins/yandex/html/images/personal.png';
+                            if ($pl->{cover} && $pl->{cover}->{uri}) {
+                                $icon = "https://" . $pl->{cover}->{uri};
+                                $icon =~ s/%%/200x200/;
+                            }
+
+                            push @items, {
+                                name => $title,
+                                type => 'playlist',
+                                url  => \&_handlePlaylist,
+                                passthrough => [$yandex_client, $uid, $kind],
+                                image => $icon,
+                                play => "yandexmusic://playlist/$uid/$kind",
+                            };
+                        }
+                    }
+                }
+            }
+
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_SMART_PLAYLISTS'),
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->([{ name => "Error: $error", type => 'text' }]);
+        }
+    );
+}
+
+sub _handlePicks {
+    my ($client, $cb, $args, $yandex_client, $category) = @_;
+
+    $yandex_client->landing_mixes(
+        sub {
+            my $blocks = shift;
+            my @discovered_tags;
+            
+            foreach my $block (@$blocks) {
+                if ($block->{entities}) {
+                    foreach my $entity (@{$block->{entities}}) {
+                        if ($entity->{type} eq 'mix-link' && $entity->{data} && $entity->{data}->{url}) {
+                            my $url = $entity->{data}->{url};
+                            if ($url =~ /^\/tag\/([^\/]+)\/?$/) {
+                                my $slug = $1;
+                                my $title = $entity->{data}->{title} || $slug;
+                                push @discovered_tags, { slug => $slug, title => $title };
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!$category) {
+                my %active_categories;
+                foreach my $t (@discovered_tags) {
+                    my $cat = $TAG_SLUG_CATEGORY{$t->{slug}} || 'mood';
+                    next if $cat eq 'seasonal';
+                    $active_categories{$cat} = 1;
+                }
+
+                my @items;
+                for my $cat (qw(mood activity era genres)) {
+                    if ($active_categories{$cat}) {
+                        push @items, {
+                            name => _translate($client, $cat),
+                            type => 'link',
+                            url  => \&_handlePicks,
+                            passthrough => [$yandex_client, $cat],
+                            image => 'plugins/yandex/html/images/personal.png',
+                        }
+                    }
+                }
+                
+                if (!@items) {
+                    for my $cat (qw(mood activity era genres)) {
+                         push @items, {
+                            name => _translate($client, $cat),
+                            type => 'link',
+                            url  => \&_handlePicks,
+                            passthrough => [$yandex_client, $cat],
+                            image => 'plugins/yandex/html/images/personal.png',
+                         }
+                    }
+                }
+
+                return $cb->({ items => \@items, title => _translate($client, 'picks') });
+            } 
+            
+            my @items;
+            my %seen_slugs;
+            foreach my $t (@discovered_tags) {
+                my $slug = $t->{slug};
+                my $cat = $TAG_SLUG_CATEGORY{$slug} || 'mood';
+                if ($cat eq $category && !$seen_slugs{$slug}++) {
+                    push @items, {
+                        name => _translate($client, $slug),
+                        type => 'link',
+                        url  => \&_handleTagPlaylists,
+                        passthrough => [$yandex_client, $slug],
+                        image => 'plugins/yandex/html/images/personal.png',
+                    };
+                }
+            }
+
+            if (!@items) {
+                foreach my $slug (keys %TAG_SLUG_CATEGORY) {
+                    if ($TAG_SLUG_CATEGORY{$slug} eq $category) {
+                        push @items, {
+                            name => _translate($client, $slug),
+                            type => 'link',
+                            url  => \&_handleTagPlaylists,
+                            passthrough => [$yandex_client, $slug],
+                            image => 'plugins/yandex/html/images/personal.png',
+                        };
+                    }
+                }
+            }
+
+            $cb->({ items => \@items, title => _translate($client, $category) });
+        },
+        sub {
+            my $error = shift;
+            $cb->([{ name => "Error loading mixes: $error", type => 'text' }]);
+        }
+    );
+}
+
+sub _handleMixes {
+    my ($client, $cb, $args, $yandex_client) = @_;
+    
+    my @seasonal_tags = qw(winter spring summer autumn newyear);
+    my @items;
+
+    foreach my $tag (@seasonal_tags) {
+        push @items, {
+            name => _translate($client, $tag),
+            type => 'link',
+            url  => \&_handleTagPlaylists,
+            passthrough => [$yandex_client, $tag],
+            image => 'plugins/yandex/html/images/personal.png',
+        };
+    }
+
+    $cb->({ items => \@items, title => _translate($client, 'mixes') });
+}
+
+sub _handleTagPlaylists {
+    my ($client, $cb, $args, $yandex_client, $tag_id) = @_;
+
+    $yandex_client->tags(
+        $tag_id,
+        sub {
+            my $ids = shift;
+            
+            if (!@$ids) {
+                return $cb->({ items => [{ name => "No playlists found for tag", type => 'text' }] });
+            }
+
+            my @playlist_uids;
+            foreach my $id_obj (@$ids) {
+                if ($id_obj->{uid} && $id_obj->{kind}) {
+                    push @playlist_uids, $id_obj->{uid} . ":" . $id_obj->{kind};
+                }
+            }
+
+            $yandex_client->playlists_list(
+                \@playlist_uids,
+                sub {
+                    my $playlists = shift;
+                    my @items;
+
+                    foreach my $playlist (@$playlists) {
+                        my $title = $playlist->{title} // 'Unknown Playlist';
+                        my $owner = $playlist->{owner}->{name} // 'Unknown User';
+                        
+                        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                        if ($playlist->{cover} && $playlist->{cover}->{uri}) {
+                            $icon = $playlist->{cover}->{uri};
+                            $icon =~ s/%%/200x200/;
+                            $icon = "https://$icon";
+                        } elsif ($playlist->{ogImage}) {
+                            $icon = $playlist->{ogImage};
+                            $icon =~ s/%%/200x200/;
+                            $icon = "https://$icon";
+                        }
+
+                        push @items, {
+                            name => $title . ' (' . $owner . ')',
+                            type => 'playlist',
+                            url => \&_handlePlaylist,
+                            passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
+                            image => $icon,
+                            play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
+                        };
+                    }
+
+                    $cb->({ items => \@items, title => _translate($tag_id) });
+                },
+                sub {
+                    my $err = shift;
+                    $cb->([{ name => "Error fetching playlists: $err", type => 'text' }]);
+                }
+            );
+        },
+        sub {
+            my $error = shift;
+            $cb->([{ name => "Error fetching tags: $error", type => 'text' }]);
         }
     );
 }

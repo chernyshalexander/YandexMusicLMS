@@ -1,14 +1,17 @@
 PLUGIN_YANDEX
 	EN	Yandex Music
+	RU	Яндекс Музыка
 
 PLUGIN_YANDEX_DESC
-	EN	Play radio channels from Yandex Music
+	EN	Play channels from Yandex Music
 
 PLUGIN_YANDEX_MUSIC_TOKEN
 	EN	Yandex Music Token
+	RU	Токен Яндекс Музыки
 
 PLUGIN_YANDEX_MUSIC_TOKEN_DESC
 	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
+	RU	Добавьте OAuth token.
 
 PLUGIN_YANDEX_MAX_BITRATE
 	EN	Maximum Audio Quality
@@ -17,3 +20,327 @@ PLUGIN_YANDEX_MAX_BITRATE
 PLUGIN_YANDEX_MAX_BITRATE_DESC
 	EN	Select the maximum allowed bitrate for streaming tracks.
 	RU	Выберите максимальный разрешенный битрейт для загрузки треков.
+
+PLUGIN_YANDEX_SEARCH
+	EN	Search
+	RU	Поиск
+
+PLUGIN_YANDEX_MY_COLLECTION
+	EN	My Collection
+	RU	Моя коллекция
+
+PLUGIN_YANDEX_RADIOSTATIONS
+	EN	Radio Stations
+	RU	Радиостанции
+
+PLUGIN_YANDEX_FOR_YOU
+	EN	For You
+	RU	Для вас
+
+PLUGIN_YANDEX_TRACKS
+	EN	Tracks
+	RU	Треки
+
+PLUGIN_YANDEX_ALBUMS
+	EN	Albums
+	RU	Альбомы
+
+PLUGIN_YANDEX_ARTISTS
+	EN	Artists
+	RU	Исполнители
+
+PLUGIN_YANDEX_PLAYLISTS
+	EN	Playlists
+	RU	Плейлисты
+
+PLUGIN_YANDEX_PICKS
+	EN	Picks
+	RU	Подборки
+
+PLUGIN_YANDEX_MIXES
+	EN	Mixes
+	RU	Миксы
+
+PLUGIN_YANDEX_CAT_MOOD
+	EN	Mood
+	RU	Настроение
+
+PLUGIN_YANDEX_CAT_ACTIVITY
+	EN	Activity
+	RU	Занятия
+
+PLUGIN_YANDEX_CAT_ERA
+	EN	Era
+	RU	Эпоха
+
+PLUGIN_YANDEX_CAT_GENRES
+	EN	Genres
+	RU	Жанры
+
+PLUGIN_YANDEX_TAG_CHILL
+	EN	Chill
+	RU	Расслабляющее
+
+PLUGIN_YANDEX_TAG_SAD
+	EN	Sad
+	RU	Грустное
+
+PLUGIN_YANDEX_TAG_ROMANTIC
+	EN	Romantic
+	RU	Романтичное
+
+PLUGIN_YANDEX_TAG_PARTY
+	EN	Party
+	RU	Вечеринка
+
+PLUGIN_YANDEX_TAG_RELAX
+	EN	Relax
+	RU	Релакс
+
+PLUGIN_YANDEX_TAG_CALM
+	EN	Calm
+	RU	Спокойное
+
+PLUGIN_YANDEX_TAG_FUN
+	EN	Fun
+	RU	Веселое
+
+PLUGIN_YANDEX_TAG_HAPPY
+	EN	Happy
+	RU	Счастливое
+
+PLUGIN_YANDEX_TAG_ENERGETIC
+	EN	Energetic
+	RU	Бодрое
+
+PLUGIN_YANDEX_TAG_SPRING
+	EN	Spring
+	RU	Весна
+
+PLUGIN_YANDEX_TAG_SUMMER
+	EN	Summer
+	RU	Лето
+
+PLUGIN_YANDEX_TAG_AUTUMN
+	EN	Autumn
+	RU	Осень
+
+PLUGIN_YANDEX_TAG_WINTER
+	EN	Winter
+	RU	Зима
+
+PLUGIN_YANDEX_TAG_NEWYEAR
+	EN	New Year
+	RU	Новый Год
+
+PLUGIN_YANDEX_TAG_WORKOUT
+	EN	Workout
+	RU	Тренировка
+
+PLUGIN_YANDEX_TAG_SLEEP
+	EN	Sleep
+	RU	Сон
+
+PLUGIN_YANDEX_TAG_ROAD
+	EN	Road
+	RU	В дорогу
+
+PLUGIN_YANDEX_TAG_WORK
+	EN	Work
+	RU	Для работы
+
+PLUGIN_YANDEX_TAG_GAME
+	EN	Game
+	RU	Для игр
+
+PLUGIN_YANDEX_TAG_READING
+	EN	Reading
+	RU	Для чтения
+
+PLUGIN_YANDEX_TAG_BACKGROUND
+	EN	Background
+	RU	Фоновая музыка
+
+PLUGIN_YANDEX_TAG_MORNING
+	EN	Morning
+	RU	Доброе утро
+
+PLUGIN_YANDEX_TAG_EVENING
+	EN	Evening
+	RU	Добрый вечер
+
+PLUGIN_YANDEX_TAG_80S
+	EN	80s
+	RU	80-е
+
+PLUGIN_YANDEX_TAG_90S
+	EN	90s
+	RU	90-е
+
+PLUGIN_YANDEX_TAG_00S
+	EN	00s
+	RU	00-е
+
+PLUGIN_YANDEX_TAG_10S
+	EN	10s
+	RU	10-е
+
+PLUGIN_YANDEX_TAG_20S
+	EN	20s
+	RU	20-е
+
+PLUGIN_YANDEX_TAG_RETRO
+	EN	Retro
+	RU	Ретро
+
+PLUGIN_YANDEX_TAG_POP
+	EN	Pop
+	RU	Поп
+
+PLUGIN_YANDEX_TAG_ROCK
+	EN	Rock
+	RU	Рок
+
+PLUGIN_YANDEX_TAG_JAZZ
+	EN	Jazz
+	RU	Джаз
+
+PLUGIN_YANDEX_TAG_HIP-HOP
+	EN	Hip-Hop
+	RU	Хип-хоп
+
+PLUGIN_YANDEX_TAG_ELECTRONIC
+	EN	Electronic
+	RU	Электроника
+
+PLUGIN_YANDEX_TAG_CLASSICAL
+	EN	Classical
+	RU	Классика
+
+PLUGIN_YANDEX_TAG_INDIE
+	EN	Indie
+	RU	Инди
+
+PLUGIN_YANDEX_TAG_RNB
+	EN	R&B
+	RU	R&B
+
+PLUGIN_YANDEX_TAG_METAL
+	EN	Metal
+	RU	Метал
+
+PLUGIN_YANDEX_TAG_COUNTRY
+	EN	Country
+	RU	Кантри
+
+PLUGIN_YANDEX_TAG_BLUES
+	EN	Blues
+	RU	Блюз
+
+PLUGIN_YANDEX_TAG_REGGAE
+	EN	Reggae
+	RU	Регги
+
+PLUGIN_YANDEX_TAG_DANCE
+	EN	Dance
+	RU	Танцевальная
+
+PLUGIN_YANDEX_TAG_RAP
+	EN	Rap
+	RU	Рэп
+
+PLUGIN_YANDEX_TAG_PUNK
+	EN	Punk
+	RU	Панк
+
+PLUGIN_YANDEX_TAG_FOLK
+	EN	Folk
+	RU	Фолк
+
+PLUGIN_YANDEX_TAG_CINEMATIC
+	EN	Cinematic
+	RU	Киномузыка
+
+PLUGIN_YANDEX_TAG_AMBIENT
+	EN	Ambient
+	RU	Эмбиент
+
+PLUGIN_YANDEX_TAG_LOUNGE
+	EN	Lounge
+	RU	Лаунж
+
+PLUGIN_YANDEX_SMART_PLAYLISTS
+	EN	Smart Playlists
+	RU	Умные плейлисты
+
+PLUGIN_YANDEX_MY_WAVE
+	EN	My Vibe
+	RU	Моя волна
+
+PLUGIN_YANDEX_MODE_DEFAULT
+	EN	Default
+	RU	По умолчанию
+
+PLUGIN_YANDEX_MODE_DISCOVER
+	EN	Discover
+	RU	Незнакомое
+
+PLUGIN_YANDEX_MODE_FAVORITE
+	EN	Favorite
+	RU	Любимое
+
+PLUGIN_YANDEX_MODE_POPULAR
+	EN	Popular
+	RU	Популярное
+
+PLUGIN_YANDEX_MODE_CALM
+	EN	Calm
+	RU	Спокойное
+
+PLUGIN_YANDEX_MODE_ACTIVE
+	EN	Active
+	RU	Бодрое
+
+PLUGIN_YANDEX_MODE_FUN
+	EN	Fun
+	RU	Веселое
+
+PLUGIN_YANDEX_MODE_SAD
+	EN	Sad
+	RU	Грустное
+
+PLUGIN_YANDEX_RADIO_GENRES
+	EN	Genres
+	RU	Жанры
+
+PLUGIN_YANDEX_RADIO_MOODS
+	EN	Moods
+	RU	Настроения
+
+PLUGIN_YANDEX_RADIO_ACTIVITIES
+	EN	Activities
+	RU	Занятия
+
+PLUGIN_YANDEX_RADIO_ERAS
+	EN	Eras
+	RU	Эпохи
+
+PLUGIN_YANDEX_TAG_IN_THE_MOOD
+	EN	In the mood
+	RU	В настроении
+
+PLUGIN_YANDEX_TAG_FOCUS
+	EN	Focus
+	RU	Концентрация
+
+PLUGIN_YANDEX_TAG_DRIVING
+	EN	Driving
+	RU	В дороге
+
+PLUGIN_YANDEX_TAG_TOP
+	EN	Top
+	RU	Топ
+
+PLUGIN_YANDEX_TAG_NEWBIES
+	EN	Newbies
+	RU	По жанру
