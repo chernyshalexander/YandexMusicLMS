@@ -3,7 +3,6 @@ use strict;
 use warnings;
 use JSON::XS::VersionOneAndTwo;
 use Slim::Utils::Log;
-use Data::Dumper;
 use Plugins::yandex::RequestAsync;
 use Plugins::yandex::TrackShort;
 use Plugins::yandex::Track;
@@ -24,8 +23,8 @@ sub new {
 
 sub init {
     my ($self, $callback, $error_callback) = @_;
-    $log->info("ClientAsync, 25");
-    $log->info(Dumper($self->{request}));
+    #$log->info("ClientAsync, 25");
+    #$log->info(Dumper($self->{request}));
     $self->{request}->get(
         'https://api.music.yandex.net/account/status',
         undef,
@@ -33,8 +32,7 @@ sub init {
             my $result = shift;
             if (exists $result->{result} && exists $result->{result}->{account}) {
                 $self->{me} = $result->{result}->{account};
-                $log->info("ClientAsync,33");
-                $log->info(Dumper($result));
+                $log->info("ClientAsync: account status retrieved successfully.");
                 $callback->($self);
             } else {
                 $log->info("Не удалось получить данные пользователя");
@@ -300,13 +298,19 @@ sub get_playlist {
 }
 
 sub rotor_station_tracks {
-    my ($self, $station_id, $queue, $callback, $error_callback) = @_;
+    my ($self, $station_id, $queue, $callback, $error_callback, $extra_params) = @_;
 
     my $url = 'https://api.music.yandex.net/rotor/station/' . $station_id . '/tracks';
     my $params = { 'settings2' => 'true' };
     
     if ($queue) {
         $params->{queue} = $queue;
+    }
+
+    if ($extra_params && ref $extra_params eq 'HASH') {
+        foreach my $key (keys %$extra_params) {
+            $params->{$key} = $extra_params->{$key};
+        }
     }
 
     $self->{request}->get(
@@ -390,6 +394,100 @@ sub rotor_station_feedback {
     );
 }
 
+sub rotor_session_new {
+    my ($self, $station_id, $callback, $error_callback) = @_;
+
+    # By default, use any language or ru. It can be passed as a parameter later if needed.
+    my $url = 'https://api.music.yandex.net/rotor/session/new';
+    
+    my $data = {
+        'station' => $station_id,
+        'language' => 'any',
+    };
+
+    $self->{request}->post_form(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{radioSessionId}) {
+                $callback->($result->{result}->{radioSessionId});
+            } else {
+                $error_callback->("Failed to create new rotor session for station $station_id");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub rotor_session_tracks {
+    my ($self, $radio_session_id, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/rotor/session/' . $radio_session_id . '/tracks';
+    # Settings2 allows modern track format
+    my $params = { 'settings2' => 'true' };
+
+    $self->{request}->get(
+        $url,
+        $params,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{sequence}) {
+                my @tracks;
+                # Sequence includes objects with a 'track' field
+                foreach my $item (@{$result->{result}->{sequence}}) {
+                    next unless $item->{track};
+                    push @tracks, $item->{track};
+                }
+                my $batch_id = $result->{result}->{batchId};
+                
+                $callback->({
+                    tracks => \@tracks,
+                    batch_id => $batch_id,
+                });
+            } else {
+                $error_callback->("Failed to get session tracks for session $radio_session_id");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub rotor_session_feedback {
+    my ($self, $radio_session_id, $type, $batch_id, $track_id, $total_played_seconds, $callback, $error_callback) = @_;
+
+    # types: radioStarted, trackStarted, trackFinished, skip
+    my $url = 'https://api.music.yandex.net/rotor/session/' . $radio_session_id . '/feedback';
+
+    if ($batch_id) {
+        require URI::Escape;
+        $url .= '?batchId=' . URI::Escape::uri_escape_utf8($batch_id);
+    }
+
+    my $data = {
+        'type' => $type,
+        'timestamp' => time(),
+    };
+
+    if (defined $track_id) {
+        $data->{'trackId'} = $track_id;
+    }
+
+    if (defined $total_played_seconds) {
+        $data->{'totalPlayedSeconds'} = $total_played_seconds;
+    }
+
+    $self->{request}->post_form(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            $callback->(1);
+        },
+        $error_callback,
+    );
+}
+
 sub search {
     my ($self, $query, $type, $callback, $error_callback) = @_;
 
@@ -429,6 +527,83 @@ sub rotor_stations_list {
                 $callback->($result->{result});
             } else {
                 $error_callback->("Failed to get stations list");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub landing_mixes {
+    my ($self, $callback, $error_callback) = @_;
+
+    $self->{request}->get(
+        'https://api.music.yandex.net/landing3',
+        { 'blocks' => 'mixes' },
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{blocks}) {
+                $callback->($result->{result}->{blocks});
+            } else {
+                $error_callback->("Failed to get landing mixes");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub landing_personal_playlists {
+    my ($self, $callback, $error_callback) = @_;
+
+    $self->{request}->get(
+        'https://api.music.yandex.net/landing3',
+        { 'blocks' => 'personal-playlists' },
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{blocks}) {
+                $callback->($result->{result}->{blocks});
+            } else {
+                $error_callback->("Failed to get personal playlists");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub tags {
+    my ($self, $tag_id, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/tags/' . $tag_id . '/playlist-ids';
+
+    $self->{request}->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{ids}) {
+                $callback->($result->{result}->{ids});
+            } else {
+                $error_callback->("Failed to get tags for $tag_id");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub playlists_list {
+    my ($self, $playlist_ids, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/playlists/list';
+    my $data = { 'playlistIds' => join(',', @$playlist_ids) };
+
+    $self->{request}->post_form(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                $callback->($result->{result});
+            } else {
+                $error_callback->("Failed to get playlists_list");
             }
         },
         $error_callback,
