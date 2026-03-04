@@ -8,7 +8,6 @@ use Cwd 'abs_path';
 use File::Spec;
 use feature qw(fc);
 use Data::Dumper;
-use JSON::XS::VersionOneAndTwo;
 use Slim::Networking::SimpleAsyncHTTP;
 use Slim::Utils::Strings qw(string);
 use Slim::Utils::Strings qw(string cstring);
@@ -30,6 +29,7 @@ use utf8;
 use URI::Escape;
 use URI::Escape qw(uri_escape_utf8);
 use Encode::Guess;
+use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::ClientAsync;
 
 my $log;
@@ -52,6 +52,8 @@ sub initPlugin {
     $prefs->init({
         token => '',
         max_bitrate => 320,
+        use_new_radio_api => 0,
+        remove_duplicates => 1,
     });
 
 
@@ -78,6 +80,7 @@ sub initPlugin {
     }
 }
 
+
 sub shutdownPlugin {
     my $class = shift;
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
@@ -100,7 +103,7 @@ sub playerEventCallback {
         
         # 2. Setup the NEW track
         my $song = $client->playingSong();
-        if ($song && $song->track() && $song->track()->url() =~ /rotor_station=/) {
+        if ($song && $song->track() && $song->track()->url() =~ /rotor_(station|session)=/) {
             $client->pluginData('yandex_radio_url', $song->track()->url());
             $client->pluginData('yandex_track_duration', $song->duration() || 0);
             $client->pluginData('yandex_track_start_time', time());
@@ -138,6 +141,18 @@ sub _handleRotorFeedback {
             
             $log->info("YANDEX ROTOR: Track started. Station: $station, batch: " . ($batch_id||'none') . ", track: $track_id");
             $yandex_client->rotor_station_feedback($station, 'trackStarted', $batch_id, $track_id, 0, sub {}, sub {});
+        } elsif ($url && $url =~ /rotor_session=([^&]+)/) {
+            my $radio_session_id = URI::Escape::uri_unescape($1);
+            my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
+            my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
+            
+            return unless $track_id;
+            
+            require Plugins::yandex::ProtocolHandler;
+            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
+            
+            $log->info("YANDEX NEW ROTOR SESSION: Track started. batch: " . ($batch_id||'none') . ", track: $track_id");
+            $yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'trackStarted', $track_id, 0, $timestamp, sub {}, sub {});
         }
     }
     elsif ($action eq 'natural_finish' || $action eq 'manual_skip_or_stop') {
@@ -148,8 +163,9 @@ sub _handleRotorFeedback {
         my $url = $client->pluginData('yandex_radio_url');
         my $duration = $client->pluginData('yandex_track_duration') || 0;
         
-        if ($url && $url =~ /rotor_station=([^&]+)/) {
-            my $station = URI::Escape::uri_unescape($1);
+        if ($url && $url =~ /rotor_(station|session)=([^&]+)/) {
+            my $is_session = ($1 eq 'session');
+            my $station_or_session_id = URI::Escape::uri_unescape($2);
             my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
             my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
             return unless $track_id;
@@ -189,8 +205,15 @@ sub _handleRotorFeedback {
                 return;
             }
 
-            $log->info("YANDEX ROTOR: Sending '$type' feedback. Played: $played_seconds s. Station: $station, batch: " . ($batch_id||'none') . ", track: $track_id");
-            $yandex_client->rotor_station_feedback($station, $type, $batch_id, $track_id, $played_seconds, sub {}, sub {});
+            if ($is_session) {
+                require Plugins::yandex::ProtocolHandler;
+                my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
+                $log->info("YANDEX NEW ROTOR SESSION: Sending '$type' feedback. Played: $played_seconds s. batch: " . ($batch_id||'none') . ", track: $track_id");
+                $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, $timestamp, sub {}, sub {});
+            } else {
+                $log->info("YANDEX ROTOR: Sending '$type' feedback. Played: $played_seconds s. Station: $station_or_session_id, batch: " . ($batch_id||'none') . ", track: $track_id");
+                $yandex_client->rotor_station_feedback($station_or_session_id, $type, $batch_id, $track_id, $played_seconds, sub {}, sub {});
+            }
             
             # Mark feedback as sent so we don't send it again on natural_finish
             $client->pluginData('yandex_track_active', 0);
@@ -1277,11 +1300,14 @@ sub _handleRadioCategoryList {
                     
                     my $icon = 'plugins/yandex/html/images/radio.png';
 
+                    my $use_new_radio = $prefs->get('use_new_radio_api');
+                    my $base_url = $use_new_radio ? 'yandexmusic://rotor_session/' : 'yandexmusic://rotor/';
+
                     push @items, {
                         name => $st->{name},
                         type => 'audio',
-                        url  => "yandexmusic://rotor/$category_type:$tag",
-                        play => "yandexmusic://rotor/$category_type:$tag",
+                        url  => $base_url . "$category_type:$tag",
+                        play => $base_url . "$category_type:$tag",
                         on_select => 'play',
                         image => $icon,
                     };
@@ -1304,68 +1330,71 @@ sub _handleRadioCategoryList {
 sub _handleWaveModes {
     my ($client, $cb, $args, $yandex_client) = @_;
 
+    my $use_new_radio = $prefs->get('use_new_radio_api');
+    my $base_url = $use_new_radio ? 'yandexmusic://rotor_session/' : 'yandexmusic://rotor/';
+
     my @items = (
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave',
-            play => 'yandexmusic://rotor/user:onyourwave',
+            url  => $base_url . 'user:onyourwave',
+            play => $base_url . 'user:onyourwave',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_DISCOVER'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?diversity=discover',
-            play => 'yandexmusic://rotor/user:onyourwave?diversity=discover',
+            url  => $base_url . 'user:onyourwave?diversity=discover',
+            play => $base_url . 'user:onyourwave?diversity=discover',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_FAVORITE'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?diversity=favorite',
-            play => 'yandexmusic://rotor/user:onyourwave?diversity=favorite',
+            url  => $base_url . 'user:onyourwave?diversity=favorite',
+            play => $base_url . 'user:onyourwave?diversity=favorite',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_POPULAR'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?diversity=popular',
-            play => 'yandexmusic://rotor/user:onyourwave?diversity=popular',
+            url  => $base_url . 'user:onyourwave?diversity=popular',
+            play => $base_url . 'user:onyourwave?diversity=popular',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_CALM'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=calm',
-            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=calm',
+            url  => $base_url . 'user:onyourwave?moodEnergy=calm',
+            play => $base_url . 'user:onyourwave?moodEnergy=calm',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_ACTIVE'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=active',
-            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=active',
+            url  => $base_url . 'user:onyourwave?moodEnergy=active',
+            play => $base_url . 'user:onyourwave?moodEnergy=active',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_FUN'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=fun',
-            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=fun',
+            url  => $base_url . 'user:onyourwave?moodEnergy=fun',
+            play => $base_url . 'user:onyourwave?moodEnergy=fun',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MODE_SAD'),
             type => 'audio',
-            url  => 'yandexmusic://rotor/user:onyourwave?moodEnergy=sad',
-            play => 'yandexmusic://rotor/user:onyourwave?moodEnergy=sad',
+            url  => $base_url . 'user:onyourwave?moodEnergy=sad',
+            play => $base_url . 'user:onyourwave?moodEnergy=sad',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
