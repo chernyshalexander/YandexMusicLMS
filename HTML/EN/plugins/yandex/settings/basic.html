@@ -17,4 +17,18 @@
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_USE_NEW_RADIO_API_TITLE" desc="PLUGIN_YANDEX_USE_NEW_RADIO_API_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_use_new_radio_api" id="pref_use_new_radio_api" [% IF prefs.use_new_radio_api
+        %]checked[% END %]>
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE" desc="PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_remove_duplicates" id="pref_remove_duplicates" [% IF prefs.remove_duplicates
+        %]checked[% END %]>
+</div>
+[% END %]
+
 [% PROCESS settings/footer.html %]

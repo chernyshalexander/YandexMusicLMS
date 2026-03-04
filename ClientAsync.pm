@@ -397,21 +397,21 @@ sub rotor_station_feedback {
 sub rotor_session_new {
     my ($self, $station_id, $callback, $error_callback) = @_;
 
-    # By default, use any language or ru. It can be passed as a parameter later if needed.
     my $url = 'https://api.music.yandex.net/rotor/session/new';
     
+    # We must use POST JSON for the new session, matching python implementation
     my $data = {
-        'station' => $station_id,
-        'language' => 'any',
+        'seeds' => [$station_id],
+        'includeTracksInResponse' => \1, # true boolean
     };
 
-    $self->{request}->post_form(
+    $self->{request}->post(
         $url,
         $data,
         sub {
             my $result = shift;
             if (exists $result->{result} && exists $result->{result}->{radioSessionId}) {
-                $callback->($result->{result}->{radioSessionId});
+                $callback->($result->{result}); # Return the entire result (batchId, radioSessionId, sequence)
             } else {
                 $error_callback->("Failed to create new rotor session for station $station_id");
             }
@@ -420,64 +420,40 @@ sub rotor_session_new {
     );
 }
 
-sub rotor_session_tracks {
-    my ($self, $radio_session_id, $callback, $error_callback) = @_;
-
-    my $url = 'https://api.music.yandex.net/rotor/session/' . $radio_session_id . '/tracks';
-    # Settings2 allows modern track format
-    my $params = { 'settings2' => 'true' };
-
-    $self->{request}->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{sequence}) {
-                my @tracks;
-                # Sequence includes objects with a 'track' field
-                foreach my $item (@{$result->{result}->{sequence}}) {
-                    next unless $item->{track};
-                    push @tracks, $item->{track};
-                }
-                my $batch_id = $result->{result}->{batchId};
-                
-                $callback->({
-                    tracks => \@tracks,
-                    batch_id => $batch_id,
-                });
-            } else {
-                $error_callback->("Failed to get session tracks for session $radio_session_id");
-            }
-        },
-        $error_callback,
-    );
-}
-
 sub rotor_session_feedback {
-    my ($self, $radio_session_id, $type, $batch_id, $track_id, $total_played_seconds, $callback, $error_callback) = @_;
+    my ($self, $radio_session_id, $batch_id, $event_type, $track_id, $total_played_seconds, $timestamp, $callback, $error_callback) = @_;
 
-    # types: radioStarted, trackStarted, trackFinished, skip
-    my $url = 'https://api.music.yandex.net/rotor/session/' . $radio_session_id . '/feedback';
-
-    if ($batch_id) {
-        require URI::Escape;
-        $url .= '?batchId=' . URI::Escape::uri_escape_utf8($batch_id);
+    my $url = 'https://api.music.yandex.net/rotor/session/' . URI::Escape::uri_escape_utf8($radio_session_id) . '/feedback';
+    
+    my $event = {
+        'type' => $event_type,
+        'timestamp' => $timestamp,
+    };
+    
+    # from for radioStarted
+    if ($event_type eq 'radioStarted') {
+        # station_id parameter? Usually format is radio-mobile-{type}-{tag}-default
+        # In Python: from: description_seed.get_id_from()
+        # For simplicity, we just won't send "from" unless specified. 
+        # python says: `from: str - id станции`. But without description_seed, it's hard to guess.
+        # Let's pass $track_id as the 'from' parameter since that's what ProtocolHandler used to do in old API (sending station ID there).
+        if ($track_id) {
+            $event->{'from'} = $track_id;
+        }
+    } else {
+        $event->{'trackId'} = $track_id;
+    }
+    
+    if (defined $total_played_seconds && ($event_type eq 'skip' || $event_type eq 'trackFinished')) {
+        $event->{'totalPlayedSeconds'} = $total_played_seconds;
     }
 
     my $data = {
-        'type' => $type,
-        'timestamp' => time(),
+        'event' => $event,
+        'batchId' => $batch_id,
     };
 
-    if (defined $track_id) {
-        $data->{'trackId'} = $track_id;
-    }
-
-    if (defined $total_played_seconds) {
-        $data->{'totalPlayedSeconds'} = $total_played_seconds;
-    }
-
-    $self->{request}->post_form(
+    $self->{request}->post(
         $url,
         $data,
         sub {
@@ -487,6 +463,38 @@ sub rotor_session_feedback {
         $error_callback,
     );
 }
+
+sub rotor_session_tracks {
+    my ($self, $radio_session_id, $current_track_id, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/rotor/session/' . URI::Escape::uri_escape_utf8($radio_session_id) . '/tracks';
+    
+    my $data = {
+        'queue' => [$current_track_id],
+    };
+
+    $self->{request}->post(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{sequence}) {
+                # Wrap sequence to look like rotor_station_tracks response so ProtocolHandler parsing is similar
+                my $tracks = [];
+                push @$tracks, map { $_->{track} } @{$result->{result}->{sequence}};
+                my $res_formatted = {
+                    'tracks' => $tracks,
+                    'batch_id' => $result->{result}->{batchId},
+                };
+                $callback->($res_formatted);
+            } else {
+                $error_callback->("Failed to get next tracks from server");
+            }
+        },
+        $error_callback,
+    );
+}
+
 
 sub search {
     my ($self, $query, $type, $callback, $error_callback) = @_;
