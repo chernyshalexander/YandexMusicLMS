@@ -344,3 +344,19 @@ PLUGIN_YANDEX_TAG_TOP
 PLUGIN_YANDEX_TAG_NEWBIES
 	EN	Newbies
 	RU	По жанру
+
+PLUGIN_YANDEX_USE_NEW_RADIO_API_TITLE
+	EN	Use New Radio API (Experimental)
+	RU	Новый метод радиостанций (Экспериментально)
+
+PLUGIN_YANDEX_USE_NEW_RADIO_API_DESC
+	EN	Use the stateful rotor/session/new Yandex API for uninterrupted radio playback.
+	RU	Опция включает новый метод API Yandex (rotor/session/new). Потребует перезапуск радиостанции.
+
+PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE
+	EN	Remove duplicate tracks from Radio
+	RU	Удалять дублирующиеся треки из Радиостанции
+
+PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC
+	EN	When enabled, tracks that have already been played during the current radio session will not be added to the queue again.
+	RU	Если включено, треки, которые уже играли во время текущей сессии Радио, больше не будут добавляться в очередь.
