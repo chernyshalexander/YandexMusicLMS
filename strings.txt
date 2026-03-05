@@ -13,6 +13,18 @@ PLUGIN_YANDEX_MUSIC_TOKEN_DESC
 	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
 	RU	Добавьте OAuth token.
 
+PLUGIN_YANDEX_LOGGED_IN_AS
+	EN	Logged in as:
+	RU	Вы вошли как:
+
+PLUGIN_YANDEX_AUTH_FAILED
+	EN	Authentication failed. Please check your token.
+	RU	Ошибка авторизации. Проверьте ваш токен.
+
+PLUGIN_YANDEX_TOKEN_SET
+	EN	(Token is set)
+	RU	(Токен установлен)
+
 PLUGIN_YANDEX_MAX_BITRATE
 	EN	Maximum Audio Quality
 	RU	Максимальное качество звука
