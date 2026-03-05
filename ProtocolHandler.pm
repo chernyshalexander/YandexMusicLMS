@@ -1,3 +1,26 @@
+package Plugins::yandex::PipeStream;
+use base 'IO::File';
+
+# LMS (Slim::Player::Song, Slim::Networking::Async::HTTP) calls these methods
+# on the stream socket. IO::File doesn't have them, so we provide them here.
+sub contentType     { return ${*{$_[0]}}{contentType} || 'audio/flac' }
+sub inputBufferSize { return 65536 }
+sub canSeek         { return 0 }
+
+# LMS calls _sysread($buf, $size, $offset) on the stream object.
+# We implement it using Perl's sysread() directly on the pipe filehandle.
+sub _sysread {
+    my ($self, undef, $size, $offset) = @_;
+    return sysread($self, $_[1], $size, $offset || 0);
+}
+
+sub close {
+    my ($self) = @_;
+    # Close the pipe; the child processes (curl, openssl, ffmpeg) get SIGPIPE
+    CORE::close($self);
+}
+
+# ============================================================
 package Plugins::yandex::ProtocolHandler;
 
 use strict;
@@ -30,14 +53,71 @@ sub new {
 
     $log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
 
-    my $sock = $class->SUPER::new( {
-        url     => $streamUrl,
-        song    => $song,
-        client  => $client,
-    } ) || return;
+    my $sock;
 
-    # Устанавливаем тип контента
-    ${*$sock}{contentType} = 'audio/mpeg';
+    if ($streamUrl =~ m{^yandex-dec://([0-9a-fA-F]+):(.+)$}) {
+        my $key_hex = $1;
+        my $enc_url = $2;
+        $log->info("YANDEX: Opening curl|openssl|ffmpeg pipeline for ($enc_url)");
+        
+        # Build the decryption + demux pipeline
+        # 1. curl: fetch the encrypted HTTPS stream
+        # 2. openssl: decrypt AES-128-CTR with zero IV
+        # 3. ffmpeg: extract raw FLAC from the MP4 container
+        my $iv_hex = '00' x 32; # 16-byte all-zeros IV
+        my $pipeline = join(' | ',
+            "curl -s -L --max-redirs 5 " . _shell_quote($enc_url),
+            "openssl enc -d -aes-128-ctr -nosalt -nopad -K $key_hex -iv $iv_hex",
+            "ffmpeg -i pipe:0 -c:a flac -f flac pipe:1 2>/dev/null",
+        );
+        
+        $log->debug("YANDEX: Pipeline: $pipeline");
+        
+        # Open the pipeline for reading (stdout of ffmpeg)
+        open($sock, '-|', $pipeline) or do {
+            $log->error("YANDEX: Failed to open pipeline: $!");
+            return undef;
+        };
+        
+        binmode($sock);
+        bless $sock, 'Plugins::yandex::PipeStream';
+        ${*$sock}{yandex_pipeline} = 1;
+        ${*$sock}{contentType} = 'audio/flac';
+        $log->error("YANDEX: Pipeline opened OK, contentType=audio/flac");
+    } elsif ($streamUrl =~ m{^file://(.+)}) {
+        # Local decrypted FLAC file — open as filehandle directly (Fallback measure if needed)
+        my $filepath = $1;
+        $log->info("YANDEX: Opening local FLAC file: $filepath");
+        open(my $fh, '<:raw', $filepath) || do {
+            $log->error("YANDEX: Failed to open local file $filepath: $!");
+            return undef;
+        };
+
+        # Bless the filehandle as an IO::Handle so LMS can use it
+        require IO::Handle;
+        bless $fh, 'IO::Handle';
+
+        $sock = $fh;
+        ${*$sock}{contentType} = 'audio/flac';
+    } else {
+        $sock = $class->SUPER::new( {
+            url     => $streamUrl,
+            song    => $song,
+            client  => $client,
+        } ) || return;
+
+        # Determine content type based on cached format
+        my $content_type = 'audio/mpeg';
+        my $orig_url = $song->currentTrack ? $song->currentTrack->url : '';
+        if ($orig_url =~ /yandexmusic:\/\/(\d+)/) {
+            my $cache = Slim::Utils::Cache->new();
+            my $meta  = $cache->get('yandex_meta_' . $1);
+            if ($meta && ($meta->{format} || '') eq 'flac') {
+                $content_type = 'audio/flac';
+            }
+        }
+        ${*$sock}{contentType} = $content_type;
+    }
 
     # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
     # и отображал прогресс бар.
@@ -214,7 +294,16 @@ sub new {
 
 sub canDirectStreamSong {
     my ($class, $client, $song) = @_;
-    $log->info("YANDEX: Forcing proxy for streamUrl: " . $song->streamUrl());
+    my $streamUrl = $song->streamUrl() || '';
+
+    # Custom pipelines or local files — proxy through LMS for player compatibility
+    # yandex-dec is handled entirely by our inline _sysread so it MUST be proxied!
+    if ($streamUrl =~ m{^yandex-dec://} || $streamUrl =~ m{^file://}) {
+        $log->info("YANDEX: Custom/Local FLAC stream, using proxy: $streamUrl");
+        return 0;
+    }
+
+    $log->info("YANDEX: Forcing proxy for streamUrl: $streamUrl");
     return 0;
 }
 
@@ -256,17 +345,63 @@ sub getNextTrack {
         return;
     }
 
-    # Создаем объект трека. 
-    my $track = Plugins::yandex::Track->new({ id => $track_id },$yandex_client);
+    # Проверяем настройку качества: lossless = FLAC, иначе MP3
+    my $audio_quality = $prefs->get('audio_quality') || '320';
 
-    #  Вызываем АСИНХРОННЫЙ метод из Track.pm 
+    if ($audio_quality eq 'lossless') {
+        $log->info("YANDEX FLAC: Lossless mode enabled, trying FLAC for track $track_id");
+        $yandex_client->get_track_file_info_lossless($track_id, sub {
+            my $file_info = shift;
+
+            if ($file_info && $file_info->{url} && $file_info->{codec} =~ /flac/i) {
+                if ($file_info->{needs_decryption} && $file_info->{key}) {
+                    # Encrypted FLAC — stream decrypt on-the-fly via inline sysread
+                    $log->info("YANDEX FLAC: Got encrypted FLAC for track $track_id, setting up streaming decrypter");
+                    my $cache = Slim::Utils::Cache->new();
+                    if (my $meta = $cache->get('yandex_meta_' . $track_id)) {
+                        $meta->{format}  = 'flac';
+                        $meta->{bitrate} = 900000; # ~900kbps typical FLAC
+                        $cache->set('yandex_meta_' . $track_id, $meta, 3600);
+                    }
+                    
+                    my $internal_url = "yandex-dec://$file_info->{key}:$file_info->{url}";
+                    $song->streamUrl($internal_url);
+                    $successCb->();
+                } else {
+                    # Direct (unencrypted) FLAC stream — set streamUrl directly, no decryption needed
+                    my $codec = $file_info->{codec}; # e.g. 'flac-mp4' or 'flac'
+                    $log->info("YANDEX FLAC: Got direct FLAC stream for track $track_id (codec=$codec), streaming directly");
+                    my $cache = Slim::Utils::Cache->new();
+                    if (my $meta = $cache->get('yandex_meta_' . $track_id)) {
+                        $meta->{format}  = 'flac';
+                        $meta->{bitrate} = 900000; # ~900kbps typical FLAC
+                        $cache->set('yandex_meta_' . $track_id, $meta, 3600);
+                    }
+                    $song->streamUrl($file_info->{url});
+                    $successCb->();
+                }
+            } else {
+                # FLAC not available — fall back to MP3
+                $log->info("YANDEX FLAC: FLAC not available for track $track_id, falling back to MP3");
+                _get_mp3_url($track_id, $yandex_client, $song, $successCb, $errorCb);
+            }
+        });
+    } else {
+        _get_mp3_url($track_id, $yandex_client, $song, $successCb, $errorCb);
+    }
+}
+
+# Вспомогательная функция: получение MP3 URL через стандартный механизм
+sub _get_mp3_url {
+    my ($track_id, $yandex_client, $song, $successCb, $errorCb) = @_;
+
+    my $track = Plugins::yandex::Track->new({ id => $track_id }, $yandex_client);
     $track->get_direct_url(sub {
         my ($final_url, $error, $bitrate) = @_;
 
         if ($final_url) {
-            $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || "unknown"));
-            
-            # Сохраняем битрейт в кеш, если он есть
+            $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || 'unknown'));
+
             if ($bitrate) {
                 my $cache = Slim::Utils::Cache->new();
                 if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
@@ -275,21 +410,84 @@ sub getNextTrack {
                 }
             }
 
-            # Устанавливаем реальную ссылку в объект песни
             $song->streamUrl($final_url);
-            
-            # Сообщаем об успехе
             $successCb->();
         } else {
             $log->error("YANDEX: ASYNC URL resolution failed: $error");
-            # Сообщаем об ошибке
             $errorCb->($error);
         }
     });
 }
 
+# -------------------------------------------------------------------------
+# ПЕРЕХВАТ ИНТЕРФЕЙСА ЧТЕНИЯ ДЛЯ ДЕШИФРОВКИ AES-CTR
+# -------------------------------------------------------------------------
+sub _sysread {
+    use bytes; # Важно для работы с бинарным потоком
+    my ($self, undef, $size, $offset) = @_;
+    
+    # Pipeline mode: data comes from a spawned curl|openssl|ffmpeg process
+    # Use Perl's built-in sysread() since this is a regular pipe filehandle,
+    # not an LMS socket object (SUPER::_sysread would fail on it).
+    if (${*$self}{yandex_pipeline}) {
+        my $bytes = sysread($self, $_[1], $size, $offset || 0);
+        $log->debug("YANDEX: pipeline sysread returned " . (defined($bytes) ? $bytes : 'undef') . " bytes");
+        return $bytes;
+    }
 
-sub getFormatForURL { 'mp3' }
+    my $cipher = ${*$self}{yandex_cipher};
+
+    # Если нет шифрования (MP3 или незашифрованный FLAC) — читаем данные как обычно
+    if (!$cipher) {
+        return $self->SUPER::_sysread($_[1], $size, $offset);
+    }
+
+    # Inline AES-CTR path (legacy/future — not used for flac-mp4 pipeline)
+    my $bytes_read = $self->SUPER::_sysread(my $buffer, $size, 0);
+    return $bytes_read if !defined($bytes_read) || $bytes_read == 0;
+
+    my $decrypted = $cipher->decrypt($buffer);
+    ${*$self}{yandex_bytes_in} += length($decrypted);
+    $log->debug("YANDEX: _sysread decrypted " . length($decrypted) . " bytes");
+    substr($_[1], $offset || 0) = $decrypted;
+    return length($decrypted);
+}
+
+sub _shell_quote {
+    my $str = shift;
+    $str =~ s/'/'\\''/g;
+    return "'$str'";
+}
+
+
+
+sub getFormatForURL {
+    my ($class, $url) = @_;
+    
+    # yandex-dec:// is our piped (curl|openssl|ffmpeg) stream
+    # Output is always raw FLAC after the pipeline
+    if ($url =~ m{^yandex-dec://}) {
+        return 'flc';
+    }
+
+    if ($url =~ m{^file://.*\.flac$}) {
+        return 'flc';
+    }
+
+    # Check if we cached a FLAC format for this URL (set when FLAC stream is resolved)
+    if ($url && $url =~ /yandexmusic:\/\/(\d+)/) {
+        my $track_id = $1;
+        my $cache = Slim::Utils::Cache->new();
+        my $meta = $cache->get('yandex_meta_' . $track_id);
+        if ($meta && ($meta->{format} || '') eq 'flac') {
+            # Same logic here for the original track URLs
+            # If we know it's FLAC but it's often in MP4, we should check the actual codec if we had it cached
+            # For now, let's look at the meta to see if we flagged it as needing aac transport
+            return 'aac';
+        }
+    }
+    return 'mp3';
+}
 sub isRemote { 1 }
 sub isAudio { 1 }
 
@@ -317,6 +515,7 @@ sub getMetadataFor {
                 }
             };
 
+            my $format = $cached_meta->{format} || 'mp3';
             return {
                 title    => $cached_meta->{title},
                 artist   => $cached_meta->{artist},
@@ -324,7 +523,7 @@ sub getMetadataFor {
                 cover    => $cached_meta->{cover},
                 icon     => $cached_meta->{cover},
                 bitrate  => sprintf("%.0fkbps", $bitrate/1000), # UI format
-                type     => 'mp3',
+                type     => $format,
             };
         }
     }

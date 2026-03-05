@@ -6,7 +6,12 @@ use Slim::Utils::Log;
 use Plugins::yandex::RequestAsync;
 use Plugins::yandex::TrackShort;
 use Plugins::yandex::Track;
+use Digest::SHA qw(hmac_sha256);
+use MIME::Base64 qw(encode_base64);
 
+# Signing key for get-file-info (same as DEFAULT_SIGN_KEY in yandex-music-api)
+my $SIGN_KEY = 'p93jhgh689SBReK6ghtw62';
+my $GET_FILE_INFO_CODECS = 'flac,flac-mp4,aac-mp4,aac,he-aac,mp3,he-aac-mp4';
 
 my $log = logger('plugin.yandex');
 sub new {
@@ -615,6 +620,75 @@ sub playlists_list {
             }
         },
         $error_callback,
+    );
+}
+
+
+# ---------------------------------------------------------------------------
+# FLAC (Lossless) Support
+# ---------------------------------------------------------------------------
+# Requests stream info from the get-file-info API with quality=lossless.
+# Returns a hashref { url, codec, key, needs_decryption } or undef on error.
+sub get_track_file_info_lossless {
+    my ($self, $track_id, $callback, $error_callback) = @_;
+
+    my $timestamp = time();
+
+    # Build sign string: ts + trackId + quality + codecs (commas stripped) + transports
+    # This matches the yandex-music-downloader-realflac reference implementation.
+    my $codecs_for_sign = $GET_FILE_INFO_CODECS;
+    $codecs_for_sign =~ s/,//g;
+    my $param_string = "${timestamp}${track_id}lossless${codecs_for_sign}encraw";
+
+    my $hmac_bytes = hmac_sha256($param_string, $SIGN_KEY);
+    # Base64 encode, strip trailing newline, remove last char (Yandex expects 43-char sign, not 44)
+    my $sign = encode_base64($hmac_bytes, '');
+    $sign = substr($sign, 0, length($sign) - 1);
+
+    my $url = 'https://api.music.yandex.net/get-file-info';
+    my $params = {
+        'ts'         => $timestamp,
+        'trackId'    => $track_id,
+        'quality'    => 'lossless',
+        'codecs'     => $GET_FILE_INFO_CODECS,
+        'transports' => 'encraw',
+        'sign'       => $sign,
+    };
+
+    $log->info("YANDEX FLAC: Requesting lossless info for track $track_id");
+
+    $self->{request}->get(
+        $url,
+        $params,
+        sub {
+            my $result = shift;
+
+            # API response: { result: { downloadInfo: { url, codec, key?, ... } }, invocationInfo: {...} }
+            my $info;
+            if (ref $result eq 'HASH' && ref $result->{result} eq 'HASH' && ref $result->{result}{downloadInfo} eq 'HASH') {
+                $info = $result->{result}{downloadInfo};
+            }
+
+            if ($info && $info->{url}) {
+                my $parsed = {
+                    url              => $info->{url},
+                    codec            => $info->{codec} || '',
+                    needs_decryption => (exists $info->{key} ? 1 : 0),
+                };
+                $parsed->{key} = $info->{key} if exists $info->{key};
+
+                $log->info("YANDEX FLAC: Got lossless info for track $track_id: codec=" . $parsed->{codec} . ", encrypted=" . $parsed->{needs_decryption});
+                $callback->($parsed);
+            } else {
+                $log->warn("YANDEX FLAC: No lossless stream available for track $track_id");
+                $callback->(undef);
+            }
+        },
+        sub {
+            my $err = shift;
+            $log->warn("YANDEX FLAC: get-file-info failed for track $track_id: $err");
+            $callback->(undef); # Fail gracefully, caller will fall back to MP3
+        },
     );
 }
 

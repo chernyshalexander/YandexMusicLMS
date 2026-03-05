@@ -60,6 +60,7 @@ sub initPlugin {
     # Регистрация протокола
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
+    Slim::Player::ProtocolHandlers->registerHandler('yandex-dec',  'Plugins::yandex::ProtocolHandler');
 
     # Подписка на события плеера (newsong, jump, stop, clear) для отслеживания пропусков
     Slim::Control::Request::subscribe(

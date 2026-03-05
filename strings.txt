@@ -13,13 +13,13 @@ PLUGIN_YANDEX_MUSIC_TOKEN_DESC
 	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
 	RU	Добавьте OAuth token.
 
-PLUGIN_YANDEX_MAX_BITRATE
-	EN	Maximum Audio Quality
-	RU	Максимальное качество звука
+PLUGIN_YANDEX_AUDIO_QUALITY
+	EN	Audio Quality
+	RU	Качество звука
 
-PLUGIN_YANDEX_MAX_BITRATE_DESC
-	EN	Select the maximum allowed bitrate for streaming tracks.
-	RU	Выберите максимальный разрешенный битрейт для загрузки треков.
+PLUGIN_YANDEX_AUDIO_QUALITY_DESC
+	EN	Select audio quality. Lossless FLAC requires an active Yandex Plus subscription.
+	RU	Выберите качество звука. Lossless FLAC требует подписки Яндекс Плюс.
 
 PLUGIN_YANDEX_SEARCH
 	EN	Search

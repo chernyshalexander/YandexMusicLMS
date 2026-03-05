@@ -23,7 +23,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(token menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates));
+    return ($prefs, qw(token menuLocation streamingQuality translitSearch audio_quality use_new_radio_api remove_duplicates));
 }
 
 # Always end with a 1 to make Perl happy

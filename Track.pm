@@ -84,7 +84,9 @@ sub get_direct_url {
             return;
         }
 
-        my $max_bitrate = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate') || 320;
+        my $audio_quality = Slim::Utils::Prefs::preferences('plugin.yandex')->get('audio_quality') || '320';
+        # If lossless is selected but we're in the MP3 fallback path, use max quality (320)
+        my $max_bitrate = ($audio_quality eq 'lossless') ? 320 : int($audio_quality);
         my $target_info;
         
         # Sort available streams by bitrate descending
