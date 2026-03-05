@@ -1,8 +1,14 @@
 [% PROCESS settings/header.html %]
 
+[% IF pref_fullName %]
+[% WRAPPER setting title="PLUGIN_YANDEX_LOGGED_IN_AS" %]
+<div class="prefDesc"><b>[% pref_fullName | html %]</b></div>
+[% END %]
+[% END %]
+
 [% WRAPPER setting title="PLUGIN_YANDEX_MUSIC_TOKEN" desc="PLUGIN_YANDEX_MUSIC_TOKEN_DESC" %]
 <div class="prefDesc">
-    <input type="text" name="pref_token" id="pref_token" value="[% prefs.token %]" class="stdedit">
+    <input type="password" name="pref_token" id="pref_token" value="[% pref_tokenValue | html %]" class="stdedit">
 </div>
 [% END %]
 
