@@ -320,6 +320,7 @@ sub getMetadataFor {
             return {
                 title    => $cached_meta->{title},
                 artist   => $cached_meta->{artist},
+                album    => $cached_meta->{album},
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover},
                 icon     => $cached_meta->{cover},
