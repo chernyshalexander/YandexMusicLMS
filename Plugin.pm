@@ -347,8 +347,18 @@ sub _renderTrackList {
 
          my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
+         my $album_name = 'Unknown';
+         if ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && @{$track_object->{albums}}) {
+             $album_name = $track_object->{albums}[0]->{title};
+         }
+
+         my $line2 = $artist_name;
+         $line2 .= " \x{2022} " . $album_name if $album_name && $album_name ne 'Unknown';
+
          push @items, {
             name      => $artist_name . ' - ' . $track_title,
+            line1     => $track_title,
+            line2     => $line2,
             type      => 'audio',
             url       => $track_url,
             image     => $icon,
@@ -399,10 +409,16 @@ sub cache_track_metadata {
 
     my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
+    my $album_name = 'Unknown';
+    if ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && @{$track_object->{albums}}) {
+        $album_name = $track_object->{albums}[0]->{title};
+    }
+
     my $cache = Slim::Utils::Cache->new();
     $cache->set('yandex_meta_' . $track_id, {
         title    => $track_title,
         artist   => $artist_name,
+        album    => $album_name,
         duration => $duration_ms ? int($duration_ms / 1000) : 0,
         cover    => $icon,
         bitrate  => 192,
