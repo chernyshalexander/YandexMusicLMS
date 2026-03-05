@@ -35,7 +35,7 @@ use Plugins::yandex::ClientAsync;
 my $log;
 $log = Slim::Utils::Log->addLogCategory({
     'category'     => 'plugin.yandex',
-    'defaultLevel' => 'DEBUG',
+    'defaultLevel' => 'ERROR',
     'description'  => string('PLUGIN_YANDEX'),
 });
 
@@ -51,6 +51,7 @@ sub initPlugin {
 
     $prefs->init({
         token => '',
+        fullName => '',
         max_bitrate => 320,
         use_new_radio_api => 0,
         remove_duplicates => 1,
