@@ -55,7 +55,12 @@ sub get {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            $callback->($json);
+            if ($@) {
+                $log->warn("RequestAsync::get JSON parse error: $@\nRaw content: " . substr($content, 0, 500));
+                $callback->($content); # Fallback to raw content
+            } else {
+                $callback->($json);
+            }
         },
         sub {
             my ($http, $error) = @_;
