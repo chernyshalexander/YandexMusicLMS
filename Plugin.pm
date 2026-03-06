@@ -1,36 +1,21 @@
 package Plugins::yandex::Plugin;
 
 use strict;
-use utf8;
-use vars qw(@ISA);
-use File::Basename;
-use Cwd 'abs_path';
-use File::Spec;
-use feature qw(fc);
-use Data::Dumper;
-use Slim::Networking::SimpleAsyncHTTP;
-use Slim::Utils::Strings qw(string);
-use Slim::Utils::Strings qw(string cstring);
-use Slim::Utils::Prefs;
-use Slim::Utils::Cache;
-use Slim::Utils::Log;
-use Slim::Player::Song;
-use base qw(Slim::Plugin::OPMLBased);
-use URI::Escape;
-use URI::Escape qw(uri_escape_utf8);
-use Encode qw(encode decode);
-use Encode::Guess;
-use Slim::Player::ProtocolHandlers;
 use warnings;
-use base qw(Slim::Plugin::OPMLBased);
-use Slim::Utils::Log;
-use Slim::Utils::Prefs;
 use utf8;
-use URI::Escape;
-use URI::Escape qw(uri_escape_utf8);
-use Encode::Guess;
+use base qw(Slim::Plugin::OPMLBased);
+
+use Data::Dumper;
+use Encode qw(encode decode);
 use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::ClientAsync;
+use Slim::Networking::SimpleAsyncHTTP;
+use Slim::Player::ProtocolHandlers;
+use Slim::Utils::Cache;
+use Slim::Utils::Log;
+use Slim::Utils::Prefs;
+use Slim::Utils::Strings qw(string cstring);
+use URI::Escape qw(uri_escape_utf8);
 
 my $log;
 $log = Slim::Utils::Log->addLogCategory({

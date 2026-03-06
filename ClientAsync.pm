@@ -1,7 +1,6 @@
 package Plugins::yandex::ClientAsync;
 use strict;
 use warnings;
-use JSON::XS::VersionOneAndTwo;
 use Slim::Utils::Log;
 use Plugins::yandex::RequestAsync;
 use Plugins::yandex::TrackShort;
