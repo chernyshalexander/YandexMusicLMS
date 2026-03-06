@@ -151,7 +151,7 @@ sub get_raw {
     my $http = $self->_create_http_object(
         sub {
             my $http = shift;
-            # Передаем колбэку СЫРОЕ содержимое (строку), а не декодированный JSON
+            # Pass RAW content (string) to callback instead of decoded JSON
             $callback->($http->content());
         },
         sub {

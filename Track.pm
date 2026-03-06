@@ -8,7 +8,7 @@ use Digest::MD5 qw(md5_hex);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;
 
-# XML::Simple может быть причиной проблем
+# XML::Simple can be a cause of problems
 # use XML::Simple;
 
 
@@ -31,7 +31,7 @@ sub new {
     return $self;
 }
 
-#  асинхронный метод для получения инфы о загрузке 
+# asynchronous method to get download info 
 sub get_download_info {
     my $self = shift;
     my $cb = shift;
@@ -39,9 +39,9 @@ sub get_download_info {
 
     $log->info("Yandex Track: calling get_download_info");
 
-    # убедимся, что колбэк - это функция
+    # make sure callback is a function
     unless (defined $cb && ref($cb) eq 'CODE') {
-        # Логируем критическую ошибку и выходим
+        # Log critical error and exit
          $log->error("Yandex Track: get_download_info called without a valid callback!");
         return;
     }
@@ -50,19 +50,19 @@ sub get_download_info {
     
     $log->info("Yandex Track: get_download_info");
 
-    # Всегда используем асинхронный запрос
-    # Используем стандартный get, т.к. ответ гарантированно в JSON
+    # Always use asynchronous request
+    # Use standard get since response is guaranteed to be JSON
     $self->{client}->{request}->get(
         $url,
         undef,
         sub {
-            #  $result - это уже готовый хэш с данными
+            # $result is a prepared hash with data
             my $result = shift;
             $self->{download_info} = $result;
             $cb->($result);
         },
         sub {
-            #  $error_msg - это уже готовая строка с ошибкой
+            # $error_msg is a prepared string with error
             my $error_msg = shift;
             $cb->(undef, "HTTP request failed: $error_msg");
         }
@@ -71,7 +71,7 @@ sub get_download_info {
 
 
 
-# Асинхронный get_direct_url,  использующий централизованный запрос 
+# Asynchronous get_direct_url using centralized request 
 sub get_direct_url {
     my $self = shift;
     my $cb = shift;
@@ -112,12 +112,12 @@ sub get_direct_url {
 
         my $dw_url = $target_info->{downloadInfoUrl} . '&format=json';
 
-        # Используем get_raw, т.к. ответ может быть XML
+        # Use get_raw since response can be XML
         $self->{client}->{request}->get_raw(
             $dw_url,
             undef,
             sub {
-                #  $content - это raw строка с ответом
+                # $content is a raw string with response
                 my $content = shift;
                 
                   my $data = eval { decode_json($content) };
@@ -144,17 +144,17 @@ sub get_direct_url {
                     sub {
                         my $http = shift;
                         
-                        # Пытаемся получить код ответа и заголовки разными способами
+                        # Try to get response code and headers in different ways
                         my $code = $http->code || 200;
                         
-                        # Если это редирект (308, 301, 302)
+                        # If it's a redirect (308, 301, 302)
                         if ($code =~ /^30/) {
                             my $location;
-                            # Способ 1: через метод headers
+                            # Method 1: via headers method
                             if ($http->can('headers')) {
                                 $location = $http->headers->header('Location');
                             }
-                            # Способ 2: через params (иногда headers там)
+                            # Method 2: via params (sometimes headers are there)
                             elsif ($http->can('params') && $http->params && $http->params->{headers}) {
                                 $location = $http->params->{headers}->{'Location'};
                             }
@@ -183,7 +183,7 @@ sub get_direct_url {
                 $http_resolver->head($initial_direct_url);
             },
             sub {
-                # $error_msg - это строка
+                # $error_msg is a string
                 my $error_msg = shift;
                 $cb->(undef, "XML/JSON request failed: $error_msg");
             }
