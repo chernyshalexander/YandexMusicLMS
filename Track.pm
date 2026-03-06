@@ -2,7 +2,6 @@ package Plugins::yandex::Track;
 
 use strict;
 use warnings;
-use Data::Dumper;
 use JSON::XS::VersionOneAndTwo;
 use Digest::MD5 qw(md5_hex);
 use Slim::Utils::Log;

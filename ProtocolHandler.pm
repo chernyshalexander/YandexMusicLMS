@@ -5,7 +5,6 @@ use warnings;
 use Slim::Utils::Log;
 use Slim::Utils::Cache;
 use base qw(Slim::Player::Protocols::HTTPS);
-use JSON::XS;
 use URI::Escape;
 use Slim::Utils::Prefs;
 
