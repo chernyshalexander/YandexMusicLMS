@@ -4,6 +4,8 @@ use strict;
 use warnings;
 use Slim::Utils::Log;
 use Slim::Utils::Cache;
+use Plugins::yandex::Browse;
+
 use base qw(Slim::Player::Protocols::HTTPS);
 use URI::Escape;
 use Slim::Utils::Prefs;
@@ -114,7 +116,7 @@ sub new {
                                  }
                                  $added_count++;
                                      
-                                     Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+                                     Plugins::yandex::Browse::cache_track_metadata($track_obj);
                                      
                                      # Construct NEW url including extra params
                                      my $new_url = 'yandexmusic://' . $track_obj->{id} . 
@@ -168,7 +170,7 @@ sub new {
                                  }
                                  $added_count++;
                                      
-                                     Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+                                     Plugins::yandex::Browse::cache_track_metadata($track_obj);
                                      
                                      my $new_url = 'yandexmusic://' . $track_obj->{id} . 
                                                    '?rotor_session=' . URI::Escape::uri_escape_utf8($radio_session_id) . 
@@ -385,7 +387,7 @@ sub explodePlaylist {
                         $seen_map{$tid} = 1;
                         push @$seen_tracks, $tid;
                     }
-					Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+					Plugins::yandex::Browse::cache_track_metadata($track_obj);
                     
 					my $new_url = 'yandexmusic://' . $track_obj->{id} . 
                                   '?rotor_station=' . URI::Escape::uri_escape_utf8($station_id) . 
@@ -437,7 +439,7 @@ sub explodePlaylist {
                         push @$seen_tracks, $tid;
                     }
 					
-					Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+					Plugins::yandex::Browse::cache_track_metadata($track_obj);
 					
 					my $new_url = 'yandexmusic://' . $track_obj->{id} . 
                                   '?rotor_session=' . URI::Escape::uri_escape_utf8($radio_session_id) . 
@@ -466,7 +468,7 @@ sub explodePlaylist {
 			if ($album->{volumes}) {
 				foreach my $disks (@{$album->{volumes}}) {
 					push @tracks, map { 
-                        Plugins::yandex::Plugin::cache_track_metadata($_);
+                        Plugins::yandex::Browse::cache_track_metadata($_);
                         'yandexmusic://' . $_->{id} 
                     } @$disks;
 				}
@@ -483,7 +485,7 @@ sub explodePlaylist {
 			if ($playlist->{tracks}) {
 				foreach my $item (@{$playlist->{tracks}}) {
                     my $track_obj = $item->{track} ? $item->{track} : $item;
-                    Plugins::yandex::Plugin::cache_track_metadata($track_obj);
+                    Plugins::yandex::Browse::cache_track_metadata($track_obj);
 					push @tracks, 'yandexmusic://' . ($track_obj->{id});
 				}
 			}
@@ -496,7 +498,7 @@ sub explodePlaylist {
 		$yandex_client->get_artist_tracks($artist_id, sub {
 			my $tracks = shift;
 			my @items = map { 
-                Plugins::yandex::Plugin::cache_track_metadata($_);
+                Plugins::yandex::Browse::cache_track_metadata($_);
                 'yandexmusic://' . $_->{id} 
             } @$tracks;
 			$cb->(\@items);
@@ -530,7 +532,7 @@ sub explodePlaylist {
                         $pending_chunks--;
                         if ($pending_chunks == 0) {
                             my @items = map { 
-                                Plugins::yandex::Plugin::cache_track_metadata($_);
+                                Plugins::yandex::Browse::cache_track_metadata($_);
                                 'yandexmusic://' . $_->{id} 
                             } @all_tracks_detailed;
                             $cb->(\@items);
@@ -540,7 +542,7 @@ sub explodePlaylist {
                         $pending_chunks--;
                         if ($pending_chunks == 0) {
                             my @items = map { 
-                                Plugins::yandex::Plugin::cache_track_metadata($_);
+                                Plugins::yandex::Browse::cache_track_metadata($_);
                                 'yandexmusic://' . $_->{id} 
                             } @all_tracks_detailed;
                             $cb->(\@items);
