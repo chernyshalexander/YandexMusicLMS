@@ -15,7 +15,7 @@ sub new {
         track_id => $data->{id},
         album_id => $data->{albumId},
         timestamp => $data->{timestamp},
-        #track => $data->{track}, # частичная инфа
+        #track => $data->{track}, # partial info
         client     => $client,
     };
     bless $self, $class;
@@ -40,7 +40,7 @@ sub fetch_track {
                 $callback->(\$track_object);
             }
             else {
-                $error_callback->("Не удалось получить данные");
+                $error_callback->("Failed to get data");
             }
         },
         $error_callback,

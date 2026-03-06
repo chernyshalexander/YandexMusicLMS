@@ -42,7 +42,7 @@ $log = Slim::Utils::Log->addLogCategory({
 
 use constant MAX_RECENT => 10;
 my $prefs = preferences('plugin.yandex');
-# Добавляем переменную для хранения экземпляра клиента
+# Add variable to store client instance
 my $yandex_client_instance;
 
 
@@ -58,11 +58,11 @@ sub initPlugin {
     });
 
 
-    # Регистрация протокола
+    # Protocol registration
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
-    # Подписка на события плеера (newsong, jump, stop, clear) для отслеживания пропусков
+    # Subscription to player events (newsong, jump, stop, clear) to track skips
     Slim::Control::Request::subscribe(
         \&playerEventCallback,
         [['playlist'], ['newsong', 'jump', 'stop', 'clear']]
@@ -87,7 +87,7 @@ sub shutdownPlugin {
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
 }
 
-# Обработчик событий плеера для отправки обратной связи о пропуске трека (skip)
+# Player event handler for sending skip feedback
 sub playerEventCallback {
     my $request = shift;
     my $client  = $request->client() || return;
@@ -110,7 +110,7 @@ sub playerEventCallback {
             $client->pluginData('yandex_track_start_time', time());
             $client->pluginData('yandex_track_active', 1);
             
-            # Отправляем trackStarted, если это радио
+            # Send trackStarted if it's radio
             _handleRotorFeedback($client, 'trackStarted');
         } else {
             $client->pluginData('yandex_track_active', 0);
@@ -229,9 +229,9 @@ sub handleFeed {
     
     my $token = $prefs->get('token');
     unless ($token) {
-        $log->error("Токен не установлен. Проверьте настройки плагина.");
+        $log->error("Token not set. Check plugin settings.");
         $cb->([{
-            name => 'Ошибка: токен не установлен',
+            name => 'Error: token not set',
             type => 'text',
         }]);
         return;
@@ -490,7 +490,7 @@ sub _handleLikedTracks {
     );
 }
 
-#  метод для доступа к клиенту из других модулей
+# method for accessing client from other modules
 sub getClient {
     return $yandex_client_instance;
 }
@@ -1218,10 +1218,10 @@ sub clearRecentSearches {
 sub _handleRecentSearches {
     my ($client, $cb, $args, $yandex_client, $extra_args) = @_;
 
-    # Если мы пришли сюда для очистки истории
+    # If we've come here to clear history
     if ($extra_args && $extra_args->{clear_history}) {
         clearRecentSearches();
-        # После очистки просто показываем обновленное меню
+        # After clearing, just show the updated menu
     }
 
     my $items = [];

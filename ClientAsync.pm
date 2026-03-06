@@ -35,8 +35,8 @@ sub init {
                 $log->info("ClientAsync: account status retrieved successfully.");
                 $callback->($self);
             } else {
-                $log->info("Не удалось получить данные пользователя");
-                $error_callback->("Не удалось получить данные пользователя");
+                $log->info("Failed to get user data");
+                $error_callback->("Failed to get user data");
             }
         },
         $error_callback,
@@ -435,7 +435,7 @@ sub rotor_session_feedback {
         # station_id parameter? Usually format is radio-mobile-{type}-{tag}-default
         # In Python: from: description_seed.get_id_from()
         # For simplicity, we just won't send "from" unless specified. 
-        # python says: `from: str - id станции`. But without description_seed, it's hard to guess.
+        # python says: `from: str - station id`. But without description_seed, it's hard to guess.
         # Let's pass $track_id as the 'from' parameter since that's what ProtocolHandler used to do in old API (sending station ID there).
         if ($track_id) {
             $event->{'from'} = $track_id;
