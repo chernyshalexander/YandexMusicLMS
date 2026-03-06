@@ -11,7 +11,7 @@ use Slim::Utils::Prefs;
 require Slim::Player::Playlist;
 require Slim::Player::Source;
 require Slim::Control::Request;
-require Plugins::yandex::Track;
+
 
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
@@ -255,11 +255,8 @@ sub getNextTrack {
         return;
     }
 
-    # Create track object. 
-    my $track = Plugins::yandex::Track->new({ id => $track_id },$yandex_client);
-
-    # Calling ASYNCHRONOUS method from Track.pm 
-    $track->get_direct_url(sub {
+    # Request track stream URL directly using API.pm
+    $yandex_client->get_track_direct_url($track_id, sub {
         my ($final_url, $error, $bitrate) = @_;
 
         if ($final_url) {

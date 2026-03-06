@@ -57,8 +57,8 @@ sub handler {
 		if ($token && ($token ne ($oldToken || '') || !$prefs->get('pref_fullName'))) {
 			$log->info("Yandex Settings: Validating token...");
 			
-			require Plugins::yandex::ClientAsync;
-			my $yandex_client = Plugins::yandex::ClientAsync->new($token);
+			require Plugins::yandex::API;
+			my $yandex_client = Plugins::yandex::API->new($token);
 			
 			$yandex_client->init(
 				sub {

@@ -8,7 +8,7 @@ use base qw(Slim::Plugin::OPMLBased);
 use Data::Dumper;
 use Encode qw(encode decode);
 use Plugins::yandex::ProtocolHandler;
-use Plugins::yandex::ClientAsync;
+use Plugins::yandex::API;
 use Slim::Networking::SimpleAsyncHTTP;
 use Slim::Player::ProtocolHandlers;
 use Slim::Utils::Cache;
@@ -227,7 +227,7 @@ sub handleFeed {
         return;
     }
 
-    my $yandex_client = Plugins::yandex::ClientAsync->new($token);
+    my $yandex_client = Plugins::yandex::API->new($token);
 
     $yandex_client->init(
         sub {
@@ -282,7 +282,7 @@ sub _renderRootMenu {
     $cb->(\@items);
 }
 sub _renderTrackList {
-    my ($tracks, $cb, $title, $container_url) = @_;
+    my ($tracks, $cb, $title, $container_url, $params) = @_;
 
     my @items;
     
@@ -357,10 +357,17 @@ sub _renderTrackList {
          cache_track_metadata($track_object);
     }
 
-    $cb->({
+    my $result = {
         items => \@items,
         title => $title,
-    });
+    };
+    
+    if ($params) {
+        $result->{offset} = $params->{offset} if defined $params->{offset};
+        $result->{total}  = $params->{total} if defined $params->{total};
+    }
+
+    $cb->($result);
 }
 
 sub cache_track_metadata {
@@ -413,64 +420,58 @@ sub cache_track_metadata {
 sub _handleLikedTracks {
     my ($client, $cb, $args, $yandex_client) = @_;
 
+    my $index = $args->{index} || 0;
+    my $quantity = $args->{quantity} || 100;
+
     $yandex_client->users_likes_tracks(
         sub {
-            my $tracks_short = shift; # Array of TrackShort objects
+            my $tracks_short = shift; # Array of TrackShort objects (now HashRefs after our refactor)
             
-            # Extract IDs
-            my @track_ids = map { $_->{id} } @$tracks_short;
+            # Extract IDs and reverse for newest-first (matching Web UI)
+            my @track_ids = reverse map { $_->{id} } @$tracks_short;
             my $total_tracks = scalar @track_ids;
 
             if ($total_tracks == 0) {
-                # Empty list
                  _renderTrackList([], $cb, 'Favorite tracks');
                 return;
             }
 
-            my @all_tracks_detailed;
-            my $chunk_size = 50; 
-            my @chunks;
+            # Slice the IDs for the current page
+            my $end = $index + $quantity - 1;
+            $end = $total_tracks - 1 if $end >= $total_tracks;
             
-            # Split into chunks
-            while (@track_ids) {
-                push @chunks, [ splice(@track_ids, 0, $chunk_size) ];
-            }
-            
-            my $pending_chunks = scalar @chunks;
+            my @slice_ids = @track_ids[$index .. $end];
 
-            foreach my $chunk_ids (@chunks) {
-                $yandex_client->tracks(
-                    $chunk_ids,
-                    sub {
-                        my $tracks_chunk = shift; # Array of Track objects
-                        push @all_tracks_detailed, @$tracks_chunk;
-                        
-                        $pending_chunks--;
-                         if ($pending_chunks == 0) {
-                              _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks', 'yandexmusic://favorites/tracks');
-                         }
-                    },
-                    sub {
-                        my $error = shift;
-                        $log->error("Error fetching tracks chunk: $error");
-                        $pending_chunks--;
-                         if ($pending_chunks == 0) {
-                              _renderTrackList(\@all_tracks_detailed, $cb, 'Favorite tracks (Partial)', 'yandexmusic://favorites/tracks');
-                         }
-                    }
-                );
-            }
+            # Fetch detailed info for this slice 
+            $yandex_client->tracks(
+                \@slice_ids,
+                sub {
+                    my $tracks_detailed = shift; # Array of detailed track hashes
+                    
+                    # IMPORTANT: Server might not return them in the same order as requested.
+                    # We must re-sort them based on @slice_ids order.
+                    my %detailed_map = map { $_->{id} => $_ } @$tracks_detailed;
+                    my @sorted_tracks = map { $detailed_map{$_} } grep { exists $detailed_map{$_} } @slice_ids;
+                    
+                    # Store indices for 'Play All' to work correctly? 
+                    # Actually _renderTrackList just gives URLs to LMS.
+                    
+                    _renderTrackList(\@sorted_tracks, $cb, 'Favorite tracks', 'yandexmusic://favorites/tracks', {
+                        offset => $index,
+                        total  => $total_tracks,
+                    });
+                },
+                sub {
+                    my $error = shift;
+                    $log->error("Error fetching tracks details chunk for favorites: $error");
+                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => 'Favorite tracks' });
+                }
+            );
         },
         sub {
             my $error = shift;
             $log->error("Error retrieving favorite tracks list: $error");
-            $cb->({
-                items => [{
-                    name => "Error: $error",
-                    type => 'text',
-                }],
-                title => 'Favorite tracks',
-            });
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => 'Favorite tracks' });
         },
     );
 }
@@ -799,19 +800,33 @@ sub _handleSearchPlaylists {
 
 sub _handleLikedAlbums {
     my ($client, $cb, $args, $yandex_client) = @_;
+    my $index = $args->{index} || 0;
+    my $quantity = $args->{quantity} || 100;
 
     $yandex_client->users_likes_albums(
         sub {
-            my $albums = shift;
+            my $albums_all = shift;
             my @items;
             my $has_podcasts = 0;
 
-            foreach my $album (@$albums) {
+            # 1. Filter and reverse first
+            my @filtered_albums;
+            foreach my $album (reverse @$albums_all) {
                 if ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
                     $has_podcasts = 1;
-                    next; # Skip podcasts/audiobooks from Albums view
+                    next;
                 }
+                push @filtered_albums, $album;
+            }
 
+            my $total = scalar @filtered_albums;
+
+            # 2. Slice for pagination
+            my $end = $index + $quantity - 1;
+            $end = $total - 1 if $end >= $total;
+            my @slice = ($index <= $end) ? @filtered_albums[$index .. $end] : ();
+
+            foreach my $album (@slice) {
                 my $title = $album->{title} // 'Unknown Album';
                 my $artist = $album->{artists}[0]->{name} // 'Unknown Artist';
                 
@@ -832,12 +847,13 @@ sub _handleLikedAlbums {
                 };
             }
 
-            # Update preference
             $prefs->set('yandex_has_podcasts', $has_podcasts);
 
             $cb->({
                 items => \@items,
                 title => 'Favorite Albums',
+                offset => $index,
+                total => $total,
             });
         },
         sub {
@@ -905,13 +921,21 @@ sub _handleLikedPodcasts {
 
 sub _handleLikedArtists {
     my ($client, $cb, $args, $yandex_client) = @_;
+    my $index = $args->{index} || 0;
+    my $quantity = $args->{quantity} || 100;
 
     $yandex_client->users_likes_artists(
         sub {
-            my $artists = shift;
-            my @items;
+            my $artists_all = shift;
+            my @artists = reverse @$artists_all;
+            my $total = scalar @artists;
 
-            foreach my $artist (@$artists) {
+            my $end = $index + $quantity - 1;
+            $end = $total - 1 if $end >= $total;
+            my @slice = ($index <= $end) ? @artists[$index .. $end] : ();
+
+            my @items;
+            foreach my $artist (@slice) {
                 my $name = $artist->{name} // 'Unknown Artist';
                 
                 my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
@@ -933,6 +957,8 @@ sub _handleLikedArtists {
             $cb->({
                 items => \@items,
                 title => 'Favorite Artists',
+                offset => $index,
+                total => $total,
             });
         },
         sub {
@@ -947,6 +973,8 @@ sub _handleLikedArtists {
 
 sub _handleLikedPlaylists {
     my ($client, $cb, $args, $yandex_client) = @_;
+    my $index = $args->{index} || 0;
+    my $quantity = $args->{quantity} || 100;
 
     # 1. Fetch Liked Playlists
     $yandex_client->users_likes_playlists(
@@ -958,17 +986,27 @@ sub _handleLikedPlaylists {
                 sub {
                     my $user_playlists = shift;
                     
-                    # 3. Merge lists
-                    my @all_playlists = (@$liked_playlists, @$user_playlists);
-                    my @items;
+                    # 3. Merge and dedup
+                    my @all_playlists_raw = (@$liked_playlists, @$user_playlists);
+                    my @deduped;
                     my %seen_ids;
 
-                    foreach my $playlist (@all_playlists) {
-                        # Dedup based on kind and uid
+                    foreach my $playlist (reverse @all_playlists_raw) {
                         my $uid = $playlist->{owner}->{uid};
                         my $kind = $playlist->{kind};
                         next if $seen_ids{"$uid:$kind"}++;
+                        push @deduped, $playlist;
+                    }
+                    
+                    my $total = scalar @deduped;
+                    my $end = $index + $quantity - 1;
+                    $end = $total - 1 if $end >= $total;
+                    my @slice = ($index <= $end) ? @deduped[$index .. $end] : ();
 
+                    my @items;
+                    foreach my $playlist (@slice) {
+                        my $uid = $playlist->{owner}->{uid};
+                        my $kind = $playlist->{kind};
                         my $title = $playlist->{title} // 'Unknown Playlist';
                         my $owner = $playlist->{owner}->{name} // 'Unknown User';
                         
@@ -985,7 +1023,7 @@ sub _handleLikedPlaylists {
 
                         push @items, {
                             name => $title . ' (' . $owner . ')',
-                            type => 'playlist',
+                            type => 'link',
                             url => \&_handlePlaylist,
                             passthrough => [$yandex_client, $uid, $kind],
                             image => $icon,
@@ -995,45 +1033,23 @@ sub _handleLikedPlaylists {
 
                     $cb->({
                         items => \@items,
-                        title => 'Playlists',
+                        title => 'Favorite Playlists',
+                        offset => $index,
+                        total => $total,
                     });
                 },
                 sub {
                     my $error = shift;
                     $log->error("Error fetching user playlists: $error");
-                    # If user playlists fail, at least show liked ones
-                    my @items;
-                     foreach my $playlist (@$liked_playlists) {
-                        my $title = $playlist->{title} // 'Unknown Playlist';
-                        my $owner = $playlist->{owner}->{name} // 'Unknown User';
-                         my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
-                         if ($playlist->{cover}->{uri}) {
-                            $icon = "https://" . $playlist->{cover}->{uri};
-                            $icon =~ s/%%/200x200/;
-                        }
-                        push @items, {
-                            name => $title . ' (' . $owner . ')',
-                            type => 'playlist', 
-                            url => \&_handlePlaylist,
-                            passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
-                            image => $icon,
-                            play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
-                        };
-                    }
-                    $cb->({
-                        items => \@items,
-                         title => 'Playlists (Partial)',
-                    });
+                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => 'Favorite Playlists' });
                 }
             );
         },
         sub {
             my $error = shift;
-            $cb->({
-                items => [{ name => "Error: $error", type => 'text' }],
-                title => 'Favorite Playlists',
-            });
-        }
+            $log->error("Error retrieving favorite playlists: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => 'Favorite Playlists' });
+        },
     );
 }
 
