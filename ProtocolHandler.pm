@@ -17,7 +17,7 @@ require Plugins::yandex::Track;
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
 
-# 1. КОНСТРУКТОР 
+# 1. CONSTRUCTOR 
 sub new {
     my $class  = shift;
     my $args   = shift;
@@ -25,7 +25,7 @@ sub new {
     my $client    = $args->{client};
     my $song      = $args->{song};
     
-    # Берем URL, который должен быть уже установлен в getNextTrack
+    # Take URL that should already be set in getNextTrack
     my $streamUrl = $song->streamUrl() || return;
 
     $log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
@@ -36,18 +36,18 @@ sub new {
         client  => $client,
     } ) || return;
 
-    # Устанавливаем тип контента
+    # Set content type
     ${*$sock}{contentType} = 'audio/mpeg';
 
-    # Пробуем установить параметры потока явно, чтобы LMS знал, что это не бесконечный поток
-    # и отображал прогресс бар.
+    # Try to set stream parameters explicitly so LMS knows it's not an infinite stream
+    # and displays the progress bar.
 
     if ($client) {
          my $duration = $song->duration || 0;
          my $artist = 'Unknown';
          my $title = 'Unknown';
 
-         # Используем оригинальный URL трека (yandexmusic://...) для поиска в кеше
+         # Use original track URL (yandexmusic://...) to search in cache
          my $original_url = $song->currentTrack ? $song->currentTrack->url : $streamUrl;
          
          if (!$duration && $original_url =~ /yandexmusic:\/\/(\d+)/) {
@@ -66,7 +66,7 @@ sub new {
          }
 
          # -----------------------------------------------------------------------------------------
-         # РОТОР: Бесконечное радио и отправка фидбека при старте трека
+         # ROTOR: Infinite radio and sending feedback at track start
          # -----------------------------------------------------------------------------------------
          if ($original_url =~ /rotor_station=([^&]+)/) {
              my $station = URI::Escape::uri_unescape($1);
@@ -86,10 +86,10 @@ sub new {
 
              my $yandex_client = Plugins::yandex::Plugin->getClient();
              if ($yandex_client) {
-                 # Фидбек trackStarted уже отправляется из Plugin.pm (playerEventCallback), 
-                 # поэтому здесь мы его не отправляем повторно.
+                 # trackStarted feedback is already sent from Plugin.pm (playerEventCallback), 
+                 # so we don't send it again here.
                  
-                 # Проверяем длину очереди: если до конца осталось 2 или меньше треков, докидываем порцию новых
+                 # Check queue length: if 2 or fewer tracks left until the end, add a new portion
                  my $playlist_size = Slim::Player::Playlist::count($client);
                  my $current_index = Slim::Player::Source::playingSongIndex($client);
                  
@@ -192,11 +192,11 @@ sub new {
 
          $log->warn("YANDEX: Setting duration $duration and isLive=0 for song " . ($song->currentTrack ? $song->currentTrack->url : 'unknown'));
 
-         # Устанавливаем на переданном объекте $song (это объект Slim::Player::Song)
+         # Set on the passed $song object (which is a Slim::Player::Song object)
          $song->isLive(0);
          $song->duration($duration);
          
-         # Также обновляем мету через Slim::Music::Info, чтобы UI подхватил
+         # Also update meta via Slim::Music::Info so UI picks it up
          if ($song->currentTrack) {
              Slim::Music::Info::setDuration($song->currentTrack, $duration);
          }
@@ -206,11 +206,11 @@ sub new {
 }
 
 # --- 2. canDirectStreamSong
-# ПОЧЕМУ 0 (PROXY): Яндекс обрывает длительные соединения (Connection reset by peer).
-# Железные плееры и софтовые (SqueezeLite, SqueezePlay) и даже  качают поток со скоростью битрейта (~40kbps).
-# Через пару минут Яндекс разрывает соединение из-за "медленного" клиента.
-# Proxy-режим (0) заставляет сервер LMS быстро выкачать весь трек целиком (как браузер) 
-# во временный локальный файл (Buffered), а плееры уже тянут его по локальной сети без обрывов.
+# WHY 0 (PROXY): Yandex drops long connections (Connection reset by peer).
+# Hardware and software players (SqueezeLite, SqueezePlay) also may download at bitrate speed (~40kbps).
+# After a few minutes, Yandex drops the connection due to a "slow" client.
+# Proxy mode (0) forces the LMS server to quickly download the entire track (like a browser) 
+# into a temporary local file (Buffered), and players then pull it from the local network without drops.
 
 sub canDirectStreamSong {
     my ($class, $client, $song) = @_;
@@ -219,9 +219,9 @@ sub canDirectStreamSong {
 }
 
 # --- 3. canEnhanceHTTP
-# ПРИНУДИТЕЛЬНО ВКЛЮЧАЕМ БУФЕРИЗАЦИЮ (Buffered Mode = 2).
-# Без этого LMS может работать в режиме прямого прокси, скачивая данные со скоростью плеера.
-# Режим 2 заставляет LMS максимально быстро выкачать весь файл целиком в локальный .buf файл.
+# FORCIBLY ENABLE BUFFERING (Buffered Mode = 2).
+# Without this, LMS can work in direct proxy mode, downloading data at player speed.
+# Mode 2 forces LMS to download the entire file as quickly as possible into a local .buf file.
 sub canEnhanceHTTP {
     return 2; # 2 = BUFFERED constant in Slim::Player::Protocols::HTTP
 }
@@ -232,7 +232,7 @@ sub scanUrl {
     $args->{cb}->( $args->{song}->currentTrack() );
 }
 
-# 4. getNextTrack (АСИНХРОННЫЙ ВЫЗОВ) 
+# 4. getNextTrack (ASYNCHRONOUS CALL) 
 sub getNextTrack {
     my ($class, $song, $successCb, $errorCb) = @_;
 
@@ -247,7 +247,7 @@ sub getNextTrack {
     }
     $track_id = $1;
 
-    # Получаем экземпляр клиента из Plugin
+    # Get client instance from Plugin
     my $yandex_client = Plugins::yandex::Plugin->getClient();
 
     unless ($yandex_client) {
@@ -256,17 +256,17 @@ sub getNextTrack {
         return;
     }
 
-    # Создаем объект трека. 
+    # Create track object. 
     my $track = Plugins::yandex::Track->new({ id => $track_id },$yandex_client);
 
-    #  Вызываем АСИНХРОННЫЙ метод из Track.pm 
+    # Calling ASYNCHRONOUS method from Track.pm 
     $track->get_direct_url(sub {
         my ($final_url, $error, $bitrate) = @_;
 
         if ($final_url) {
             $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || "unknown"));
             
-            # Сохраняем битрейт в кеш, если он есть
+            # Save bitrate to cache if it exists
             if ($bitrate) {
                 my $cache = Slim::Utils::Cache->new();
                 if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
@@ -275,14 +275,14 @@ sub getNextTrack {
                 }
             }
 
-            # Устанавливаем реальную ссылку в объект песни
+            # Set the real link in the song object
             $song->streamUrl($final_url);
             
-            # Сообщаем об успехе
+            # Report success
             $successCb->();
         } else {
             $log->error("YANDEX: ASYNC URL resolution failed: $error");
-            # Сообщаем об ошибке
+            # Report error
             $errorCb->($error);
         }
     });
@@ -296,7 +296,7 @@ sub isAudio { 1 }
 sub getMetadataFor {
     my ($class, $client, $url) = @_;
     
-    # Пытаемся найти в кеше
+    # Try to find in cache
     if ($url =~ /yandexmusic:\/\/(\d+)/) {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
@@ -305,12 +305,12 @@ sub getMetadataFor {
             
             my $bitrate = $cached_meta->{bitrate} || 192000;
             
-            # Сохраняем значения в БД LMS для корректной работы перемотки (canSeek)
+            # Save values to LMS DB for correct seeking (canSeek) operation
             eval {
                 Slim::Music::Info::setBitrate($url, $bitrate);
                 Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
                 
-                # Обновляем также объекты трека, если сейчас что-то играет
+                # Also update track objects if something is playing right now
                 if ($client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url) {
                     $client->playingSong()->bitrate($bitrate);
                     $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
@@ -367,13 +367,13 @@ sub explodePlaylist {
             }
         }
 		
-		# Шлем сигнал начала радио (radioStarted)
+		# Send radio start signal (radioStarted)
 		$yandex_client->rotor_station_feedback($station_id, 'radioStarted', undef, undef, 0, sub {}, sub {});
 		
-		# Очищаем историю прослушанных треков при новом запуске радиостанции
+		# Clear listened tracks history when starting a new radio station
 		$prefs->client($client)->set('yandex_seen_tracks', []) if $client;
 		
-		# Получаем первые треки
+		# Get first tracks
 		$yandex_client->rotor_station_tracks($station_id, undef, sub {
 			my $result = shift;
 			my @tracks;
