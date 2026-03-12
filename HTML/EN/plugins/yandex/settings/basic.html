@@ -58,4 +58,18 @@
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_PODCASTS" desc="PLUGIN_YANDEX_SHOW_PODCASTS_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_podcasts" id="pref_show_podcasts" [% IF prefs.show_podcasts
+        %]checked[% END %]>
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_AUDIOBOOKS" desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_audiobooks" id="pref_show_audiobooks" [% IF prefs.show_audiobooks
+        %]checked[% END %]>
+</div>
+[% END %]
+
 [% PROCESS settings/footer.html %]
