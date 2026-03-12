@@ -49,6 +49,14 @@ PLUGIN_YANDEX_CHART
 	EN	Hot Tracks
 	RU	Горячие треки
 
+PLUGIN_YANDEX_SHOW_CHART
+	EN	Show Hot Tracks
+	RU	Показывать Горячие треки
+
+PLUGIN_YANDEX_SHOW_CHART_DESC
+	EN	Display the Hot Tracks (trending tracks) menu item in the main navigation
+	RU	Показывать пункт "Горячие треки" (популярные треки) в главном меню
+
 PLUGIN_YANDEX_FOR_YOU
 	EN	For You
 	RU	Для вас
