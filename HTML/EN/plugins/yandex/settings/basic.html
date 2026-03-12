@@ -18,7 +18,8 @@
         <option value="64" [% IF prefs.max_bitrate==64 %]selected[% END %]>64 kbps</option>
         <option value="128" [% IF prefs.max_bitrate==128 %]selected[% END %]>128 kbps</option>
         <option value="192" [% IF prefs.max_bitrate==192 %]selected[% END %]>192 kbps</option>
-        <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps</option>
+        <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps MP3</option>
+        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)</option>
     </select>
 </div>
 [% END %]

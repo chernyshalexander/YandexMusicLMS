@@ -30,8 +30,8 @@ PLUGIN_YANDEX_MAX_BITRATE
 	RU	Максимальное качество звука
 
 PLUGIN_YANDEX_MAX_BITRATE_DESC
-	EN	Select the maximum allowed bitrate for streaming tracks.
-	RU	Выберите максимальный разрешенный битрейт для загрузки треков.
+	EN	Select the maximum allowed quality for streaming tracks. FLAC requires a Yandex Music subscription with lossless support.
+	RU	Выберите максимальное качество для стриминга. FLAC требует подписки Яндекс Музыки с поддержкой lossless.
 
 PLUGIN_YANDEX_SEARCH
 	EN	Search
