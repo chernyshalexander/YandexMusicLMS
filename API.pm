@@ -871,11 +871,15 @@ sub albums {
     return unless $album_ids && @$album_ids;
 
     my $url = 'https://api.music.yandex.net/albums';
-    my $query = join(',', @$album_ids);
+    my @ids = ref $album_ids eq 'ARRAY' ? @$album_ids : ($album_ids);
 
-    $self->get(
+    my $data = {
+        'album-ids' => \@ids,
+    };
+
+    $self->post_form(
         $url,
-        { albumId => $query },
+        $data,
         sub {
             my $result = shift;
             if (exists $result->{result}) {
