@@ -42,6 +42,8 @@ sub initPlugin {
         use_new_radio_api => 0,
         remove_duplicates => 1,
         show_chart => 1,
+        show_new_releases => 1,
+        show_new_playlists => 1,
     });
 
 
@@ -260,6 +262,28 @@ sub _renderRootMenu {
             url  => \&Plugins::yandex::Browse::_handleChart,
             passthrough => [$client_instance],
             image => 'plugins/yandex/html/images/focus.png',
+        };
+    }
+
+    # Add New Releases menu item if setting is enabled
+    if ($prefs->get('show_new_releases')) {
+        push @items, {
+            name => cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES'),
+            type => 'link',
+            url  => \&Plugins::yandex::Browse::_handleNewReleases,
+            passthrough => [$client_instance],
+            image => 'html/images/albums.png',
+        };
+    }
+
+    # Add New Playlists menu item if setting is enabled
+    if ($prefs->get('show_new_playlists')) {
+        push @items, {
+            name => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'),
+            type => 'link',
+            url  => \&Plugins::yandex::Browse::_handleNewPlaylists,
+            passthrough => [$client_instance],
+            image => 'html/images/playlists.png',
         };
     }
 
