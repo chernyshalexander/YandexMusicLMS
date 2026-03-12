@@ -37,4 +37,11 @@
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_CHART" desc="PLUGIN_YANDEX_SHOW_CHART_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_chart" id="pref_show_chart" [% IF prefs.show_chart
+        %]checked[% END %]>
+</div>
+[% END %]
+
 [% PROCESS settings/footer.html %]

@@ -41,6 +41,7 @@ sub initPlugin {
         max_bitrate => 320,
         use_new_radio_api => 0,
         remove_duplicates => 1,
+        show_chart => 1,
     });
 
 
@@ -248,15 +249,21 @@ sub handleFeed {
 
 sub _renderRootMenu {
     my ($client, $cb, $client_instance) = @_;
-    
-    my @items = (
-        {
+
+    my @items;
+
+    # Add Chart menu item if setting is enabled
+    if ($prefs->get('show_chart')) {
+        push @items, {
             name => cstring($client, 'PLUGIN_YANDEX_CHART'),
             type => 'link',
             url  => \&Plugins::yandex::Browse::_handleChart,
             passthrough => [$client_instance],
-            image => 'html/images/charts.png',
-        },
+            image => 'plugins/yandex/html/images/focus.png',
+        };
+    }
+
+    push @items, (
         {
             name => cstring($client, 'PLUGIN_YANDEX_FOR_YOU'),
             type => 'link',
