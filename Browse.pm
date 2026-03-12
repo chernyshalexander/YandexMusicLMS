@@ -1164,28 +1164,15 @@ sub _handlePodcasts {
                 return;
             }
 
-            # Fetch detailed album information for each podcast
-            my @albums;
-            my $pending = scalar(@$podcast_ids);
-
-            foreach my $album_id (@$podcast_ids) {
-                $yandex_client->album($album_id, sub {
-                    my $album = shift;
-                    if ($album) {
-                        push @albums, $album;
-                    }
-                    $pending--;
-                    if ($pending == 0) {
-                        _renderAlbumList($yandex_client, \@albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
-                    }
-                }, sub {
-                    $log->error("Error fetching podcast album: $_[0]");
-                    $pending--;
-                    if ($pending == 0) {
-                        _renderAlbumList($yandex_client, \@albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
-                    }
-                });
-            }
+            # Fetch detailed album information for all podcasts in one request
+            $yandex_client->albums($podcast_ids, sub {
+                my $albums = shift;
+                _renderAlbumList($yandex_client, $albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+            }, sub {
+                my $error = shift;
+                $log->error("Error fetching podcast albums: $error");
+                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+            });
         },
         sub {
             my $error = shift;

@@ -907,6 +907,19 @@ sub get_track_direct_url {
     });
 }
 
+sub album {
+    my ($self, $album_id, $callback, $error_callback) = @_;
+
+    $self->albums([$album_id], sub {
+        my $albums = shift;
+        if ($albums && @$albums) {
+            $callback->($albums->[0]);
+        } else {
+            $error_callback->("Album not found");
+        }
+    }, $error_callback);
+}
+
 sub albums {
     my ($self, $album_ids, $callback, $error_callback) = @_;
 
