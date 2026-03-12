@@ -469,11 +469,10 @@ sub _handleFavorites {
     my @items = (
         {
             name => cstring($client, 'PLUGIN_YANDEX_TRACKS'),
-            type => 'playlist',
+            type => 'link',
             url  => \&_handleLikedTracks,
             passthrough => [$yandex_client],
             image => 'html/images/musicfolder.png',
-            play => 'yandexmusic://favorites/tracks',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_ALBUMS'),
@@ -540,7 +539,7 @@ sub _handleLikedTracks {
     my ($client, $cb, $args, $yandex_client) = @_;
 
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 100;
+    my $quantity = $args->{quantity} || 500;
 
     $yandex_client->users_likes_tracks(
         sub {
@@ -587,7 +586,7 @@ sub _handleLikedTracks {
 sub _handleLikedAlbums {
     my ($client, $cb, $args, $yandex_client) = @_;
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 100;
+    my $quantity = $args->{quantity} || 500;
 
     $yandex_client->users_likes_albums(
         sub {
@@ -704,7 +703,7 @@ sub _handleLikedPodcasts {
 sub _handleLikedArtists {
     my ($client, $cb, $args, $yandex_client) = @_;
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 100;
+    my $quantity = $args->{quantity} || 500;
 
     $yandex_client->users_likes_artists(
         sub {
@@ -756,7 +755,7 @@ sub _handleLikedArtists {
 sub _handleLikedPlaylists {
     my ($client, $cb, $args, $yandex_client) = @_;
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 100;
+    my $quantity = $args->{quantity} || 500;
 
     $yandex_client->users_likes_playlists(
         sub {

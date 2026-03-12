@@ -28,7 +28,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart));
 }
 
 sub handler {

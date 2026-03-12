@@ -263,7 +263,7 @@ sub getNextTrack {
 
         if ($final_url) {
             $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || "unknown"));
-            
+
             # Save bitrate to cache if it exists
             if ($bitrate) {
                 my $cache = Slim::Utils::Cache->new();
@@ -275,7 +275,7 @@ sub getNextTrack {
 
             # Set the real link in the song object
             $song->streamUrl($final_url);
-            
+
             # Report success
             $successCb->();
         } else {
@@ -503,6 +503,65 @@ sub explodePlaylist {
             } @$tracks;
 			$cb->(\@items);
 		}, sub { $cb->([]) });
+	}
+	# yandexmusic://chart
+	elsif ($url =~ /yandexmusic:\/\/chart/) {
+		$yandex_client->get_chart(
+			'',
+			sub {
+				my $tracks_short = shift;
+				my @track_ids;
+
+				foreach my $track_short (@$tracks_short) {
+					my $track_data = $track_short->{track} // $track_short;
+					if ($track_data->{id}) {
+						push @track_ids, $track_data->{id};
+					}
+				}
+
+				if (!@track_ids) {
+					$cb->([]);
+					return;
+				}
+
+				my @all_tracks_detailed;
+				my $chunk_size = 50;
+				my @chunks;
+				while (@track_ids) {
+					push @chunks, [ splice(@track_ids, 0, $chunk_size) ];
+				}
+				my $pending_chunks = scalar @chunks;
+
+				foreach my $chunk_ids (@chunks) {
+					$yandex_client->tracks(
+						$chunk_ids,
+						sub {
+							my $tracks_chunk = shift;
+							push @all_tracks_detailed, @$tracks_chunk;
+							$pending_chunks--;
+							if ($pending_chunks == 0) {
+								my @items = map {
+									Plugins::yandex::Browse::cache_track_metadata($_);
+									'yandexmusic://' . $_->{id}
+								} @all_tracks_detailed;
+								$cb->(\@items);
+							}
+						},
+						sub {
+							$pending_chunks--;
+							if ($pending_chunks == 0) {
+								my @items = map {
+									Plugins::yandex::Browse::cache_track_metadata($_);
+									'yandexmusic://' . $_->{id}
+								} @all_tracks_detailed;
+								$cb->(\@items);
+							}
+						}
+					);
+				}
+			},
+			sub { $cb->([]) }
+		);
 	}
 	# yandexmusic://favorites/tracks
 	elsif ($url =~ /yandexmusic:\/\/favorites\/tracks/) {
