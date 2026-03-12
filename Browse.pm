@@ -1187,19 +1187,30 @@ sub _handleAudiobooks {
 
     $yandex_client->get_audiobooks(
         sub {
-            my $audiobook_data = shift;
+            my $audiobook_ids = shift;
 
-            if (!$audiobook_data || scalar(@$audiobook_data) == 0) {
+            if (!$audiobook_ids || scalar(@$audiobook_ids) == 0) {
                 _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
                 return;
             }
 
-            # Audiobooks come as album objects (similar to new_releases)
-            _renderAlbumList($yandex_client, $audiobook_data, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+            # Fetch detailed album information for all audiobooks
+            $yandex_client->albums(
+                $audiobook_ids,
+                sub {
+                    my $audiobooks_detailed = shift;
+                    _renderAlbumList($yandex_client, $audiobooks_detailed, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+                },
+                sub {
+                    my $error = shift;
+                    $log->error("Error fetching audiobooks details: $error");
+                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS') });
+                }
+            );
         },
         sub {
             my $error = shift;
-            $log->error("Error fetching audiobooks: $error");
+            $log->error("Error retrieving audiobooks: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS') });
         },
     );
