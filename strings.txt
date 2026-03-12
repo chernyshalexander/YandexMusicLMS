@@ -81,6 +81,30 @@ PLUGIN_YANDEX_SHOW_NEW_PLAYLISTS_DESC
 	EN	Display the New Playlists menu item in the main navigation
 	RU	Показывать пункт "Новые плейлисты" в главном меню
 
+PLUGIN_YANDEX_PODCASTS
+	EN	Podcasts
+	RU	Подкасты
+
+PLUGIN_YANDEX_SHOW_PODCASTS
+	EN	Show Podcasts
+	RU	Показывать Подкасты
+
+PLUGIN_YANDEX_SHOW_PODCASTS_DESC
+	EN	Display the Podcasts menu item in the main navigation
+	RU	Показывать пункт "Подкасты" в главном меню
+
+PLUGIN_YANDEX_AUDIOBOOKS
+	EN	Audiobooks
+	RU	Аудиокниги
+
+PLUGIN_YANDEX_SHOW_AUDIOBOOKS
+	EN	Show Audiobooks
+	RU	Показывать Аудиокниги
+
+PLUGIN_YANDEX_SHOW_AUDIOBOOKS_DESC
+	EN	Display the Audiobooks menu item in the main navigation
+	RU	Показывать пункт "Аудиокниги" в главном меню
+
 PLUGIN_YANDEX_FOR_YOU
 	EN	For You
 	RU	Для вас
