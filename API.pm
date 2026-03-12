@@ -640,6 +640,31 @@ sub landing_personal_playlists {
     );
 }
 
+sub get_chart {
+    my ($self, $chart_option, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/chart';
+    if ($chart_option) {
+        $url .= '/' . $chart_option;
+    }
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{chart}) {
+                my $chart = $result->{result}->{chart};
+                my $tracks = $chart->{tracks} // [];
+                $callback->($tracks);
+            } else {
+                $error_callback->("Failed to get chart");
+            }
+        },
+        $error_callback,
+    );
+}
+
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/tags/' . $tag_id . '/playlist-ids';

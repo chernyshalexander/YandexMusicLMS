@@ -1024,6 +1024,55 @@ sub _translate {
     return ($translation && $translation ne $key) ? $translation : ucfirst($str);
 }
 
+sub _handleChart {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->get_chart(
+        '',
+        sub {
+            my $tracks_short = shift;
+
+            if (!$tracks_short || scalar(@$tracks_short) == 0) {
+                _renderTrackList([], $cb, cstring($client, 'PLUGIN_YANDEX_CHART'));
+                return;
+            }
+
+            # Extract track IDs from chart tracks (which may have .track field)
+            my @track_ids;
+            foreach my $track_short (@$tracks_short) {
+                my $track_data = $track_short->{track} // $track_short;
+                if ($track_data->{id}) {
+                    push @track_ids, $track_data->{id};
+                }
+            }
+
+            if (scalar(@track_ids) == 0) {
+                _renderTrackList([], $cb, cstring($client, 'PLUGIN_YANDEX_CHART'));
+                return;
+            }
+
+            # Fetch detailed track information
+            $yandex_client->tracks(
+                \@track_ids,
+                sub {
+                    my $tracks_detailed = shift;
+                    _renderTrackList($tracks_detailed, $cb, cstring($client, 'PLUGIN_YANDEX_CHART'), 'yandexmusic://chart');
+                },
+                sub {
+                    my $error = shift;
+                    $log->error("Error fetching chart tracks details: $error");
+                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_CHART') });
+                }
+            );
+        },
+        sub {
+            my $error = shift;
+            $log->error("Error retrieving chart: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_CHART') });
+        },
+    );
+}
+
 sub _handleForYou {
     my ($client, $cb, $args, $yandex_client) = @_;
     my @items = (

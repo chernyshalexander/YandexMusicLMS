@@ -251,6 +251,13 @@ sub _renderRootMenu {
     
     my @items = (
         {
+            name => cstring($client, 'PLUGIN_YANDEX_CHART'),
+            type => 'link',
+            url  => \&Plugins::yandex::Browse::_handleChart,
+            passthrough => [$client_instance],
+            image => 'html/images/charts.png',
+        },
+        {
             name => cstring($client, 'PLUGIN_YANDEX_FOR_YOU'),
             type => 'link',
             url  => \&Plugins::yandex::Browse::_handleForYou,
