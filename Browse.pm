@@ -1072,6 +1072,86 @@ sub _handleChart {
     );
 }
 
+sub _handleNewReleases {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->get_new_releases(
+        sub {
+            my $album_ids = shift;
+
+            if (!$album_ids || scalar(@$album_ids) == 0) {
+                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES'));
+                return;
+            }
+
+            # Fetch detailed album information
+            $yandex_client->albums(
+                $album_ids,
+                sub {
+                    my $albums_detailed = shift;
+                    _renderAlbumList($yandex_client, $albums_detailed, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES'));
+                },
+                sub {
+                    my $error = shift;
+                    $log->error("Error fetching new releases details: $error");
+                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES') });
+                }
+            );
+        },
+        sub {
+            my $error = shift;
+            $log->error("Error retrieving new releases: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES') });
+        },
+    );
+}
+
+sub _handleNewPlaylists {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->get_new_playlists(
+        sub {
+            my $playlists_data = shift;
+
+            if (!$playlists_data || scalar(@$playlists_data) == 0) {
+                _renderPlaylistList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                return;
+            }
+
+            # Fetch detailed playlist information for each playlist
+            my @items;
+            my $pending = scalar(@$playlists_data);
+
+            foreach my $pdata (@$playlists_data) {
+                my $uid = $pdata->{uid};
+                my $kind = $pdata->{kind};
+
+                $yandex_client->get_playlist($uid, $kind, sub {
+                    my $playlist = shift;
+                    if ($playlist) {
+                        push @items, $playlist;
+                    }
+                    $pending--;
+                    if ($pending == 0) {
+                        _renderPlaylistList($yandex_client, \@items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                    }
+                }, sub {
+                    $log->error("Error fetching playlist: $_[0]");
+                    $pending--;
+                    if ($pending == 0) {
+                        _renderPlaylistList($yandex_client, \@items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                    }
+                });
+            }
+        },
+        sub {
+            my $error = shift;
+            $log->error("Error retrieving new playlists: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS') });
+        },
+    );
+}
+
 sub _handleForYou {
     my ($client, $cb, $args, $yandex_client) = @_;
     my @items = (
@@ -1450,6 +1530,83 @@ sub cache_track_metadata {
         cover    => $icon,
         bitrate  => 192,
     }, '24h');
+}
+
+sub _renderAlbumList {
+    my ($yandex_client, $albums, $cb, $title) = @_;
+
+    my @items;
+
+    foreach my $album (@$albums) {
+        next unless $album;
+
+        my $album_id = $album->{id};
+        my $album_title = $album->{title} // 'Unknown';
+        my $artist_name = 'Unknown';
+
+        if ($album->{artists} && ref $album->{artists} eq 'ARRAY' && @{$album->{artists}}) {
+            $artist_name = $album->{artists}[0]->{name};
+        }
+
+        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+        if ($album->{coverUri}) {
+            $icon = $album->{coverUri};
+            $icon =~ s/%%/200x200/;
+            $icon = "https://$icon";
+        }
+
+        push @items, {
+            name => $album_title . ' (' . $artist_name . ')',
+            type => 'album',
+            url => \&_handleAlbum,
+            passthrough => [$yandex_client, $album_id],
+            image => $icon,
+            play => 'yandexmusic://album/' . $album_id,
+        };
+    }
+
+    $cb->({
+        items => \@items,
+        title => $title,
+    });
+}
+
+sub _renderPlaylistList {
+    my ($yandex_client, $playlists, $cb, $title) = @_;
+
+    my @items;
+
+    foreach my $playlist (@$playlists) {
+        next unless $playlist;
+
+        my $playlist_title = $playlist->{title} // 'Unknown';
+        my $owner_name = 'Unknown';
+
+        if ($playlist->{owner} && $playlist->{owner}->{name}) {
+            $owner_name = $playlist->{owner}->{name};
+        }
+
+        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+        if ($playlist->{cover} && $playlist->{cover}->{uri}) {
+            $icon = $playlist->{cover}->{uri};
+            $icon =~ s/%%/200x200/;
+            $icon = "https://$icon";
+        }
+
+        push @items, {
+            name => $playlist_title . ' (' . $owner_name . ')',
+            type => 'playlist',
+            url => \&_handlePlaylist,
+            passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
+            image => $icon,
+            play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
+        };
+    }
+
+    $cb->({
+        items => \@items,
+        title => $title,
+    });
 }
 
 1;
