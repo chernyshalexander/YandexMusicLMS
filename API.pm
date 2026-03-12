@@ -7,9 +7,12 @@ use JSON::XS::VersionOneAndTwo;
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;
+use POSIX qw(mkfifo);
 
 
 my $log = logger('plugin.yandex');
+
+my $HAS_RIJNDAEL;
 
 sub new {
     my ($class, $token, %args) = @_;
@@ -683,6 +686,62 @@ sub playlists_list {
 # STREAM RESOLUTION
 # -----------------------------------------------------------------------------------------
 
+# Get direct stream URL via /get-file-info (supports lossless/FLAC).
+# Key and signing format from https://github.com/MarshalX/yandex-music-api/issues/656
+# Calls $cb->($url, $error, $codec, $bitrate_kbps)
+sub get_track_file_info {
+    my ($self, $track_id, $cb) = @_;
+
+    require Digest::SHA;
+    require MIME::Base64;
+
+    my $sign_key  = 'p93jhgh689SBReK6ghtw62';
+    my $codecs    = 'flac,flac-mp4,aac-mp4,aac,he-aac,mp3,he-aac-mp4';
+
+    my $ts            = int(time());
+    my $codecs_nosep  = $codecs;
+    $codecs_nosep     =~ s/,//g;
+    my $param_string  = "${ts}${track_id}lossless${codecs_nosep}encraw";
+    my $hmac_bytes    = Digest::SHA::hmac_sha256($param_string, $sign_key);
+    my $sign          = substr(MIME::Base64::encode_base64($hmac_bytes, ''), 0, 43);
+
+    my $url = 'https://api.music.yandex.net/get-file-info'
+            . '?ts='         . $ts
+            . '&trackId='    . $track_id
+            . '&quality=lossless'
+            . '&codecs='     . uri_escape_utf8($codecs)
+            . '&transports=encraw'
+            . '&sign='       . uri_escape_utf8($sign);
+
+    # Android client header works for encraw (Desktop returns 403)
+    my %headers = %{$self->{default_headers}};
+
+    my $http = Slim::Networking::SimpleAsyncHTTP->new(
+        sub {
+            my $http = shift;
+            my $json = eval { decode_json($http->content()) };
+            if ($@ || !$json || !$json->{result}) {
+                $cb->(undef, "Invalid response from get-file-info");
+                return;
+            }
+            my $di = $json->{result}{downloadInfo};
+            unless ($di && $di->{url}) {
+                $cb->(undef, "No downloadInfo in get-file-info response");
+                return;
+            }
+            # $di->{key} is a hex AES-128 key present when transport=encraw
+            $cb->($di->{url}, undef, $di->{codec} || 'mp3', $di->{bitrate} || 0, $di->{key});
+        },
+        sub {
+            my ($http, $error) = @_;
+            $cb->(undef, $error);
+        },
+        { headers => \%headers },
+    );
+
+    $http->get($url, %headers);
+}
+
 sub get_track_download_info {
     my ($self, $track_id, $cb) = @_;
     my $url = "https://api.music.yandex.net/tracks/" . $track_id . "/download-info";
@@ -709,6 +768,62 @@ sub get_track_download_info {
 sub get_track_direct_url {
     my ($self, $track_id, $cb) = @_;
 
+    my $max_bitrate = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate') || 320;
+
+    # For FLAC: use /get-file-info with encraw transport
+    if ($max_bitrate eq 'flac') {
+        $self->get_track_file_info($track_id, sub {
+            my ($url, $error, $codec, $bitrate_kbps, $aes_key) = @_;
+            unless ($url) {
+                $log->warn("YANDEX: get-file-info failed ($error), falling back to MP3");
+                $self->_get_track_mp3_url($track_id, 320, $cb);
+                return;
+            }
+
+            $log->info("YANDEX: get-file-info OK codec=$codec bitrate=$bitrate_kbps encrypted=" . ($aes_key ? 'yes' : 'no'));
+            my $bitrate = ($bitrate_kbps || 0) * 1000;
+
+            unless ($aes_key) {
+                # Unencrypted stream – use directly
+                $cb->($url, undef, $bitrate, $codec, undef);
+                return;
+            }
+
+            # Encrypted stream: pick decryption method
+            if (_has_rijndael()) {
+                # Tier 1: Real-time protocol-level decryption via ProtocolHandler._sysread()
+                # For flac-mp4: LMS pipes decrypted MP4 to ffmpeg via stdin (custom-convert.conf rule)
+                # For plain flac: ProtocolHandler returns plain FLAC bytes
+                $log->info("YANDEX FLAC: Rijndael available – streaming decryption for codec=$codec");
+                $cb->($url, undef, $bitrate, $codec, $aes_key);
+            } elsif (my $openssl = _find_openssl()) {
+                # Tier 2: download encrypted file, decrypt with openssl, return file:// URL
+                # Backup for systems without Crypt::Rijndael
+                $log->info("YANDEX FLAC: Using openssl for decryption (codec=$codec)");
+                $self->_decrypt_flac_via_openssl($url, $aes_key, $openssl, $codec, sub {
+                    my ($file_url, $err) = @_;
+                    if ($file_url) {
+                        $cb->($file_url, undef, $bitrate, $codec, undef);
+                    } else {
+                        $log->warn("YANDEX FLAC: openssl decryption failed ($err), falling back to MP3");
+                        $self->_get_track_mp3_url($track_id, 320, $cb);
+                    }
+                });
+            } else {
+                # Tier 3: no decryption available
+                $log->warn("YANDEX FLAC: No decryption available (install libcrypt-rijndael-perl or openssl), falling back to MP3 320");
+                $self->_get_track_mp3_url($track_id, 320, $cb);
+            }
+        });
+        return;
+    }
+
+    $self->_get_track_mp3_url($track_id, $max_bitrate, $cb);
+}
+
+sub _get_track_mp3_url {
+    my ($self, $track_id, $max_bitrate, $cb) = @_;
+
     $self->get_track_download_info($track_id, sub {
         my ($info, $error) = @_;
 
@@ -717,20 +832,16 @@ sub get_track_direct_url {
             return;
         }
 
-        my $max_bitrate = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate') || 320;
         my $target_info;
-        
-        my @sorted_info = sort { $b->{bitrateInKbps} <=> $a->{bitrateInKbps} } 
-                          grep { $_->{codec} eq 'mp3' } 
+        my @sorted_info = sort { $b->{bitrateInKbps} <=> $a->{bitrateInKbps} }
+                          grep { $_->{codec} eq 'mp3' }
                           @{$info->{result}};
-
         foreach my $info_item (@sorted_info) {
             if ($info_item->{bitrateInKbps} <= $max_bitrate) {
                 $target_info = $info_item;
                 last;
             }
         }
-        
         if (!$target_info && @sorted_info) {
             $target_info = $sorted_info[-1];
         }
@@ -740,6 +851,7 @@ sub get_track_direct_url {
             return;
         }
 
+        my $codec = $target_info->{codec} || 'mp3';
         my $dw_url = $target_info->{downloadInfoUrl} . '&format=json';
 
         $self->get_raw(
@@ -756,11 +868,18 @@ sub get_track_direct_url {
                     }
                     $data = { host => $host, path => $path, ts => $ts, s => $s };
                 }
-                
+
                 require Digest::MD5;
                 my $sign = Digest::MD5::md5_hex("XGRlBW9FXlekgbPrRHuSiA" . substr($data->{path}, 1) . $data->{s});
-                my $initial_direct_url = "https://$data->{host}/get-mp3/$sign/$data->{ts}$data->{path}";
-                
+
+                # URL prefix depends on codec: get-mp3, get-flac, get-flac-mp4, etc.
+                my $url_prefix = 'get-' . $codec;
+                my $initial_direct_url = "https://$data->{host}/$url_prefix/$sign/$data->{ts}$data->{path}";
+
+                my $bitrate = ($codec eq 'flac' || $codec eq 'flac-mp4')
+                    ? 0
+                    : ($target_info->{bitrateInKbps} || 0) * 1000;
+
                 my $http_resolver = Slim::Networking::SimpleAsyncHTTP->new(
                     sub {
                         my $http = shift;
@@ -774,19 +893,19 @@ sub get_track_direct_url {
                                 $location = $http->params->{headers}->{'Location'};
                             }
                             if ($location) {
-                                $cb->($location, undef, $target_info->{bitrateInKbps} * 1000);
+                                $cb->($location, undef, $bitrate, $codec);
                                 return;
                             }
                         }
-                        $cb->($initial_direct_url, undef, $target_info->{bitrateInKbps} * 1000);
+                        $cb->($initial_direct_url, undef, $bitrate, $codec);
                     },
                     sub {
                         my ($http, $error) = @_;
-                        $cb->($initial_direct_url, undef, $target_info->{bitrateInKbps} * 1000);
+                        $cb->($initial_direct_url, undef, $bitrate, $codec);
                     },
                     { maxRedirects => 0, timeout => 10, }
                 );
-                
+
                 $http_resolver->head($initial_direct_url);
             },
             sub {
@@ -795,6 +914,170 @@ sub get_track_direct_url {
             }
         );
     });
+}
+
+sub _has_rijndael {
+    unless (defined $HAS_RIJNDAEL) {
+        eval { require Crypt::Rijndael; $HAS_RIJNDAEL = 1 };
+        $HAS_RIJNDAEL = 0 unless $HAS_RIJNDAEL;
+        if ($HAS_RIJNDAEL) {
+            $log->info("YANDEX: Crypt::Rijndael available – streaming FLAC decryption enabled");
+        } else {
+            $log->warn("YANDEX: Crypt::Rijndael NOT available – will try openssl fallback for FLAC");
+        }
+    }
+    return $HAS_RIJNDAEL;
+}
+
+sub _find_openssl {
+    for my $path ('/usr/bin/openssl', '/usr/local/bin/openssl', '/opt/homebrew/bin/openssl', '/opt/local/bin/openssl') {
+        return $path if -x $path;
+    }
+    if ($^O eq 'MSWin32') {
+        for my $dir (split /;/, $ENV{PATH} || '') {
+            my $p = "$dir\\openssl.exe";
+            return $p if -e $p;
+        }
+    }
+    return undef;
+}
+
+# Download encrypted FLAC to temp file, decrypt with openssl, demux if needed, return file:// URL
+sub _decrypt_flac_via_openssl {
+    my ($self, $enc_url, $hex_key, $openssl, $codec, $cb) = @_;
+
+    require File::Temp;
+    my $tmpdir = $ENV{TMPDIR} || $ENV{TEMP} || '/tmp';
+
+    # Create output FIFO (named pipe) for streaming
+    my ($out_fh, $out_file) = File::Temp::tempfile('yandex_flac_XXXXXX', SUFFIX => '.flac', DIR => $tmpdir);
+    close($out_fh);
+    unlink($out_file);  # Remove temp file, we'll create FIFO in its place
+
+    # Create FIFO on Unix-like systems
+    if ($^O ne 'MSWin32') {
+        if (!POSIX::mkfifo($out_file, 0600)) {
+            $cb->(undef, "mkfifo failed: $!");
+            return;
+        }
+    } else {
+        # Windows: use regular temp file (pipeline not as efficient but still works)
+        # Can be improved with Named Pipes if needed
+        $log->warn("YANDEX FLAC: Using temp file on Windows instead of FIFO (slower)");
+    }
+
+    # Build pipeline command: curl | openssl | ffmpeg (if flac-mp4)
+    my $pipeline_cmd;
+    my $curl = _find_curl();
+
+    # Escape shell special characters
+    my $safe_url = quotemeta($enc_url);
+    my $safe_out = quotemeta($out_file);
+
+    if ($codec eq 'flac-mp4') {
+        # curl encrypted_stream | openssl decrypt | ffmpeg demux MP4→FLAC > FIFO
+        my $ffmpeg = _find_ffmpeg();
+        unless ($ffmpeg && $curl) {
+            unlink($out_file);
+            $cb->(undef, "curl or ffmpeg not found");
+            return;
+        }
+        $pipeline_cmd = "$curl -s $safe_url 2>/dev/null | $openssl enc -aes-128-ctr -d -K $hex_key -iv " . ('0' x 32) . " -nosalt 2>/dev/null | $ffmpeg -loglevel quiet -i - -f flac $safe_out 2>&1";
+    } else {
+        # curl encrypted_stream | openssl decrypt > FIFO (plain FLAC)
+        unless ($curl) {
+            unlink($out_file);
+            $cb->(undef, "curl not found");
+            return;
+        }
+        $pipeline_cmd = "$curl -s $safe_url 2>/dev/null | $openssl enc -aes-128-ctr -d -K $hex_key -iv " . ('0' x 32) . " -nosalt > $safe_out 2>&1";
+    }
+
+    # Run pipeline in background
+    $log->info("YANDEX FLAC: Starting streaming pipeline for $codec: $pipeline_cmd");
+    system("($pipeline_cmd) > /dev/null 2>&1 &");
+
+    # Wait for FIFO to be opened/readable (max 3 seconds)
+    my $wait_count = 0;
+    while (!-e $out_file && $wait_count < 30) {
+        select(undef, undef, undef, 0.1);  # Sleep 100ms
+        $wait_count++;
+    }
+
+    unless (-e $out_file) {
+        $log->warn("YANDEX FLAC: FIFO not created: $out_file");
+        $cb->(undef, "Failed to create streaming FIFO");
+        return;
+    }
+
+    $log->info("YANDEX FLAC: Streaming to $out_file via pipeline");
+    $cb->('file://' . $out_file, undef);
+}
+
+# Download encrypted flac-mp4, decrypt with Rijndael in-memory, demux FLAC, return file:// URL
+
+# AES-128-CTR decryption using Rijndael in ECB mode (keystream XOR)
+sub _aes_ctr_decrypt {
+    use bytes;
+    my ($cipher, $data) = @_;
+    my $len = length($data);
+    my $out = '';
+    my $i   = 0;
+    while ($i < $len) {
+        my $blk_num  = int($i / 16);
+        my $blk_off  = $i % 16;
+        my $counter  = "\x00" x 12 . pack('N', $blk_num);
+        my $keystream = $cipher->encrypt($counter);
+        my $take      = 16 - $blk_off;
+        $take = $len - $i if $len - $i < $take;
+        $out .= substr($data, $i, $take) ^ substr($keystream, $blk_off, $take);
+        $i   += $take;
+    }
+    return $out;
+}
+
+# Run ffmpeg to extract raw FLAC from a decrypted FLAC-in-MP4 file, then call $cb
+sub _demux_flac_mp4 {
+    my ($m4a_file, $cb) = @_;
+
+    my $ffmpeg = _find_ffmpeg();
+    unless ($ffmpeg) {
+        $log->warn("YANDEX FLAC: ffmpeg not found, serving m4a as-is (may not play)");
+        $cb->('file://' . $m4a_file, undef);
+        return;
+    }
+
+    (my $flac_file = $m4a_file) =~ s/\.[^.]+$/.flac/;
+    my $ret = system($ffmpeg, '-y', '-i', $m4a_file,
+                     '-vn', '-acodec', 'copy', '-f', 'flac', $flac_file);
+    unlink($m4a_file);
+    if ($ret != 0 || !-f $flac_file) {
+        unlink($flac_file) if -f $flac_file;
+        $cb->(undef, "ffmpeg demux failed with exit " . ($ret >> 8));
+        return;
+    }
+    $log->info("YANDEX FLAC: Demuxed flac-mp4 → $flac_file");
+    $cb->('file://' . $flac_file, undef);
+}
+
+sub _find_ffmpeg {
+    for my $path ('/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/local/bin/ffmpeg') {
+        return $path if -x $path;
+    }
+    return undef;
+}
+
+sub _find_curl {
+    for my $path ('/usr/bin/curl', '/usr/local/bin/curl', '/opt/homebrew/bin/curl', '/opt/local/bin/curl') {
+        return $path if -x $path;
+    }
+    if ($^O eq 'MSWin32') {
+        for my $dir (split /;/, $ENV{PATH} || '') {
+            my $p = "$dir\\curl.exe";
+            return $p if -e $p;
+        }
+    }
+    return undef;
 }
 
 1;
