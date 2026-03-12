@@ -711,18 +711,16 @@ sub get_new_playlists {
 sub get_podcasts {
     my ($self, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/non-music/catalogue';
+    my $url = 'https://api.music.yandex.net/landing3/podcasts';
 
     $self->get(
         $url,
         undef,
         sub {
             my $result = shift;
-            if (exists $result->{result}) {
-                my $catalogue = $result->{result};
-                # Extract podcast compilations from the catalogue
-                my $podcasts = $catalogue->{compilations} || [];
-                $callback->($podcasts);
+            if (exists $result->{result} && exists $result->{result}->{podcasts}) {
+                my $podcast_ids = $result->{result}->{podcasts};
+                $callback->($podcast_ids);
             } else {
                 $error_callback->("Failed to get podcasts");
             }
@@ -734,18 +732,15 @@ sub get_podcasts {
 sub get_audiobooks {
     my ($self, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/non-music/catalogue';
+    my $url = 'https://api.music.yandex.net/landing3/new-releases';
 
     $self->get(
         $url,
         undef,
         sub {
             my $result = shift;
-            if (exists $result->{result}) {
-                my $catalogue = $result->{result};
-                # Extract audiobook compilations from the catalogue
-                # For now, treating as part of non-music compilations with type filtering
-                my $audiobooks = $catalogue->{compilations} || [];
+            if (exists $result->{result} && exists $result->{result}->{newReleases}) {
+                my $audiobooks = $result->{result}->{newReleases};
                 $callback->($audiobooks);
             } else {
                 $error_callback->("Failed to get audiobooks");

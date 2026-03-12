@@ -1157,14 +1157,35 @@ sub _handlePodcasts {
 
     $yandex_client->get_podcasts(
         sub {
-            my $podcasts_data = shift;
+            my $podcast_ids = shift;
 
-            if (!$podcasts_data || scalar(@$podcasts_data) == 0) {
-                _renderCompilationList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+            if (!$podcast_ids || scalar(@$podcast_ids) == 0) {
+                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
                 return;
             }
 
-            _renderCompilationList($yandex_client, $podcasts_data, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+            # Fetch detailed album information for each podcast
+            my @albums;
+            my $pending = scalar(@$podcast_ids);
+
+            foreach my $album_id (@$podcast_ids) {
+                $yandex_client->album($album_id, sub {
+                    my $album = shift;
+                    if ($album) {
+                        push @albums, $album;
+                    }
+                    $pending--;
+                    if ($pending == 0) {
+                        _renderAlbumList($yandex_client, \@albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+                    }
+                }, sub {
+                    $log->error("Error fetching podcast album: $_[0]");
+                    $pending--;
+                    if ($pending == 0) {
+                        _renderAlbumList($yandex_client, \@albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+                    }
+                });
+            }
         },
         sub {
             my $error = shift;
@@ -1179,14 +1200,15 @@ sub _handleAudiobooks {
 
     $yandex_client->get_audiobooks(
         sub {
-            my $audiobooks_data = shift;
+            my $audiobook_data = shift;
 
-            if (!$audiobooks_data || scalar(@$audiobooks_data) == 0) {
-                _renderCompilationList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+            if (!$audiobook_data || scalar(@$audiobook_data) == 0) {
+                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
                 return;
             }
 
-            _renderCompilationList($yandex_client, $audiobooks_data, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+            # Audiobooks come as album objects (similar to new_releases)
+            _renderAlbumList($yandex_client, $audiobook_data, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
         },
         sub {
             my $error = shift;
@@ -1650,53 +1672,6 @@ sub _renderPlaylistList {
     $cb->({
         items => \@items,
         title => $title,
-    });
-}
-
-sub _renderCompilationList {
-    my ($yandex_client, $compilations, $cb, $title) = @_;
-
-    my @items;
-
-    foreach my $compilation (@$compilations) {
-        next unless $compilation;
-
-        my $compilation_title = $compilation->{title} // 'Unknown';
-        my $description = $compilation->{description} // '';
-
-        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
-        if ($compilation->{coverUri}) {
-            $icon = $compilation->{coverUri};
-            $icon =~ s/%%/200x200/;
-            $icon = "https://$icon";
-        } elsif ($compilation->{cover} && $compilation->{cover}->{uri}) {
-            $icon = $compilation->{cover}->{uri};
-            $icon =~ s/%%/200x200/;
-            $icon = "https://$icon";
-        }
-
-        push @items, {
-            name => $compilation_title,
-            type => 'link',
-            url => \&_handleCompilation,
-            passthrough => [$yandex_client, $compilation->{id}],
-            image => $icon,
-        };
-    }
-
-    $cb->({
-        items => \@items,
-        title => $title,
-    });
-}
-
-sub _handleCompilation {
-    my ($client, $cb, $args, $yandex_client, $compilation_id) = @_;
-
-    # For now, render as a simple text item
-    # In future, could fetch tracks/episodes from the compilation
-    $cb->({
-        items => [{ name => "Compilation: $compilation_id", type => 'text' }],
     });
 }
 
