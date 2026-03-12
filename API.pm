@@ -665,6 +665,49 @@ sub get_chart {
     );
 }
 
+sub get_new_releases {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/new-releases';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{newReleases}) {
+                my $releases = $result->{result}->{newReleases};
+                $callback->($releases);
+            } else {
+                $error_callback->("Failed to get new releases");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub get_new_playlists {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/new-playlists';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{newPlaylists}) {
+                my $playlists = $result->{result}->{newPlaylists};
+                my @playlist_data = map { { uid => $_->{uid}, kind => $_->{kind} } } @$playlists;
+                $callback->(\@playlist_data);
+            } else {
+                $error_callback->("Failed to get new playlists");
+            }
+        },
+        $error_callback,
+    );
+}
+
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/tags/' . $tag_id . '/playlist-ids';
@@ -820,6 +863,30 @@ sub get_track_direct_url {
             }
         );
     });
+}
+
+sub albums {
+    my ($self, $album_ids, $callback, $error_callback) = @_;
+
+    return unless $album_ids && @$album_ids;
+
+    my $url = 'https://api.music.yandex.net/albums';
+    my $query = join(',', @$album_ids);
+
+    $self->get(
+        $url,
+        { albumId => $query },
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                my $albums = $result->{result};
+                $callback->($albums);
+            } else {
+                $error_callback->("Failed to get albums");
+            }
+        },
+        $error_callback,
+    );
 }
 
 1;

@@ -57,6 +57,30 @@ PLUGIN_YANDEX_SHOW_CHART_DESC
 	EN	Display the Hot Tracks (trending tracks) menu item in the main navigation
 	RU	Показывать пункт "Горячие треки" (популярные треки) в главном меню
 
+PLUGIN_YANDEX_NEW_RELEASES
+	EN	New Releases
+	RU	Новые релизы
+
+PLUGIN_YANDEX_SHOW_NEW_RELEASES
+	EN	Show New Releases
+	RU	Показывать Новые релизы
+
+PLUGIN_YANDEX_SHOW_NEW_RELEASES_DESC
+	EN	Display the New Releases menu item in the main navigation
+	RU	Показывать пункт "Новые релизы" в главном меню
+
+PLUGIN_YANDEX_NEW_PLAYLISTS
+	EN	New Playlists
+	RU	Новые плейлисты
+
+PLUGIN_YANDEX_SHOW_NEW_PLAYLISTS
+	EN	Show New Playlists
+	RU	Показывать Новые плейлисты
+
+PLUGIN_YANDEX_SHOW_NEW_PLAYLISTS_DESC
+	EN	Display the New Playlists menu item in the main navigation
+	RU	Показывать пункт "Новые плейлисты" в главном меню
+
 PLUGIN_YANDEX_FOR_YOU
 	EN	For You
 	RU	Для вас
