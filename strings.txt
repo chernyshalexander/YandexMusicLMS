@@ -45,6 +45,10 @@ PLUGIN_YANDEX_RADIOSTATIONS
 	EN	Radio Stations
 	RU	Радиостанции
 
+PLUGIN_YANDEX_CHART
+	EN	Hot Tracks
+	RU	Горячие треки
+
 PLUGIN_YANDEX_FOR_YOU
 	EN	For You
 	RU	Для вас
