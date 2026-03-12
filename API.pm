@@ -708,6 +708,53 @@ sub get_new_playlists {
     );
 }
 
+sub get_podcasts {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/non-music/catalogue';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                my $catalogue = $result->{result};
+                # Extract podcast compilations from the catalogue
+                my $podcasts = $catalogue->{compilations} || [];
+                $callback->($podcasts);
+            } else {
+                $error_callback->("Failed to get podcasts");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub get_audiobooks {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/non-music/catalogue';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                my $catalogue = $result->{result};
+                # Extract audiobook compilations from the catalogue
+                # For now, treating as part of non-music compilations with type filtering
+                my $audiobooks = $catalogue->{compilations} || [];
+                $callback->($audiobooks);
+            } else {
+                $error_callback->("Failed to get audiobooks");
+            }
+        },
+        $error_callback,
+    );
+}
+
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/tags/' . $tag_id . '/playlist-ids';

@@ -1152,6 +1152,50 @@ sub _handleNewPlaylists {
     );
 }
 
+sub _handlePodcasts {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->get_podcasts(
+        sub {
+            my $podcasts_data = shift;
+
+            if (!$podcasts_data || scalar(@$podcasts_data) == 0) {
+                _renderCompilationList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+                return;
+            }
+
+            _renderCompilationList($yandex_client, $podcasts_data, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
+        },
+        sub {
+            my $error = shift;
+            $log->error("Error fetching podcasts: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_PODCASTS') });
+        },
+    );
+}
+
+sub _handleAudiobooks {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->get_audiobooks(
+        sub {
+            my $audiobooks_data = shift;
+
+            if (!$audiobooks_data || scalar(@$audiobooks_data) == 0) {
+                _renderCompilationList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+                return;
+            }
+
+            _renderCompilationList($yandex_client, $audiobooks_data, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+        },
+        sub {
+            my $error = shift;
+            $log->error("Error fetching audiobooks: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS') });
+        },
+    );
+}
+
 sub _handleForYou {
     my ($client, $cb, $args, $yandex_client) = @_;
     my @items = (
@@ -1606,6 +1650,53 @@ sub _renderPlaylistList {
     $cb->({
         items => \@items,
         title => $title,
+    });
+}
+
+sub _renderCompilationList {
+    my ($yandex_client, $compilations, $cb, $title) = @_;
+
+    my @items;
+
+    foreach my $compilation (@$compilations) {
+        next unless $compilation;
+
+        my $compilation_title = $compilation->{title} // 'Unknown';
+        my $description = $compilation->{description} // '';
+
+        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+        if ($compilation->{coverUri}) {
+            $icon = $compilation->{coverUri};
+            $icon =~ s/%%/200x200/;
+            $icon = "https://$icon";
+        } elsif ($compilation->{cover} && $compilation->{cover}->{uri}) {
+            $icon = $compilation->{cover}->{uri};
+            $icon =~ s/%%/200x200/;
+            $icon = "https://$icon";
+        }
+
+        push @items, {
+            name => $compilation_title,
+            type => 'link',
+            url => \&_handleCompilation,
+            passthrough => [$yandex_client, $compilation->{id}],
+            image => $icon,
+        };
+    }
+
+    $cb->({
+        items => \@items,
+        title => $title,
+    });
+}
+
+sub _handleCompilation {
+    my ($client, $cb, $args, $yandex_client, $compilation_id) = @_;
+
+    # For now, render as a simple text item
+    # In future, could fetch tracks/episodes from the compilation
+    $cb->({
+        items => [{ name => "Compilation: $compilation_id", type => 'text' }],
     });
 }
 
