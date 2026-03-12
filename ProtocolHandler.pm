@@ -18,6 +18,7 @@ require Slim::Control::Request;
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
 
+
 # 1. CONSTRUCTOR 
 sub new {
     my $class  = shift;
@@ -29,7 +30,34 @@ sub new {
     # Take URL that should already be set in getNextTrack
     my $streamUrl = $song->streamUrl() || return;
 
-    $log->error("YANDEX: Handler new() called for REAL streamUrl: $streamUrl");
+    $log->info("YANDEX: Handler new() called for streamUrl: $streamUrl");
+
+    # Local pre-decoded FLAC file (result of flac-mp4 decrypt+demux)
+    if ($streamUrl =~ m{^file://(.+)}) {
+        my $path = $1;
+        $path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+
+        require Symbol;
+        my $sock = Symbol::gensym();
+        open($sock, '<', $path) or do {
+            $log->error("YANDEX: Cannot open local file $path: $!");
+            return;
+        };
+        binmode($sock);
+        bless $sock, $class;
+        ${*$sock}{contentType}     = 'audio/flac';
+        ${*$sock}{yandex_temp_file} = $path;
+
+        if ($client) {
+            my $duration = $song->duration || 0;
+            $song->isLive(0);
+            $song->duration($duration) if $duration;
+            Slim::Music::Info::setDuration($song->currentTrack, $duration)
+                if $duration && $song->currentTrack;
+        }
+        $log->info("YANDEX: file handle ready, size=" . (-s $path) . " fileno=" . (fileno($sock) // 'undef'));
+        return $sock;
+    }
 
     my $sock = $class->SUPER::new( {
         url     => $streamUrl,
@@ -37,8 +65,38 @@ sub new {
         client  => $client,
     } ) || return;
 
-    # Set content type
-    ${*$sock}{contentType} = 'audio/mpeg';
+    # Set content type based on codec stored in cache; setup AES-CTR cipher if stream is encrypted
+    my $content_type = 'audio/mpeg';
+    my $orig_url = $song->currentTrack ? $song->currentTrack->url : $streamUrl;
+    if ($orig_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $track_id = $1;
+        my $cache    = Slim::Utils::Cache->new();
+        my $meta     = $cache->get('yandex_meta_' . $track_id);
+        if ($meta && $meta->{codec}) {
+            # Any -mp4 codec (flac-mp4, aac-mp4, he-aac-mp4) is MP4 container format
+            if ($meta->{codec} =~ /-mp4$/) {
+                $content_type = 'audio/mp4';
+            } elsif ($meta->{codec} eq 'flac') {
+                $content_type = 'audio/flac';
+            } elsif ($meta->{codec} =~ /^(?:aac|he-aac|mp3)$/) {
+                $content_type = 'audio/mpeg';  # AAC, HE-AAC, MP3 default
+            }
+
+            if ($meta->{aes_key}) {
+                eval {
+                    require Crypt::Rijndael;
+                    my $key_bytes = pack('H*', $meta->{aes_key});
+                    ${*$sock}{yandex_cipher} = Crypt::Rijndael->new($key_bytes, Crypt::Rijndael::MODE_ECB());
+                    ${*$sock}{yandex_offset} = 0;
+                    $log->info("YANDEX: AES-CTR cipher ready for track $track_id");
+                };
+                $log->error("YANDEX: Rijndael init failed: $@") if $@;
+            }
+        }
+    } elsif ($streamUrl =~ /get-flac/) {
+        $content_type = 'audio/flac';
+    }
+    ${*$sock}{contentType} = $content_type;
 
     # Try to set stream parameters explicitly so LMS knows it's not an infinite stream
     # and displays the progress bar.
@@ -223,9 +281,7 @@ sub canDirectStreamSong {
 # FORCIBLY ENABLE BUFFERING (Buffered Mode = 2).
 # Without this, LMS can work in direct proxy mode, downloading data at player speed.
 # Mode 2 forces LMS to download the entire file as quickly as possible into a local .buf file.
-sub canEnhanceHTTP {
-    return 2; # 2 = BUFFERED constant in Slim::Player::Protocols::HTTP
-}
+sub canEnhanceHTTP { return 0 }
 
 # 3. scanUrl 
 sub scanUrl {
@@ -259,35 +315,91 @@ sub getNextTrack {
 
     # Request track stream URL directly using API.pm
     $yandex_client->get_track_direct_url($track_id, sub {
-        my ($final_url, $error, $bitrate) = @_;
+        my ($final_url, $error, $bitrate, $codec, $aes_key) = @_;
 
         if ($final_url) {
-            $log->info("YANDEX: ASYNC URL resolved: $final_url, Bitrate: " . ($bitrate || "unknown"));
-            
-            # Save bitrate to cache if it exists
-            if ($bitrate) {
-                my $cache = Slim::Utils::Cache->new();
-                if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
-                    $cached_meta->{bitrate} = $bitrate;
-                    $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
-                }
+            $log->info("YANDEX: URL resolved codec=" . ($codec||'mp3') . " bitrate=" . ($bitrate||0) . " encrypted=" . ($aes_key ? 'yes' : 'no'));
+
+            # Save bitrate, codec and AES key to cache for use in new() / _sysread()
+            my $cache = Slim::Utils::Cache->new();
+            if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+                $cached_meta->{bitrate}  = $bitrate  if $bitrate;
+                $cached_meta->{codec}    = $codec    if $codec;
+                $cached_meta->{aes_key}  = $aes_key  if $aes_key;
+                $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
             }
 
-            # Set the real link in the song object
+            # Explicitly set metadata in LMS DB for proper UI display
+            my $track_url = $song->track()->url();
+            eval {
+                if ($codec && ($codec eq 'flac' || $codec eq 'flac-mp4')) {
+                    # Set bitrate (FLAC is lossless, but estimate bitrate for seekbar)
+                    my $est_bitrate = $bitrate || 900000;  # 900kbps estimate for FLAC
+                    Slim::Music::Info::setBitrate($track_url, $est_bitrate);
+                    $log->info("YANDEX: Set bitrate=$est_bitrate for FLAC track");
+                }
+            };
+
             $song->streamUrl($final_url);
-            
-            # Report success
             $successCb->();
         } else {
-            $log->error("YANDEX: ASYNC URL resolution failed: $error");
-            # Report error
+            $log->error("YANDEX: URL resolution failed: $error");
             $errorCb->($error);
         }
     });
 }
 
 
-sub getFormatForURL { 'mp3' }
+# Called by LMS AFTER getNextTrack resolves — codec is in cache by this point.
+# This overrides any stale 'mp3' format that contentType() may have returned earlier.
+sub formatOverride {
+    my ($class, $song) = @_;
+    my $url = $song->currentTrack()->url;
+    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $cache = Slim::Utils::Cache->new();
+        my $meta  = $cache->get('yandex_meta_' . $1);
+        if ($meta && $meta->{codec}) {
+            my $codec = $meta->{codec};
+
+            # FLAC in MP4: needs ffmpeg demuxing (custom-convert.conf ymf → flc rule)
+            if ($codec eq 'flac-mp4') {
+                $log->info("YANDEX: formatOverride → ymf for $url (flac-mp4 with ffmpeg demux)");
+                return 'ymf';
+            }
+            # Other MP4 containers (aac-mp4, he-aac-mp4): play as native MP4
+            if ($codec =~ /-mp4$/) {
+                $log->info("YANDEX: formatOverride → mp4 for $url (codec=$codec, no demux needed)");
+                return 'mp4';
+            }
+            # Plain FLAC: no conversion needed, decrypted via _sysread()
+            if ($codec eq 'flac') {
+                $log->info("YANDEX: formatOverride → flc for $url (plain flac)");
+                return 'flc';
+            }
+        }
+    }
+    return undef;
+}
+
+sub getFormatForURL {
+    my ($class, $url) = @_;
+    $log->info("YANDEX: getFormatForURL called with: $url");
+    # Pre-demuxed FLAC temp file
+    return 'flc' if $url =~ /^file:\/\//;
+    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $cache = Slim::Utils::Cache->new();
+        my $meta  = $cache->get('yandex_meta_' . $1);
+        if ($meta && $meta->{codec}) {
+            # flac-mp4: custom format ymf for ffmpeg demux via stdin
+            return 'ymf' if $meta->{codec} eq 'flac-mp4';
+            # Other MP4 containers: play as native MP4
+            return 'mp4' if $meta->{codec} =~ /-mp4$/;
+            # plain FLAC: decrypted via _sysread()
+            return 'flc' if $meta->{codec} eq 'flac';
+        }
+    }
+    return 'mp3';
+}
 sub isRemote { 1 }
 sub isAudio { 1 }
 
@@ -301,13 +413,34 @@ sub getMetadataFor {
         if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
             $log->debug("YANDEX: Returning cached metadata for $url");
             
-            my $bitrate = $cached_meta->{bitrate} || 192000;
-            
+            my $bitrate    = $cached_meta->{bitrate} || 0;
+            my $codec      = $cached_meta->{codec};
+            my $max_bitrate = $prefs->get('max_bitrate') || 320;
+
+            # Determine type: use actual codec if known, otherwise infer from quality setting
+            my $type;
+            if ($codec && ($codec eq 'flac' || $codec eq 'flac-mp4')) {
+                $type = 'flc';
+            } elsif (!$codec && $max_bitrate eq 'flac') {
+                $type = 'flc';  # not yet resolved, but will be FLAC
+            } else {
+                $type = 'mp3';
+            }
+
+            # Bitrate display: FLAC is variable/lossless — show estimated bitrate or "FLAC"
+            my $bitrate_str;
+            if ($type eq 'flc') {
+                # For FLAC: show "FLAC" if bitrate unknown, otherwise estimated bitrate
+                $bitrate_str = !$bitrate ? 'FLAC' : sprintf("~%.0fkbps FLAC", ($bitrate || 900000) / 1000);
+            } else {
+                $bitrate_str = sprintf("%.0fkbps", ($bitrate || 192000) / 1000);
+            }
+
             # Save values to LMS DB for correct seeking (canSeek) operation
             eval {
                 Slim::Music::Info::setBitrate($url, $bitrate);
                 Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
-                
+
                 # Also update track objects if something is playing right now
                 if ($client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url) {
                     $client->playingSong()->bitrate($bitrate);
@@ -322,8 +455,8 @@ sub getMetadataFor {
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover},
                 icon     => $cached_meta->{cover},
-                bitrate  => sprintf("%.0fkbps", $bitrate/1000), # UI format
-                type     => 'mp3',
+                bitrate  => $bitrate_str,
+                type     => $type,
             };
         }
     }
@@ -568,6 +701,65 @@ sub _get_current_timestamp {
     $year += 1900;
     $mon += 1;
     return sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", $year, $mon, $mday, $hour, $min, $sec);
+}
+
+# AES-CTR streaming decryption for encrypted FLAC streams (encraw transport).
+# Called by LMS for every chunk read from the remote URL.
+sub _sysread {
+    use bytes;
+    my ($self, undef, $length, $offset) = @_;
+    $offset //= 0;
+
+    my $cipher = ${*$self}{yandex_cipher};
+    unless ($cipher) {
+        my $bytes = ${*$self}{yandex_temp_file}
+            ? sysread($self, $_[1], $length, $offset)
+            : $self->SUPER::_sysread($_[1], $length, $offset);
+        if (${*$self}{yandex_temp_file}) {
+            my $cnt = ++${*$self}{_sysread_logged};
+            if ($cnt == 1 && defined $bytes && $bytes >= 4) {
+                my $magic = unpack('H8', substr($_[1], $offset, 4));
+                $log->info("YANDEX: _sysread file #1 got=$bytes magic=$magic (expect 664c6143=fLaC)");
+            }
+        }
+        # Clean up temp file on EOF
+        if (defined $bytes && $bytes == 0 && ${*$self}{yandex_temp_file}) {
+            unlink(delete ${*$self}{yandex_temp_file});
+        }
+        return $bytes;
+    }
+
+    my $bytes_read = $self->SUPER::_sysread($_[1], $length, $offset);
+    return $bytes_read unless defined $bytes_read && $bytes_read > 0;
+
+    my $stream_pos = ${*$self}{yandex_offset} // 0;
+    my $plain      = _aes_ctr_xor($cipher, substr($_[1], $offset, $bytes_read), $stream_pos);
+    substr($_[1], $offset, $bytes_read) = $plain;
+    ${*$self}{yandex_offset} = $stream_pos + $bytes_read;
+
+    return $bytes_read;
+}
+
+# XOR $data (starting at $stream_pos) with AES-CTR keystream generated by $cipher (ECB mode).
+sub _aes_ctr_xor {
+    use bytes;
+    my ($cipher, $data, $stream_pos) = @_;
+    my $len = length($data);
+    my $out = '';
+    my $i   = 0;
+    while ($i < $len) {
+        my $abs      = $stream_pos + $i;
+        my $blk_num  = int($abs / 16);
+        my $blk_off  = $abs % 16;
+        # 128-bit big-endian counter (block_num fits in 32 bits for any practical track)
+        my $counter  = "\x00" x 12 . pack('N', $blk_num);
+        my $keystream = $cipher->encrypt($counter);
+        my $take      = 16 - $blk_off;
+        $take = $len - $i if $len - $i < $take;
+        $out .= substr($data, $i, $take) ^ substr($keystream, $blk_off, $take);
+        $i   += $take;
+    }
+    return $out;
 }
 
 1;
