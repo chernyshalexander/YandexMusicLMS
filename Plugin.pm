@@ -41,9 +41,9 @@ sub initPlugin {
         max_bitrate => 320,
         use_new_radio_api => 0,
         remove_duplicates => 1,
-        show_chart => 1,
-        show_new_releases => 1,
-        show_new_playlists => 1,
+        show_chart => 0,
+        show_new_releases => 0,
+        show_new_playlists => 0,
     });
 
 
