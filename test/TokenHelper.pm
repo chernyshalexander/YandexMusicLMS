@@ -2,7 +2,7 @@ package TokenHelper;
 
 use strict;
 use warnings;
-use Cwd 'dirname';
+use File::Basename 'dirname';
 use File::Spec;
 
 =head1 NAME

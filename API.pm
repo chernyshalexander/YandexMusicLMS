@@ -739,14 +739,30 @@ sub get_audiobooks {
         undef,
         sub {
             my $result = shift;
-            if (exists $result->{result}) {
-                my $catalogue = $result->{result};
-                # Try to extract audiobooks from various possible fields
-                my $audiobooks = $catalogue->{audiobooks}
-                              || $catalogue->{albums}
-                              || $catalogue->{compilations}
-                              || $catalogue;
-                $callback->($audiobooks);
+            if (exists $result->{result} && exists $result->{result}->{blocks}) {
+                my $blocks = $result->{result}->{blocks};
+                my @audiobook_ids;
+
+                # Extract album IDs from blocks -> entities -> album
+                foreach my $block (@$blocks) {
+                    next unless $block->{entities} && ref($block->{entities}) eq 'ARRAY';
+
+                    foreach my $entity (@{$block->{entities}}) {
+                        # Try different paths to get the album object
+                        my $album;
+                        if ($entity->{data} && $entity->{data}->{playedItem} && $entity->{data}->{playedItem}->{album}) {
+                            $album = $entity->{data}->{playedItem}->{album};
+                        } elsif ($entity->{data} && $entity->{data}->{album}) {
+                            $album = $entity->{data}->{album};
+                        }
+
+                        if ($album && $album->{id}) {
+                            push @audiobook_ids, $album->{id};
+                        }
+                    }
+                }
+
+                $callback->(\@audiobook_ids);
             } else {
                 $error_callback->("Failed to get audiobooks");
             }
