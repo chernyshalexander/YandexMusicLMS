@@ -732,15 +732,15 @@ sub get_podcasts {
 sub get_audiobooks {
     my ($self, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/landing3/new-releases';
+    my $url = 'https://api.music.yandex.net/landing3/audiobooks';
 
     $self->get(
         $url,
         undef,
         sub {
             my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{newReleases}) {
-                my $audiobooks = $result->{result}->{newReleases};
+            if (exists $result->{result} && exists $result->{result}->{audiobooks}) {
+                my $audiobooks = $result->{result}->{audiobooks};
                 $callback->($audiobooks);
             } else {
                 $error_callback->("Failed to get audiobooks");
