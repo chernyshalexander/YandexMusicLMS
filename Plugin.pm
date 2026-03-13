@@ -44,8 +44,7 @@ sub initPlugin {
         show_chart => 0,
         show_new_releases => 0,
         show_new_playlists => 0,
-        show_podcasts => 0,
-        show_audiobooks => 0,
+        show_audiobooks_in_collection => 1,
     });
 
 
@@ -286,28 +285,6 @@ sub _renderRootMenu {
             url  => \&Plugins::yandex::Browse::_handleNewPlaylists,
             passthrough => [$client_instance],
             image => 'html/images/playlists.png',
-        };
-    }
-
-    # Add Podcasts menu item if setting is enabled
-    if ($prefs->get('show_podcasts')) {
-        push @items, {
-            name => cstring($client, 'PLUGIN_YANDEX_PODCASTS'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handlePodcasts,
-            passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/radio.png',
-        };
-    }
-
-    # Add Audiobooks menu item if setting is enabled
-    if ($prefs->get('show_audiobooks')) {
-        push @items, {
-            name => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleAudiobooks,
-            passthrough => [$client_instance],
-            image => 'html/images/albums.png',
         };
     }
 
