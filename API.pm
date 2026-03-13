@@ -708,68 +708,6 @@ sub get_new_playlists {
     );
 }
 
-sub get_podcasts {
-    my ($self, $callback, $error_callback) = @_;
-
-    my $url = 'https://api.music.yandex.net/landing3/podcasts';
-
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{podcasts}) {
-                my $podcast_ids = $result->{result}->{podcasts};
-                $callback->($podcast_ids);
-            } else {
-                $error_callback->("Failed to get podcasts");
-            }
-        },
-        $error_callback,
-    );
-}
-
-sub get_audiobooks {
-    my ($self, $callback, $error_callback) = @_;
-
-    my $url = 'https://api.music.yandex.net/non-music/catalogue';
-
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{blocks}) {
-                my $blocks = $result->{result}->{blocks};
-                my @audiobook_ids;
-
-                # Extract album IDs from blocks -> entities -> album
-                foreach my $block (@$blocks) {
-                    next unless $block->{entities} && ref($block->{entities}) eq 'ARRAY';
-
-                    foreach my $entity (@{$block->{entities}}) {
-                        # Try different paths to get the album object
-                        my $album;
-                        if ($entity->{data} && $entity->{data}->{playedItem} && $entity->{data}->{playedItem}->{album}) {
-                            $album = $entity->{data}->{playedItem}->{album};
-                        } elsif ($entity->{data} && $entity->{data}->{album}) {
-                            $album = $entity->{data}->{album};
-                        }
-
-                        if ($album && $album->{id}) {
-                            push @audiobook_ids, $album->{id};
-                        }
-                    }
-                }
-
-                $callback->(\@audiobook_ids);
-            } else {
-                $error_callback->("Failed to get audiobooks");
-            }
-        },
-        $error_callback,
-    );
-}
 
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
