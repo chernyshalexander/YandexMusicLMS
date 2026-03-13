@@ -1189,7 +1189,14 @@ sub _handleAudiobooks {
         sub {
             my $audiobook_ids = shift;
 
-            if (!$audiobook_ids || scalar(@$audiobook_ids) == 0) {
+            # Validate response is an array
+            if (!$audiobook_ids || ref($audiobook_ids) ne 'ARRAY') {
+                $log->warn("get_audiobooks returned non-array: " . ref($audiobook_ids));
+                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
+                return;
+            }
+
+            if (scalar(@$audiobook_ids) == 0) {
                 _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
                 return;
             }
