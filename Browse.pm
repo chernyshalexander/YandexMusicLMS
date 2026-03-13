@@ -504,7 +504,7 @@ sub _handleFavorites {
 
     if ($has_podcasts) {
         push @items, {
-            name => 'Audiobooks & Podcasts',
+            name => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS'),
             type => 'link',
             url  => \&_handleLikedPodcasts,
             passthrough => [$yandex_client],
@@ -687,14 +687,14 @@ sub _handleLikedPodcasts {
 
             $cb->({
                 items => \@items,
-                title => 'Audiobooks & Podcasts',
+                title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS'),
             });
         },
         sub {
             my $error = shift;
             $cb->({
                 items => [{ name => "Error: $error", type => 'text' }],
-                title => 'Audiobooks & Podcasts',
+                title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS'),
             });
         }
     );
@@ -1148,77 +1148,6 @@ sub _handleNewPlaylists {
             my $error = shift;
             $log->error("Error retrieving new playlists: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS') });
-        },
-    );
-}
-
-sub _handlePodcasts {
-    my ($client, $cb, $args, $yandex_client) = @_;
-
-    $yandex_client->get_podcasts(
-        sub {
-            my $podcast_ids = shift;
-
-            if (!$podcast_ids || scalar(@$podcast_ids) == 0) {
-                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
-                return;
-            }
-
-            # Fetch detailed album information for all podcasts in one request
-            $yandex_client->albums($podcast_ids, sub {
-                my $albums = shift;
-                _renderAlbumList($yandex_client, $albums, $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
-            }, sub {
-                my $error = shift;
-                $log->error("Error fetching podcast albums: $error");
-                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_PODCASTS'));
-            });
-        },
-        sub {
-            my $error = shift;
-            $log->error("Error fetching podcasts: $error");
-            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_PODCASTS') });
-        },
-    );
-}
-
-sub _handleAudiobooks {
-    my ($client, $cb, $args, $yandex_client) = @_;
-
-    $yandex_client->get_audiobooks(
-        sub {
-            my $audiobook_ids = shift;
-
-            # Validate response is an array
-            if (!$audiobook_ids || ref($audiobook_ids) ne 'ARRAY') {
-                $log->warn("get_audiobooks returned non-array: " . ref($audiobook_ids));
-                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
-                return;
-            }
-
-            if (scalar(@$audiobook_ids) == 0) {
-                _renderAlbumList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
-                return;
-            }
-
-            # Fetch detailed album information for all audiobooks
-            $yandex_client->albums(
-                $audiobook_ids,
-                sub {
-                    my $audiobooks_detailed = shift;
-                    _renderAlbumList($yandex_client, $audiobooks_detailed, $cb, cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS'));
-                },
-                sub {
-                    my $error = shift;
-                    $log->error("Error fetching audiobooks details: $error");
-                    $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS') });
-                }
-            );
-        },
-        sub {
-            my $error = shift;
-            $log->error("Error retrieving audiobooks: $error");
-            $cb->({ items => [{ name => "Error: $error", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS') });
         },
     );
 }
