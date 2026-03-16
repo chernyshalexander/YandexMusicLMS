@@ -25,6 +25,42 @@ PLUGIN_YANDEX_TOKEN_SET
 	EN	(Token is set)
 	RU	(Токен установлен)
 
+PLUGIN_YANDEX_AUTH_BROWSER
+	EN	Authorize in Browser (Fast)
+	RU	Авторизация через браузер (Быстро)
+
+PLUGIN_YANDEX_AUTH_BROWSER_DESC
+	EN	Click "Login" to open the Yandex page. After logging in, click the "Capture Token" bookmark to automatically save the token.
+	RU	Нажмите «Войти», чтобы открыть страницу Яндекса. После входа нажмите на закладку «Захват токена» в браузере, чтобы автоматически сохранить его.
+
+PLUGIN_YANDEX_AUTH_LOGIN
+	EN	Login to Yandex
+	RU	Войти в Яндекс
+
+PLUGIN_YANDEX_AUTH_CAPTURE
+	EN	Capture Token
+	RU	Захват токена
+
+PLUGIN_YANDEX_AUTH_SUCCESS_MSG
+	EN	Authorization successful! Please refresh the page.
+	RU	Авторизация успешна! Пожалуйста, обновите страницу.
+
+PLUGIN_YANDEX_AUTH_FAILED_MSG
+	EN	Authorization failed.
+	RU	Ошибка авторизации.
+
+PLUGIN_YANDEX_AUTH_DRAG_DROP
+	EN	Drag & Drop (Alternative)
+	RU	Перетаскивание (Альтернатива)
+
+PLUGIN_YANDEX_AUTH_DRAG_DROP_DESC
+	EN	Alternatively, you can simply drag the URL from the browser's address bar (of the page where the token is) and drop it into the area below.
+	RU	В качестве альтернативы вы можете просто перетащить ссылку из адресной строки браузера (со страницы, где отображается токен) в область ниже.
+
+PLUGIN_YANDEX_AUTH_DRAG_ZONE
+	EN	Drop URL here
+	RU	Перетащите ссылку сюда
+
 PLUGIN_YANDEX_MAX_BITRATE
 	EN	Maximum Audio Quality
 	RU	Максимальное качество звука
