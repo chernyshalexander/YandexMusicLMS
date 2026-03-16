@@ -34,6 +34,37 @@ sub prefs {
 sub handler {
 	my ($class, $client, $params, $callback, @args) = @_;
 
+	if ($params->{save_token}) {
+		my $token = $params->{token};
+		if ($token) {
+			$prefs->set('token', $token);
+			$log->info("Yandex Settings: Token captured via URL parameter.");
+
+			# Validate in background
+			require Plugins::yandex::API;
+			my $yandex_client = Plugins::yandex::API->new($token);
+			$yandex_client->init(
+				sub {
+					my $client_instance = shift;
+					my $me = $client_instance->{me} || {};
+					my $name = _format_full_name($me);
+					$prefs->set('pref_fullName', $name || 'User');
+					$log->info("Yandex Settings: Background validation successful for $name");
+				},
+				sub {
+					$log->error("Yandex Settings: Background validation failed.");
+				}
+			);
+
+			my $body = "<html><body style='font-family:sans-serif;text-align:center;padding-top:50px;'>
+				<h2>Authorization successful!</h2>
+				<p>The token has been saved. You can close this window and refresh the settings page.</p>
+				<script>setTimeout(function(){ window.close(); }, 3000);</script>
+			</body></html>";
+			return \$body;
+		}
+	}
+
 	if ($params->{saveSettings}) {
 		my $token = $params->{pref_token};
 		my $oldToken = $prefs->get('token');
@@ -64,18 +95,7 @@ sub handler {
 				sub {
 					my $client_instance = shift;
 					my $me = $client_instance->{me} || {};
-					my $login = $me->{login} || '';
-					my $display = $me->{displayName} || '';
-					my $second = $me->{secondName} || '';
-					
-					my $name = $login;
-					if ($display || $second) {
-						my $full = $display;
-						if ($second && (!$display || index($display, $second) == -1)) {
-							$full .= ($full ? ' ' : '') . $second;
-						}
-						$name .= " ($full)";
-					}
+					my $name = _format_full_name($me);
 					
 					$prefs->set('token', $token);
 					$prefs->set('pref_fullName', $name || 'User');
@@ -114,6 +134,25 @@ sub beforeRender {
 		$params->{pref_tokenValue} = '';
 	}
 	$log->info("Yandex Settings: beforeRender. pref_fullName=" . ($params->{pref_fullName} || 'none') . " pref_tokenValue=" . $params->{pref_tokenValue});
+}
+
+sub _format_full_name {
+	my $me = shift;
+	
+	my $login = $me->{login} || '';
+	my $display = $me->{displayName} || '';
+	my $second = $me->{secondName} || '';
+	
+	my $name = $login;
+	if ($display || $second) {
+		my $full = $display;
+		if ($second && (!$display || index($display, $second) == -1)) {
+			$full .= ($full ? ' ' : '') . $second;
+		}
+		$name .= " ($full)";
+	}
+	
+	return $name;
 }
 
 1;
