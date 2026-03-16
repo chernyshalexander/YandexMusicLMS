@@ -1710,14 +1710,18 @@ sub cache_track_metadata {
     }
 
     my $cache = Slim::Utils::Cache->new();
-    $cache->set('yandex_meta_' . $track_id, {
+    my $meta = {
         title    => $track_title,
         artist   => $artist_name,
         album    => $album_name,
         duration => $duration_ms ? int($duration_ms / 1000) : 0,
         cover    => $icon,
-        bitrate  => 192,
-    }, '24h');
+        bitrate  => 192000, # Default bitrate
+    };
+
+    $cache->set('yandex_meta_' . $track_id, $meta, '7d');
+    
+    return $meta;
 }
 
 sub _renderAlbumList {
