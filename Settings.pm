@@ -28,7 +28,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts));
 }
 
 sub handler {
