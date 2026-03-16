@@ -464,3 +464,11 @@ PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE
 PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC
 	EN	When enabled, tracks that have already been played during the current radio session will not be added to the queue again.
 	RU	Если включено, треки, которые уже играли во время текущей сессии Радио, больше не будут добавляться в очередь.
+
+PLUGIN_YANDEX_SEARCH_PODCASTS
+	EN	Search in Podcasts & Audiobooks
+	RU	Искать в Подкастах и Аудиокнигах
+
+PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
+	EN	Show a separate category for Podcasts and Audiobooks in search results.
+	RU	Показывать отдельную категорию для Подкастов и Аудиокниг в результатах поиска.
