@@ -59,7 +59,11 @@ sub get {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            $callback->($json);
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
+            } else {
+                $callback->($json);
+            }
         },
         sub {
             my ($http, $error) = @_;
@@ -78,7 +82,11 @@ sub post {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            $callback->($json);
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
+            } else {
+                $callback->($json);
+            }
         },
         sub {
             my ($http, $error) = @_;
@@ -100,8 +108,8 @@ sub post_form {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            if ($@) {
-                $callback->($content); 
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
             } else {
                 $callback->($json);
             }
@@ -561,14 +569,16 @@ sub rotor_session_tracks {
 }
 
 sub search {
-    my ($self, $query, $type, $callback, $error_callback) = @_;
+    my ($self, $query, $type, $callback, $error_callback, $page, $page_size) = @_;
     my $url = 'https://api.music.yandex.net/search';
     my $params = {
         'text' => $query,
         'type' => $type, 
-        'page' => 0,
-        'noclear' => 'false'
+        'page' => $page || 0,
+        'nocorrect' => 'false'
     };
+
+    $params->{'page-size'} = $page_size if defined $page_size;
 
     $self->get(
         $url,
