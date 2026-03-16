@@ -9,6 +9,7 @@ use Plugins::yandex::Browse;
 use base qw(Slim::Player::Protocols::HTTPS);
 use URI::Escape;
 use Slim::Utils::Prefs;
+use Time::HiRes;
 
 require Slim::Player::Playlist;
 require Slim::Player::Source;
@@ -298,7 +299,9 @@ sub getMetadataFor {
     if ($url =~ /yandexmusic:\/\/(\d+)/) {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
-        if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+        my $cached_meta = $cache->get('yandex_meta_' . $track_id);
+
+        if ($cached_meta) {
             $log->debug("YANDEX: Returning cached metadata for $url");
             
             my $bitrate = $cached_meta->{bitrate} || 192000;
@@ -323,6 +326,48 @@ sub getMetadataFor {
                 cover    => $cached_meta->{cover},
                 icon     => $cached_meta->{cover},
                 bitrate  => sprintf("%.0fkbps", $bitrate/1000), # UI format
+                type     => 'mp3',
+            };
+        } else {
+            # Metadata missing (e.g. after restart or cache expiry)
+            $log->info("YANDEX: Metadata missing for $url. Triggering recovery...");
+
+            my $yandex_client = Plugins::yandex::Plugin->getClient();
+            if ($yandex_client) {
+                # Use a flag to avoid multiple parallel requests for the same track
+                if (!$cache->get('yandex_fetching_' . $track_id)) {
+                    $cache->set('yandex_fetching_' . $track_id, 1, 30);
+                    
+                    $yandex_client->tracks([$track_id], sub {
+                        my $tracks = shift;
+                        if ($tracks && ref $tracks eq 'ARRAY' && @$tracks) {
+                            $log->info("YANDEX: Recovered metadata for $track_id");
+                            Plugins::yandex::Browse::cache_track_metadata($tracks->[0]);
+                            
+                            # Notify LMS that metadata has changed
+                            if ($client) {
+                                $client->update();
+                                
+                                # Force Web UI refresh by updating playlist update time
+                                if ($client->can('currentPlaylistUpdateTime')) {
+                                    $client->currentPlaylistUpdateTime(Time::HiRes::time());
+                                }
+                                
+                                # Send explicit notification for metadata change
+                                Slim::Control::Request::notifyFromArray($client, ['newmetadata']);
+                            }
+                        }
+                        $cache->remove('yandex_fetching_' . $track_id);
+                    }, sub {
+                        $log->error("YANDEX: Failed to recover metadata for $track_id: " . shift);
+                        $cache->remove('yandex_fetching_' . $track_id);
+                    });
+                }
+            }
+
+            return {
+                title    => "Yandex Track $track_id",
+                artist   => "Yandex Music",
                 type     => 'mp3',
             };
         }
