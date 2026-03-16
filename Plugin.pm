@@ -65,6 +65,22 @@ sub initPlugin {
         weight => 50,
     );
 
+    # Initialize Yandex client at startup if token is available
+    my $token = $prefs->get('token');
+    if ($token) {
+        my $yandex_client = Plugins::yandex::API->new($token);
+        $yandex_client->init(
+            sub {
+                $yandex_client_instance = shift;
+                $log->info("YANDEX: Client initialized at startup for " . ($yandex_client_instance->{me}->{login} || 'unknown user'));
+            },
+            sub {
+                my $error = shift;
+                $log->error("YANDEX: Static client initialization error at startup: $error");
+            },
+        );
+    }
+
     if (main::WEBUI) {
         require Plugins::yandex::Settings;
         Plugins::yandex::Settings->new();
