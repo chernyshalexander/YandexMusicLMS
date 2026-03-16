@@ -12,6 +12,83 @@
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_AUTH_BROWSER" desc="PLUGIN_YANDEX_AUTH_BROWSER_DESC" %]
+<div class="prefDesc">
+    <a href="https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d" target="_blank" class="stdbutton" style="text-decoration:none; display:inline-block; padding:5px 15px; margin-bottom:10px;">
+        [% "PLUGIN_YANDEX_AUTH_LOGIN" | string %]
+    </a>
+    <br>
+    <a id="yandex_bookmarklet" href="#" class="stdbutton" style="text-decoration:none; display:inline-block; padding:5px 15px; background-color:#444; color:#fff;" onclick="alert('Drag this button to your bookmarks bar!'); return false;">
+        Capture Token
+    </a>
+
+    <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 10px;">
+        <p><b>[% "PLUGIN_YANDEX_AUTH_DRAG_DROP" | string %]</b></p>
+        <p style="font-size: 0.9em; color: #666;">[% "PLUGIN_YANDEX_AUTH_DRAG_DROP_DESC" | string %]</p>
+        <div id="yandex_drop_zone" style="border: 2px dashed #ccc; border-radius: 8px; padding: 20px; text-align: center; color: #999; cursor: pointer; background-color: #fafafa; transition: all 0.3s ease;">
+            [% "PLUGIN_YANDEX_AUTH_DRAG_ZONE" | string %]
+        </div>
+    </div>
+</div>
+<script type="text/javascript">
+    (function() {
+        var callbackUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+        
+        // Bookmarklet generation
+        var jsCode = "javascript:(function(){" +
+            "var hash = location.hash;" +
+            "if (hash.includes('access_token=')) {" +
+                "var token = new URLSearchParams(hash.substring(1)).get('access_token');" +
+                "if (token) {" +
+                    "window.open('" + callbackUrl + "?save_token=1&token=' + token);" +
+                "}" +
+            "} else {" +
+                "alert('Token not found in URL. Make sure you are on the result page.');" +
+            "}" +
+        "})();";
+        
+        document.getElementById('yandex_bookmarklet').setAttribute('href', jsCode);
+
+        // Drag and Drop logic
+        var zone = document.getElementById('yandex_drop_zone');
+        zone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '#00a000';
+            this.style.backgroundColor = '#f0fff0';
+            this.style.color = '#008000';
+        });
+
+        zone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '#ccc';
+            this.style.backgroundColor = '#fafafa';
+            this.style.color = '#999';
+        });
+
+        zone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.style.borderColor = '#ccc';
+            this.style.backgroundColor = '#fafafa';
+            
+            var text = e.dataTransfer.getData('text');
+            if (text && text.indexOf('access_token=') !== -1) {
+                var hashPart = text.indexOf('#') !== -1 ? text.split('#')[1] : text;
+                var params = new URLSearchParams(hashPart);
+                var token = params.get('access_token');
+                
+                if (token) {
+                    window.location.href = callbackUrl + "?save_token=1&token=" + token;
+                } else {
+                    alert('Token could not be parsed from the dropped content.');
+                }
+            } else {
+                alert('No token found in the dropped content. Please drag the full URL of the result page.');
+            }
+        });
+    })();
+</script>
+[% END %]
+
 [% WRAPPER setting title="PLUGIN_YANDEX_MAX_BITRATE" desc="PLUGIN_YANDEX_MAX_BITRATE_DESC" %]
 <div class="prefDesc">
     <select name="pref_max_bitrate" id="pref_max_bitrate" class="stdedit">
