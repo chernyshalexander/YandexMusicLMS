@@ -659,7 +659,8 @@ sub _handle_ynison_message {
         }
     }
 
-    # Handle commands from Yandex Music app
+    # Handle commands from Yandex Music app (before player_state to have context)
+    my $had_commands = 0;
     if (exists $msg->{put_commands}) {
         $log->info("Ynison [" . $self->{client}->name() . "]: Processing " . scalar(@{$msg->{put_commands}}) . " command(s)");
         foreach my $cmd_obj (@{$msg->{put_commands}}) {
@@ -667,6 +668,7 @@ sub _handle_ynison_message {
             $log->info("Ynison [" . $self->{client}->name() . "]: Command: $cmd");
             $self->_execute_lms_command($cmd, $cmd_obj);
         }
+        $had_commands = 1;
     }
 
     # Log player state if present
@@ -684,8 +686,13 @@ sub _handle_ynison_message {
                 my $title = $track->{title} // 'Unknown';
                 $log->info("Ynison [" . $self->{client}->name() . "]: Now playing: $title (ID: $track->{playable_id})");
 
-                # Sync player commands from Yandex state
-                $self->_sync_player_commands($ps);
+                # After NEXT/PREV commands, sync the new track from player_state
+                if ($had_commands) {
+                    $self->_sync_track_after_command($ps, $idx);
+                } else {
+                    # Otherwise just sync playback state (play/pause/seek)
+                    $self->_sync_player_commands($ps);
+                }
             }
         }
     }
@@ -769,6 +776,40 @@ sub _sync_player_commands {
     if (abs($current_time_sec - $remote_progress_sec) > 1) {
         $log->info("Ynison [" . $client->name() . "]: Seeking to $remote_progress_sec sec (remote progress)");
         $client->execute(['time', $remote_progress_sec]);
+    }
+}
+
+sub _sync_track_after_command {
+    my ($self, $player_state, $track_idx) = @_;
+    my $client = $self->{client};
+    return unless $player_state && $player_state->{player_queue};
+
+    my $queue = $player_state->{player_queue};
+    return unless $queue->{playable_list} && @{$queue->{playable_list}} > 0;
+    return unless $track_idx >= 0 && $track_idx < @{$queue->{playable_list}};
+
+    my $track = $queue->{playable_list}->[$track_idx];
+    return unless $track && $track->{playable_id};
+
+    my $track_id = $track->{playable_id};
+    my $track_url = "yandexmusic://$track_id";
+
+    $log->info("Ynison [" . $client->name() . "]: Loading new track after command: $track_id");
+
+    # Clear playlist and add the new track
+    $client->execute(['playlist', 'clear']);
+    $client->execute(['playlist', 'insert', $track_url]);
+
+    # Start playback if remote device is playing
+    if (!$player_state->{status}->{paused}) {
+        $client->execute(['play']);
+        $log->info("Ynison [" . $client->name() . "]: Started playback of $track_id");
+    }
+
+    # Seek to current position if available
+    my $progress_sec = ($player_state->{status}->{progress_ms} || 0) / 1000;
+    if ($progress_sec > 0) {
+        $client->execute(['time', $progress_sec]);
     }
 }
 
