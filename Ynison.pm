@@ -737,6 +737,25 @@ sub _execute_lms_command {
         $client->execute(['mixer', 'volume', $volume]);
         $log->info("Ynison [" . $client->name() . "]: Set volume to $volume");
     }
+    elsif ($command eq "REWIND") {
+        my $offset_sec = ($data->{offset_ms} || 10000) / 1000;  # Default 10 sec
+        my $current_time = Slim::Player::Source::songTime($client) || 0;
+        my $new_time = $current_time - $offset_sec;
+        $new_time = 0 if $new_time < 0;
+        $client->execute(['time', $new_time]);
+        $log->info("Ynison [" . $client->name() . "]: Rewinding $offset_sec seconds");
+        $self->update_state();
+    }
+    elsif ($command eq "FF" || $command eq "FAST_FORWARD") {
+        my $offset_sec = ($data->{offset_ms} || 10000) / 1000;  # Default 10 sec
+        my $current_time = Slim::Player::Source::songTime($client) || 0;
+        my $duration = $client->playingSong() ? $client->playingSong()->duration() : 0;
+        my $new_time = $current_time + $offset_sec;
+        $new_time = $duration if $duration && $new_time > $duration;
+        $client->execute(['time', $new_time]);
+        $log->info("Ynison [" . $client->name() . "]: Fast forwarding $offset_sec seconds");
+        $self->update_state();
+    }
     else {
         $log->warn("Ynison [" . $client->name() . "]: Unknown command: $command");
     }
