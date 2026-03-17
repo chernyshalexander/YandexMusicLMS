@@ -683,6 +683,9 @@ sub _handle_ynison_message {
                 my $track = $ps->{player_queue}->{playable_list}->[$idx];
                 my $title = $track->{title} // 'Unknown';
                 $log->info("Ynison [" . $self->{client}->name() . "]: Now playing: $title (ID: $track->{playable_id})");
+
+                # Sync track from other device to LMS if not already playing this track
+                $self->_sync_track_from_yandex($msg->{active_device_id_optional}, $ps, $idx);
             }
         }
     }
@@ -736,6 +739,54 @@ sub _execute_lms_command {
     }
     else {
         $log->warn("Ynison [" . $client->name() . "]: Unknown command: $command");
+    }
+}
+
+sub _sync_track_from_yandex {
+    my ($self, $active_device_id, $player_state, $track_idx) = @_;
+    my $client = $self->{client};
+
+    # Don't sync if this LMS device is the active device (avoid loops)
+    if ($active_device_id && $active_device_id eq $self->{device_id}) {
+        $log->debug("Ynison [" . $client->name() . "]: Skipping sync - LMS is already active device");
+        return;
+    }
+
+    # Check if we have a track to sync
+    my $queue = $player_state->{player_queue};
+    return unless $queue && $queue->{playable_list} && @{$queue->{playable_list}} > 0;
+
+    my $track = $queue->{playable_list}->[$track_idx];
+    return unless $track && $track->{playable_id};
+
+    my $track_id = $track->{playable_id};
+    my $track_url = "yandexmusic://$track_id";
+
+    # Check if this track is already in LMS playlist
+    my $current_song = $client->playingSong();
+    if ($current_song && $current_song->track() && $current_song->track()->url() eq $track_url) {
+        $log->debug("Ynison [" . $client->name() . "]: Track $track_id already playing, skipping sync");
+        return;
+    }
+
+    $log->info("Ynison [" . $client->name() . "]: Syncing track from remote device: $track_id ($track->{title})");
+
+    # Clear current playlist and add new track
+    $client->execute(['playlist', 'clear']);
+    $client->execute(['playlist', 'insert', $track_url]);
+
+    # Start playback if remote device is playing
+    if (!$player_state->{status}->{paused}) {
+        $client->execute(['play']);
+        $log->info("Ynison [" . $client->name() . "]: Started playback of $track_id");
+    } else {
+        $log->info("Ynison [" . $client->name() . "]: Track loaded but not playing (remote device is paused)");
+    }
+
+    # Seek to current position if available
+    my $progress_sec = ($player_state->{status}->{progress_ms} || 0) / 1000;
+    if ($progress_sec > 0) {
+        $client->execute(['time', $progress_sec]);
     }
 }
 
