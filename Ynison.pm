@@ -674,17 +674,6 @@ sub _handle_ynison_message {
 
                 $log->info("Ynison [" . $client->name() . "]: Track: \"$title\" ($track_id) — $paused $progress/$duration sec");
 
-                # DEBUG: Log playable_list size
-                my $list_size = scalar(@{$ps->{player_queue}->{playable_list}});
-                $log->info("Ynison [" . $client->name() . "]: playable_list has $list_size track(s)");
-                if ($list_size <= 15) {
-                    foreach my $i (0..$#{$ps->{player_queue}->{playable_list}}) {
-                        my $t = $ps->{player_queue}->{playable_list}->[$i];
-                        my $marker = ($i == $idx) ? " <- CURRENT" : "";
-                        $log->info("Ynison [" . $client->name() . "]:   [$i] " . $t->{playable_id} . " - " . ($t->{title} // 'Unknown') . $marker);
-                    }
-                }
-
                 # Determine if we should sync based on active device
                 if ($active_id eq $self->{device_id}) {
                     # LMS is the active playback device
@@ -700,8 +689,12 @@ sub _handle_ynison_message {
                         # Same track — just sync play/pause/seek
                         $self->_sync_player_commands($ps);
                     }
+                } else {
+                    # Another device is active — stop LMS to prevent simultaneous playback
+                    if ($client->isPlaying() || !$client->isPaused()) {
+                        $client->execute(['stop']);
+                    }
                 }
-                # else: Another device is active — LMS just observes, no sync
             }
         }
     }
@@ -814,13 +807,10 @@ sub _sync_new_track {
     return unless $queue->{playable_list} && @{$queue->{playable_list}} > 0;
     return unless $track_idx >= 0 && $track_idx < @{$queue->{playable_list}};
 
-    my $track = $queue->{playable_list}->[$track_idx];
-    return unless $track && $track->{playable_id};
+    my $current_track = $queue->{playable_list}->[$track_idx];
+    return unless $current_track && $current_track->{playable_id};
 
-    my $track_id = $track->{playable_id};
-    my $track_url = "yandexmusic://$track_id";
-
-    $log->debug("Ynison [" . $client->name() . "]: Syncing new track: $track_id");
+    $log->debug("Ynison [" . $client->name() . "]: Syncing playlist with " . scalar(@{$queue->{playable_list}}) . " track(s)");
 
     # Set flag to prevent update_state() from interfering during sync
     $self->{syncing_from_yandex} = 1;
@@ -829,9 +819,18 @@ sub _sync_new_track {
         $s->{syncing_from_yandex} = 0;
     });
 
-    # Clear playlist and add the new track
+    # Clear playlist and load ALL tracks from Yandex (not just current one)
     $client->execute(['playlist', 'clear']);
-    $client->execute(['playlist', 'insert', $track_url]);
+
+    foreach my $track (@{$queue->{playable_list}}) {
+        next unless $track && $track->{playable_id};
+        my $track_url = "yandexmusic://" . $track->{playable_id};
+        $client->execute(['playlist', 'insert', $track_url]);
+    }
+
+    # Set current track position based on current_playable_index
+    # LMS uses 0-based indexing, so index directly
+    $client->execute(['playlist', 'index', $track_idx]);
 
     # Start playback if remote device is playing
     if (!$player_state->{status}->{paused}) {
