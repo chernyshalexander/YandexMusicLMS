@@ -122,13 +122,21 @@ sub cache_track_metadata {
     }
 
     my $cache = Slim::Utils::Cache->new();
+
+    # Preserve actual bitrate if it was already cached (from getNextTrack)
+    my $existing = $cache->get('yandex_meta_' . $track_id);
+    my $bitrate = 192000; # Default bitrate
+    if ($existing && $existing->{bitrate} && $existing->{bitrate} != 192000) {
+        $bitrate = $existing->{bitrate};
+    }
+
     my $meta = {
         title    => $track_title,
         artist   => $artist_name,
         album    => $album_name,
         duration => $duration_ms ? int($duration_ms / 1000) : 0,
         cover    => $icon,
-        bitrate  => 192000, # Default bitrate
+        bitrate  => $bitrate,
     };
 
     $cache->set('yandex_meta_' . $track_id, $meta, '7d');
