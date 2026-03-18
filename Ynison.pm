@@ -9,6 +9,7 @@ use MIME::Base64;
 use Encode qw(encode_utf8 decode_utf8);
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
+use Slim::Utils::Timers;
 use Slim::Networking::Async;
 use Slim::Networking::IO::Select;
 use Time::HiRes qw(time);
@@ -57,6 +58,7 @@ sub new {
         user_id       => undef,
         last_playable_list => [],  # Cache last playable list from Yandex
         last_state_version => undef,  # Cache last version to avoid duplicate updates
+        syncing_from_yandex => 0,  # Flag to prevent update_state() loop during sync
     }, $class;
 
     $self->init();
@@ -284,9 +286,6 @@ sub _process_frames {
 
         $self->{read_buffer} = substr($self->{read_buffer}, $header_len + $len);
 
-        if ($log->is_debug) {
-            $log->debug("Ynison [" . $self->{client}->name() . "]: Received frame opcode: $opcode, len: $len");
-        }
 
         if ($opcode == 1) { # Text
             my $data = eval { decode_json($payload) };
@@ -337,6 +336,12 @@ sub _handle_message {
 sub update_state {
     my ($self) = @_;
     return unless $self->{is_connected};
+
+    # Skip sending state while syncing from Yandex to prevent echo loop
+    if ($self->{syncing_from_yandex}) {
+        $log->debug("Ynison [" . $self->{client}->name() . "]: Skipping update - syncing from Yandex");
+        return;
+    }
 
     my $player_state = $self->_get_player_state();
 
@@ -412,7 +417,6 @@ sub _on_readable {
 sub _send_message {
     my ($self, $data) = @_;
     my $json = encode_json($data);
-    $log->debug("Ynison [" . $self->{client}->name() . "]: Sending message: $json");
     my $frame = $self->_encode_ws_frame($json);
     push @{$self->{write_queue}}, $frame;
     Slim::Networking::IO::Select::addWrite($self->{socket}, sub { $self->_on_writable(@_) });
@@ -553,7 +557,6 @@ sub _send_one_off_command {
     }
 
     $self->_send_message($msg);
-    $log->debug("Ynison [" . $self->{client}->name() . "]: Sent one-off $command_type command with temp device_id: $temp_device_id");
 }
 
 sub _get_player_state {
@@ -625,15 +628,11 @@ sub _get_player_state {
 
 sub _handle_ynison_message {
     my ($self, $msg) = @_;
-
-    # Log full message structure for debugging
-    $log->info("Ynison [" . $self->{client}->name() . "]: ========== FULL MESSAGE ==========");
-    $log->info("Ynison [" . $self->{client}->name() . "]: " . encode_json($msg));
-    $log->info("Ynison [" . $self->{client}->name() . "]: ==================================");
+    my $client = $self->{client};
 
     # Handle errors
     if (exists $msg->{error}) {
-        $log->error("Ynison [" . $self->{client}->name() . "]: Error from server: " . encode_json($msg->{error}));
+        $log->error("Ynison [" . $client->name() . "]: Error from server: " . $msg->{error}->{message});
         return;
     }
 
@@ -643,56 +642,55 @@ sub _handle_ynison_message {
         my $new_list = $msg->{player_state}->{player_queue}->{playable_list};
         if (ref($new_list) eq 'ARRAY' && @$new_list > 0) {
             $self->{last_playable_list} = $new_list;
-            $log->debug("Ynison [" . $self->{client}->name() . "]: Cached playable_list with " . scalar(@$new_list) . " track(s)");
         }
     }
 
-    # Log device list if present
-    if (exists $msg->{devices} && ref($msg->{devices}) eq 'ARRAY') {
-        $log->info("Ynison [" . $self->{client}->name() . "]: Available devices:");
-        foreach my $dev (@{$msg->{devices}}) {
-            my $title = $dev->{info}->{title} // 'Unknown';
-            my $offline = $dev->{is_offline} ? " (OFFLINE)" : " (ONLINE)";
-            my $can_play = $dev->{capabilities}->{can_be_player} ? " [CAN_PLAY]" : "";
-            my $can_control = $dev->{capabilities}->{can_be_remote_controller} ? " [CAN_CONTROL]" : "";
-            $log->info("Ynison [" . $self->{client}->name() . "]:   - $title$offline$can_play$can_control");
-        }
-    }
-
-    # Handle commands from Yandex Music app (before player_state to have context)
-    my $had_commands = 0;
+    # Handle commands from Yandex Music app
     if (exists $msg->{put_commands}) {
-        $log->info("Ynison [" . $self->{client}->name() . "]: Processing " . scalar(@{$msg->{put_commands}}) . " command(s)");
         foreach my $cmd_obj (@{$msg->{put_commands}}) {
             my $cmd = $cmd_obj->{command} // 'UNKNOWN';
-            $log->info("Ynison [" . $self->{client}->name() . "]: Command: $cmd");
+            # Log compact command info
+            my $active_dev_name = $self->_get_device_name_by_id($msg->{active_device_id_optional}, $msg->{devices});
+            $log->info("Ynison [" . $client->name() . "]: Command $cmd from $active_dev_name");
             $self->_execute_lms_command($cmd, $cmd_obj);
         }
-        $had_commands = 1;
     }
 
-    # Log player state if present
+    # Process player state sync
     if (exists $msg->{player_state}) {
         my $ps = $msg->{player_state};
-        my $paused = $ps->{status}->{paused} ? "PAUSED" : "PLAYING";
-        my $progress = int(($ps->{status}->{progress_ms} || 0) / 1000);
-        my $duration = int(($ps->{status}->{duration_ms} || 0) / 1000);
-        $log->info("Ynison [" . $self->{client}->name() . "]: Player State: $paused, $progress / $duration sec");
+        my $active_id = $msg->{active_device_id_optional} // '';
 
+        # Log current track
         if (exists $ps->{player_queue}->{playable_list} && @{$ps->{player_queue}->{playable_list}} > 0) {
             my $idx = $ps->{player_queue}->{current_playable_index} // 0;
             if ($idx >= 0 && $idx < @{$ps->{player_queue}->{playable_list}}) {
                 my $track = $ps->{player_queue}->{playable_list}->[$idx];
+                my $paused = $ps->{status}->{paused} ? "PAUSED" : "PLAYING";
+                my $progress = int(($ps->{status}->{progress_ms} || 0) / 1000);
+                my $duration = int(($ps->{status}->{duration_ms} || 0) / 1000);
+                my $track_id = $track->{playable_id};
                 my $title = $track->{title} // 'Unknown';
-                $log->info("Ynison [" . $self->{client}->name() . "]: Now playing: $title (ID: $track->{playable_id})");
 
-                # After NEXT/PREV commands, sync the new track from player_state
-                if ($had_commands) {
-                    $self->_sync_track_after_command($ps, $idx);
-                } else {
-                    # Otherwise just sync playback state (play/pause/seek)
-                    $self->_sync_player_commands($ps);
+                $log->info("Ynison [" . $client->name() . "]: Track: \"$title\" ($track_id) — $paused $progress/$duration sec");
+
+                # Determine if we should sync based on active device
+                if ($active_id eq $self->{device_id}) {
+                    # LMS is the active playback device
+                    my $current_url = $client->playingSong() ? $client->playingSong()->track()->url() : '';
+                    my $new_url = "yandexmusic://$track_id";
+
+                    if ($current_url ne $new_url) {
+                        # Track changed — sync new track (NEXT/PREV or redirect from mobile)
+                        my $source_dev = $self->_get_device_name_by_id($active_id, $msg->{devices});
+                        $log->info("Ynison [" . $client->name() . "]: Active: $source_dev → syncing new track");
+                        $self->_sync_new_track($ps, $idx);
+                    } else {
+                        # Same track — just sync play/pause/seek
+                        $self->_sync_player_commands($ps);
+                    }
                 }
+                # else: Another device is active — LMS just observes, no sync
             }
         }
     }
@@ -701,7 +699,6 @@ sub _handle_ynison_message {
 sub _execute_lms_command {
     my ($self, $command, $data) = @_;
     my $client = $self->{client};
-    $log->info("Ynison [" . $client->name() . "]: Executing $command with data: " . encode_json($data));
 
     if ($command eq "PLAY") {
         $client->execute(['play']);
@@ -726,16 +723,16 @@ sub _execute_lms_command {
     }
     elsif ($command eq "NEXT") {
         $client->execute(['playlist', 'index', '+1']);
-        $self->update_state();
+        # Sync will happen when player_state arrives from Yandex
     }
     elsif ($command eq "PREV") {
         $client->execute(['playlist', 'index', '-1']);
-        $self->update_state();
+        # Sync will happen when player_state arrives from Yandex
     }
     elsif ($command eq "SEEK") {
         my $seek_pos = ($data->{progress_ms} || 0) / 1000;
         $client->execute(['time', $seek_pos]);
-        $self->update_state();
+        # Sync will happen when player_state arrives from Yandex
     }
     elsif ($command eq "VOLUME") {
         my $volume = int($data->{volume} || 0);
@@ -749,10 +746,31 @@ sub _execute_lms_command {
     }
 }
 
+sub _get_device_name_by_id {
+    my ($self, $device_id, $devices_array) = @_;
+    return 'Unknown' unless $device_id && $devices_array;
+
+    foreach my $dev (@$devices_array) {
+        if ($dev->{info} && $dev->{info}->{device_id} eq $device_id) {
+            my $title = $dev->{info}->{title} // 'Unknown';
+            my $type = $dev->{info}->{type} // 'WEB';
+            return "$title ($type)";
+        }
+    }
+    return 'Unknown';
+}
+
 sub _sync_player_commands {
     my ($self, $player_state) = @_;
     my $client = $self->{client};
     return unless $player_state && $player_state->{status};
+
+    # Set flag to prevent update_state() from interfering during sync
+    $self->{syncing_from_yandex} = 1;
+    Slim::Utils::Timers::setTimer($self, time() + 2, sub {
+        my $s = shift;
+        $s->{syncing_from_yandex} = 0;
+    });
 
     my $status = $player_state->{status};
     my $remote_paused = $status->{paused} ? 1 : 0;
@@ -765,21 +783,18 @@ sub _sync_player_commands {
 
     # Sync pause/play state
     if ($remote_paused && !$current_paused) {
-        $log->info("Ynison [" . $client->name() . "]: Pausing player (remote is paused)");
         $client->execute(['pause', 1]);
     } elsif (!$remote_paused && $current_paused) {
-        $log->info("Ynison [" . $client->name() . "]: Playing (remote is playing)");
         $client->execute(['play']);
     }
 
     # Sync seek position if difference > 1 second
     if (abs($current_time_sec - $remote_progress_sec) > 1) {
-        $log->info("Ynison [" . $client->name() . "]: Seeking to $remote_progress_sec sec (remote progress)");
         $client->execute(['time', $remote_progress_sec]);
     }
 }
 
-sub _sync_track_after_command {
+sub _sync_new_track {
     my ($self, $player_state, $track_idx) = @_;
     my $client = $self->{client};
     return unless $player_state && $player_state->{player_queue};
@@ -794,7 +809,14 @@ sub _sync_track_after_command {
     my $track_id = $track->{playable_id};
     my $track_url = "yandexmusic://$track_id";
 
-    $log->info("Ynison [" . $client->name() . "]: Loading new track after command: $track_id");
+    $log->debug("Ynison [" . $client->name() . "]: Syncing new track: $track_id");
+
+    # Set flag to prevent update_state() from interfering during sync
+    $self->{syncing_from_yandex} = 1;
+    Slim::Utils::Timers::setTimer($self, time() + 3, sub {
+        my $s = shift;
+        $s->{syncing_from_yandex} = 0;
+    });
 
     # Clear playlist and add the new track
     $client->execute(['playlist', 'clear']);
@@ -803,13 +825,6 @@ sub _sync_track_after_command {
     # Start playback if remote device is playing
     if (!$player_state->{status}->{paused}) {
         $client->execute(['play']);
-        $log->info("Ynison [" . $client->name() . "]: Started playback of $track_id");
-    }
-
-    # Seek to current position if available
-    my $progress_sec = ($player_state->{status}->{progress_ms} || 0) / 1000;
-    if ($progress_sec > 0) {
-        $client->execute(['time', $progress_sec]);
     }
 }
 
