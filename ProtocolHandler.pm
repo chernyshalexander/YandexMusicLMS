@@ -270,7 +270,7 @@ sub getNextTrack {
                 my $cache = Slim::Utils::Cache->new();
                 if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
                     $cached_meta->{bitrate} = $bitrate;
-                    $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
+                    $cache->set('yandex_meta_' . $track_id, $cached_meta, '7d');
                 }
             }
 
@@ -302,7 +302,7 @@ sub getMetadataFor {
         my $cached_meta = $cache->get('yandex_meta_' . $track_id);
 
         if ($cached_meta) {
-            $log->debug("YANDEX: Returning cached metadata for $url");
+            # $log->debug("YANDEX: Returning cached metadata for $url");
             
             my $bitrate = $cached_meta->{bitrate} || 192000;
             
@@ -329,9 +329,6 @@ sub getMetadataFor {
                 type     => 'mp3',
             };
         } else {
-            # Metadata missing (e.g. after restart or cache expiry)
-            $log->info("YANDEX: Metadata missing for $url. Triggering recovery...");
-
             my $yandex_client = Plugins::yandex::Plugin->getClient();
             if ($yandex_client) {
                 # Use a flag to avoid multiple parallel requests for the same track
@@ -341,7 +338,7 @@ sub getMetadataFor {
                     $yandex_client->tracks([$track_id], sub {
                         my $tracks = shift;
                         if ($tracks && ref $tracks eq 'ARRAY' && @$tracks) {
-                            $log->info("YANDEX: Recovered metadata for $track_id");
+                            # $log->info("YANDEX: Recovered metadata for $track_id");
                             Plugins::yandex::Browse::cache_track_metadata($tracks->[0]);
                             
                             # Notify LMS that metadata has changed
@@ -359,7 +356,7 @@ sub getMetadataFor {
                         }
                         $cache->remove('yandex_fetching_' . $track_id);
                     }, sub {
-                        $log->error("YANDEX: Failed to recover metadata for $track_id: " . shift);
+                        # $log->error("YANDEX: Failed to recover metadata for $track_id: " . shift);
                         $cache->remove('yandex_fetching_' . $track_id);
                     });
                 }
