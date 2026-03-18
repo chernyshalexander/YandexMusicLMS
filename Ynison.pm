@@ -674,6 +674,17 @@ sub _handle_ynison_message {
 
                 $log->info("Ynison [" . $client->name() . "]: Track: \"$title\" ($track_id) — $paused $progress/$duration sec");
 
+                # DEBUG: Log playable_list size
+                my $list_size = scalar(@{$ps->{player_queue}->{playable_list}});
+                $log->info("Ynison [" . $client->name() . "]: playable_list has $list_size track(s)");
+                if ($list_size <= 15) {
+                    foreach my $i (0..$#{$ps->{player_queue}->{playable_list}}) {
+                        my $t = $ps->{player_queue}->{playable_list}->[$i];
+                        my $marker = ($i == $idx) ? " <- CURRENT" : "";
+                        $log->info("Ynison [" . $client->name() . "]:   [$i] " . $t->{playable_id} . " - " . ($t->{title} // 'Unknown') . $marker);
+                    }
+                }
+
                 # Determine if we should sync based on active device
                 if ($active_id eq $self->{device_id}) {
                     # LMS is the active playback device
