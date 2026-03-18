@@ -123,23 +123,21 @@ sub cache_track_metadata {
 
     my $cache = Slim::Utils::Cache->new();
 
-    # Preserve actual bitrate if it was already cached (from getNextTrack)
-    my $existing = $cache->get('yandex_meta_' . $track_id);
-    my $bitrate = 192000; # Default bitrate
-    if ($existing && $existing->{bitrate} && $existing->{bitrate} != 192000) {
-        $bitrate = $existing->{bitrate};
-    }
+    # Consolidate with existing cache (preserve bitrate, _complete, etc. like in Deezer)
+    my $existing = $cache->get('yandex_meta_' . $track_id) || {};
 
     my $meta = {
+        %$existing,                                                         # preserve all old fields
         title    => $track_title,
         artist   => $artist_name,
         album    => $album_name,
         duration => $duration_ms ? int($duration_ms / 1000) : 0,
         cover    => $icon,
-        bitrate  => $bitrate,
+        bitrate  => $existing->{bitrate} || 192000,                        # keep real bitrate if available
+        _complete => 1,                                                     # mark as complete (full metadata)
     };
 
-    $cache->set('yandex_meta_' . $track_id, $meta, '7d');
+    $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days like Deezer
     
     return $meta;
 }

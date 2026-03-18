@@ -28,7 +28,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison));
 }
 
 sub handler {
@@ -66,11 +66,21 @@ sub handler {
 	}
 
 	if ($params->{saveSettings}) {
+		# Handle checkbox values - unchecked checkboxes don't appear in POST data (like Spotty-Plugin does)
+		$params->{pref_use_new_radio_api}              ||= 0;
+		$params->{pref_remove_duplicates}              ||= 0;
+		$params->{pref_show_chart}                     ||= 0;
+		$params->{pref_show_new_releases}              ||= 0;
+		$params->{pref_show_new_playlists}             ||= 0;
+		$params->{pref_show_audiobooks_in_collection}  ||= 0;
+		$params->{pref_search_podcasts}                ||= 0;
+		$params->{pref_enable_ynison}                  ||= 0;
+
 		my $token = $params->{pref_token};
 		my $oldToken = $prefs->get('token');
 		my $placeholder = string('PLUGIN_YANDEX_TOKEN_SET') || '(Token is set)';
 
-		$log->info("Yandex Settings: Save triggered. Token param: " . ($token || 'none'));
+		$log->info("Yandex Settings: Save triggered. Token param: " . ($token || 'none') . ", enable_ynison: " . ($params->{pref_enable_ynison} || 0));
 
 		# Handle placeholder case
 		if ($token && ($token eq $placeholder || $token eq '(Token is set)')) {
@@ -133,6 +143,9 @@ sub beforeRender {
 	} else {
 		$params->{pref_tokenValue} = '';
 	}
+
+	$params->{enable_ynison} = $prefs->get('enable_ynison') // 0;
+
 	$log->info("Yandex Settings: beforeRender. pref_fullName=" . ($params->{pref_fullName} || 'none') . " pref_tokenValue=" . $params->{pref_tokenValue});
 }
 

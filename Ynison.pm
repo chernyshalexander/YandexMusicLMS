@@ -4,7 +4,6 @@ use strict;
 use warnings;
 
 use JSON::XS::VersionOneAndTwo;
-use JSON::PP;
 use MIME::Base64;
 use Encode qw(encode_utf8 decode_utf8);
 use Slim::Utils::Log;
@@ -249,6 +248,18 @@ sub _cleanup {
     $self->{current_state} = STATE_DISCONNECTED;
 }
 
+sub _cleanup_with_reconnect {
+    my $self = shift;
+    $self->_cleanup();
+
+    # Schedule reconnection after 5 seconds (only on actual connection errors)
+    Slim::Utils::Timers::setTimer($self, time() + 5, sub {
+        my $s = shift;
+        $log->info("Ynison [" . $s->{client}->name() . "]: Reconnecting after connection error...");
+        $s->connect_redirector();
+    });
+}
+
 sub _process_frames {
     my $self = shift;
     while (length($self->{read_buffer}) >= 2) {
@@ -316,8 +327,12 @@ sub _handle_message {
 
     if ($self->{current_state} == STATE_REDIRECTOR) {
         if ($msg->{host} && $msg->{redirect_ticket}) {
-            $log->info("Ynison [" . $self->{client}->name() . "]: Redirected to $msg->{host}");
+            # Normalize host: remove wss:// or https:// prefixes (cf. Python reference)
             my $host = $msg->{host};
+            $host =~ s{^(wss?|https?)://}{};
+            $host =~ s{/+$}{};
+
+            $log->info("Ynison [" . $self->{client}->name() . "]: Redirected to $host");
             my $ticket = $msg->{redirect_ticket};
             my $session_id = $msg->{session_id};
 
@@ -335,11 +350,18 @@ sub _handle_message {
 
 sub update_state {
     my ($self) = @_;
+    my $client = $self->{client};
     return unless $self->{is_connected};
 
     # Skip sending state while syncing from Yandex to prevent echo loop
     if ($self->{syncing_from_yandex}) {
-        $log->debug("Ynison [" . $self->{client}->name() . "]: Skipping update - syncing from Yandex");
+        $log->debug("Ynison [" . $client->name() . "]: Skipping update - syncing from Yandex");
+        return;
+    }
+
+    # Don't send state during initial track load (not playing and not paused = still loading)
+    # This prevents echo loop: LMS sends paused=true → Yandex sends PAUSED back
+    unless ($client->isPlaying() || $client->isPaused()) {
         return;
     }
 
@@ -367,8 +389,8 @@ sub _send_full_state_msg {
             player_state => $player_state,
             device => {
                 capabilities => {
-                    can_be_player => JSON::PP::true,
-                    can_be_remote_controller => JSON::PP::false,
+                    can_be_player => \1,
+                    can_be_remote_controller => \0,
                     volume_granularity => 16
                 },
                 info => {
@@ -380,9 +402,9 @@ sub _send_full_state_msg {
                 volume_info => {
                     volume => 0
                 },
-                is_shadow => JSON::PP::false
+                is_shadow => \0
             },
-            is_currently_active => JSON::PP::false
+            is_currently_active => \0
         },
         rid => "ac281c26-a047-4419-ad00-e4fbfda1cba3",
         player_action_timestamp_ms => $ts,
@@ -399,7 +421,7 @@ sub _on_readable {
             return;
         }
         $log->error("Ynison [" . $self->{client}->name() . "]: Read error: $!");
-        $self->_cleanup();
+        $self->_cleanup_with_reconnect();
         return;
     }
     if ($bytes == 0) {
@@ -506,7 +528,7 @@ sub _send_one_off_command {
         $msg->{update_player_state} = {
             player_state => {
                 status => {
-                    paused => JSON::PP::false,
+                    paused => \0,
                     duration_ms => $data->{duration_ms} || 0,
                     progress_ms => $data->{progress_ms} || 0,
                     playback_speed => 1,
@@ -528,7 +550,7 @@ sub _send_one_off_command {
         $msg->{update_player_state} = {
             player_state => {
                 status => {
-                    paused => JSON::PP::true,
+                    paused => \1,
                     duration_ms => $data->{duration_ms} || 0,
                     progress_ms => $data->{progress_ms} || 0,
                     playback_speed => 1,
@@ -547,11 +569,17 @@ sub _send_one_off_command {
             }
         };
     } elsif ($command_type eq 'volume') {
+        # Volume update: use real device_id in version (not temp), for consistency with _send_volume_update()
+        my $volume_version = {
+            device_id => $self->{device_id},
+            version => int(rand(0x7fffffff)),
+            timestamp_ms => int(time() * 1000),
+        };
         $msg->{update_volume_info} = {
             device_id => $self->{device_id},
             volume_info => {
                 volume => $data->{volume},
-                version => $version
+                version => $volume_version
             }
         };
     }
@@ -563,7 +591,7 @@ sub _get_player_state {
     my $self = shift;
     my $client = $self->{client};
     my $song = $client->playingSong();
-    my $paused = ($client->isPaused() || !$client->isPlaying()) ? JSON::PP::true : JSON::PP::false;
+    my $paused = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
 
     # Use nanosecond timestamp for version (like streamdeck/hikka do)
     my $ts = int(time() * 1000000000);
@@ -573,7 +601,7 @@ sub _get_player_state {
         timestamp_ms => 0
     };
 
-    my $state = { 
+    my $state = {
         status => {
             duration_ms => 0,
             paused => $paused,
@@ -636,10 +664,16 @@ sub _handle_ynison_message {
         return;
     }
 
+    # Extract player_state from update_full_state if present (server sends both on initial connection)
+    my $player_state = $msg->{player_state};
+    if (!$player_state && exists $msg->{update_full_state} && exists $msg->{update_full_state}->{player_state}) {
+        $player_state = $msg->{update_full_state}->{player_state};
+    }
+
     # Cache the playable_list from Yandex for later use in updates
-    if (exists $msg->{player_state} && exists $msg->{player_state}->{player_queue} &&
-        exists $msg->{player_state}->{player_queue}->{playable_list}) {
-        my $new_list = $msg->{player_state}->{player_queue}->{playable_list};
+    if ($player_state && exists $player_state->{player_queue} &&
+        exists $player_state->{player_queue}->{playable_list}) {
+        my $new_list = $player_state->{player_queue}->{playable_list};
         if (ref($new_list) eq 'ARRAY' && @$new_list > 0) {
             $self->{last_playable_list} = $new_list;
         }
@@ -652,13 +686,41 @@ sub _handle_ynison_message {
             # Log compact command info
             my $active_dev_name = $self->_get_device_name_by_id($msg->{active_device_id_optional}, $msg->{devices});
             $log->info("Ynison [" . $client->name() . "]: Command $cmd from $active_dev_name");
+
             $self->_execute_lms_command($cmd, $cmd_obj);
         }
     }
 
-    # Process player state sync
-    if (exists $msg->{player_state}) {
-        my $ps = $msg->{player_state};
+    # Process volume changes for our device from devices[] array
+    if (exists $msg->{devices}) {
+        foreach my $dev (@{$msg->{devices}}) {
+            next unless $dev->{info} && $dev->{info}->{device_id} eq $self->{device_id};
+            next unless $dev->{volume_info} && defined $dev->{volume_info}->{volume};
+
+            my $volume_float = $dev->{volume_info}->{volume};  # 0.0-1.0
+            my $lms_volume = int($volume_float * 100);          # Convert to 0-100
+            my $current_volume = $self->{client}->volume() || 0;
+
+            # Only set if changed significantly (avoid feedback loop)
+            if (abs($lms_volume - $current_volume) >= 1) {
+                $log->info("Ynison [" . $client->name() . "]: Volume update: $volume_float (0.0-1.0) → $lms_volume (0-100)");
+
+                # Set flag to prevent update_state() feedback loop
+                $self->{syncing_from_yandex} = 1;
+                Slim::Utils::Timers::setTimer($self, time() + 2, sub {
+                    my $s = shift;
+                    $s->{syncing_from_yandex} = 0;
+                });
+
+                $self->{client}->execute(['mixer', 'volume', $lms_volume]);
+            }
+            last;  # Found our device, stop searching
+        }
+    }
+
+    # Process player state sync (using extracted player_state)
+    if ($player_state) {
+        my $ps = $player_state;
         my $active_id = $msg->{active_device_id_optional} // '';
 
         # Log current track
@@ -691,7 +753,7 @@ sub _handle_ynison_message {
                     }
                 } else {
                     # Another device is active — stop LMS to prevent simultaneous playback
-                    if ($client->isPlaying() || !$client->isPaused()) {
+                    if ($client->isPlaying()) {
                         $client->execute(['stop']);
                     }
                 }
@@ -704,22 +766,26 @@ sub _execute_lms_command {
     my ($self, $command, $data) = @_;
     my $client = $self->{client};
 
+    # Note: $data is the put_command object (only has {command} field), not player state
+    # Use actual player state from LMS via _get_player_state() instead
+    my $player_state = $self->_get_player_state();
+
     if ($command eq "PLAY") {
         $client->execute(['play']);
         $self->_send_one_off_command('play', {
-            duration_ms => $data->{duration_ms} || 0,
-            progress_ms => $data->{progress_ms} || 0,
-            current_playable_index => $data->{current_playable_index} || 0,
-            playable_list => $data->{playable_list} || []
+            duration_ms => $player_state->{status}->{duration_ms} // 0,
+            progress_ms => $player_state->{status}->{progress_ms} // 0,
+            current_playable_index => $player_state->{player_queue}->{current_playable_index} // 0,
+            playable_list => $player_state->{player_queue}->{playable_list} // []
         });
     }
     elsif ($command eq "PAUSE") {
         $client->execute(['pause', 1]);
         $self->_send_one_off_command('pause', {
-            duration_ms => $data->{duration_ms} || 0,
-            progress_ms => $data->{progress_ms} || 0,
-            current_playable_index => $data->{current_playable_index} || 0,
-            playable_list => $data->{playable_list} || []
+            duration_ms => $player_state->{status}->{duration_ms} // 0,
+            progress_ms => $player_state->{status}->{progress_ms} // 0,
+            current_playable_index => $player_state->{player_queue}->{current_playable_index} // 0,
+            playable_list => $player_state->{player_queue}->{playable_list} // []
         });
     }
     elsif ($command eq "STOP") {
@@ -737,13 +803,6 @@ sub _execute_lms_command {
         my $seek_pos = ($data->{progress_ms} || 0) / 1000;
         $client->execute(['time', $seek_pos]);
         # Sync will happen when player_state arrives from Yandex
-    }
-    elsif ($command eq "VOLUME") {
-        my $volume = int($data->{volume} || 0);
-        # LMS uses 0-100 scale
-        $volume = int(($volume / 100) * 100) if $volume > 0;
-        $client->execute(['mixer', 'volume', $volume]);
-        $log->info("Ynison [" . $client->name() . "]: Set volume to $volume");
     }
     else {
         $log->warn("Ynison [" . $client->name() . "]: Unknown command: $command");
@@ -778,24 +837,22 @@ sub _sync_player_commands {
 
     my $status = $player_state->{status};
     my $remote_paused = $status->{paused} ? 1 : 0;
-    my $remote_progress_ms = $status->{progress_ms} || 0;
-    my $remote_progress_sec = $remote_progress_ms / 1000;
 
     # Get current LMS state
-    my $current_paused = $client->isPaused() || !$client->isPlaying() ? 1 : 0;
-    my $current_time_sec = Slim::Player::Source::songTime($client) || 0;
+    my $current_paused = $client->isPaused() ? 1 : 0;
+    my $is_playing = $client->isPlaying();
 
-    # Sync pause/play state
-    if ($remote_paused && !$current_paused) {
+    # Sync pause/play state — but only if state actually differs
+    # Do NOT seek — every seek causes stream restart in LMS every 2-3 sec (Yandex push interval)
+    # LMS tracks position internally correctly; small drift is normal
+    if ($remote_paused && $is_playing) {
+        # Remote paused but LMS playing — pause LMS
         $client->execute(['pause', 1]);
-    } elsif (!$remote_paused && $current_paused) {
+    } elsif (!$remote_paused && !$is_playing && $current_paused) {
+        # Remote playing but LMS paused — play LMS (not just buffering)
         $client->execute(['play']);
     }
-
-    # Sync seek position if difference > 1 second
-    if (abs($current_time_sec - $remote_progress_sec) > 1) {
-        $client->execute(['time', $remote_progress_sec]);
-    }
+    # No seek sync — prevents stream restart on every Yandex push
 }
 
 sub _sync_new_track {
@@ -836,6 +893,37 @@ sub _sync_new_track {
     if (!$player_state->{status}->{paused}) {
         $client->execute(['play']);
     }
+}
+
+sub _send_volume_update {
+    my ($self, $volume_float) = @_;
+    return unless $self->{is_connected};
+    return unless defined $volume_float;
+
+    # Ensure volume is in [0.0, 1.0] range
+    $volume_float = 0 if $volume_float < 0;
+    $volume_float = 1 if $volume_float > 1;
+
+    my $ts = int(time() * 1000);
+    my $msg = {
+        update_volume_info => {
+            device_id => $self->{device_id},
+            volume_info => {
+                volume => $volume_float,
+                version => {
+                    device_id => $self->{device_id},
+                    version => int(rand(0x7fffffff)),
+                    timestamp_ms => $ts,
+                }
+            }
+        },
+        rid => '',
+        player_action_timestamp_ms => $ts,
+        activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+    };
+
+    $log->debug("Ynison [" . $self->{client}->name() . "]: Sending volume update: $volume_float");
+    $self->_send_message($msg);
 }
 
 1;
