@@ -30,6 +30,7 @@ $log = Slim::Utils::Log->addLogCategory({
 my $prefs = preferences('plugin.yandex');
 # Add variable to store client instance
 my $yandex_client_instance;
+my %ynison_instances;
 
 
 sub initPlugin {
@@ -45,17 +46,20 @@ sub initPlugin {
         show_new_releases => 0,
         show_new_playlists => 0,
         show_audiobooks_in_collection => 1,
+        enable_ynison => 0,
     });
 
+    # Handle enable_ynison preference changes
+    $prefs->setChange(\&_on_enable_ynison_change, 'enable_ynison');
 
     # Protocol registration
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
-    # Subscription to player events (newsong, jump, stop, clear) to track skips
+    # Subscription to player status changes (play, pause, stop, etc.)
     Slim::Control::Request::subscribe(
         \&playerEventCallback,
-        [['playlist'], ['newsong', 'jump', 'stop', 'clear']]
+        [['playlist', 'mixer', 'play', 'pause'], ['newsong', 'jump', 'stop', 'clear', 'volume', 'pause', 'client']]
     );
 
     $class->SUPER::initPlugin(
@@ -73,6 +77,13 @@ sub initPlugin {
             sub {
                 $yandex_client_instance = shift;
                 $log->info("YANDEX: Client initialized at startup for " . ($yandex_client_instance->{me}->{login} || 'unknown user'));
+
+                if ($prefs->get('enable_ynison')) {
+                    require Plugins::yandex::Ynison;
+                    foreach my $client (Slim::Player::Client::clients()) {
+                        $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client);
+                    }
+                }
             },
             sub {
                 my $error = shift;
@@ -91,6 +102,34 @@ sub initPlugin {
 sub shutdownPlugin {
     my $class = shift;
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
+
+    foreach my $id (keys %ynison_instances) {
+        $ynison_instances{$id}->_cleanup();
+    }
+    %ynison_instances = ();
+}
+
+sub _on_enable_ynison_change {
+    my ($pref, $new_value, $obj, $old_value) = @_;
+
+    if ($new_value && !$old_value) {
+        # Ynison enabled - initialize it
+        if ($yandex_client_instance) {
+            require Plugins::yandex::Ynison;
+            foreach my $client (Slim::Player::Client::clients()) {
+                next if exists $ynison_instances{$client->id()};
+                $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client);
+                $log->info("YANDEX: Ynison enabled for " . $client->name());
+            }
+        }
+    } elsif (!$new_value && $old_value) {
+        # Ynison disabled - cleanup all instances
+        foreach my $id (keys %ynison_instances) {
+            $ynison_instances{$id}->_cleanup();
+            delete $ynison_instances{$id};
+            $log->info("YANDEX: Ynison disabled");
+        }
+    }
 }
 
 # Player event handler for sending skip feedback
@@ -98,11 +137,28 @@ sub playerEventCallback {
     my $request = shift;
     my $client  = $request->client() || return;
 
+    my $command = $request->getRequest(1);
+
+    # Handle client connection/disconnection for Ynison
+    if ($command eq 'client') {
+        my $sub_command = $request->getRequest(2);
+        if ($sub_command eq 'new' || $sub_command eq 'reconnect') {
+            if ($prefs->get('enable_ynison') && $yandex_client_instance) {
+                require Plugins::yandex::Ynison;
+                $ynison_instances{$client->id()} //= Plugins::yandex::Ynison->new($client);
+            }
+        }
+        elsif ($sub_command eq 'disconnect' || $sub_command eq 'forget') {
+            if (exists $ynison_instances{$client->id()}) {
+                $ynison_instances{$client->id()}->_cleanup();
+                delete $ynison_instances{$client->id()};
+            }
+        }
+    }
+
     if ($client->isSynced()) {
         return unless Slim::Player::Sync::isMaster($client);
     }
-
-    my $command = $request->getRequest(1);
 
     if ($command eq 'newsong') {
         # 1. Did the previous track finish naturally?
@@ -125,6 +181,25 @@ sub playerEventCallback {
     elsif ($command eq 'jump' || $command eq 'stop' || $command eq 'clear') {
         # User manually skipped or stopped
         _handleRotorFeedback($client, 'manual_skip_or_stop');
+    }
+
+    # Ynison state update and volume sync
+    if ($prefs->get('enable_ynison')) {
+        if ($ynison_instances{$client->id()}) {
+            # Send volume update if volume changed and not syncing from Yandex
+            if (!$ynison_instances{$client->id()}->{syncing_from_yandex}) {
+                my $vol = $client->volume() || 0;
+                # Don't send volume 0 (can be misinterpreted as pause/stop)
+                $ynison_instances{$client->id()}->_send_volume_update($vol / 100.0) if $vol > 0;
+            }
+            $ynison_instances{$client->id()}->update_state();
+        } else {
+            # Try to initialize if not yet done (e.g. if enable_ynison was tuned on after startup)
+            if ($yandex_client_instance) {
+                require Plugins::yandex::Ynison;
+                $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client);
+            }
+        }
     }
 }
 
