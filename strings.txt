@@ -25,6 +25,42 @@ PLUGIN_YANDEX_TOKEN_SET
 	EN	(Token is set)
 	RU	(Токен установлен)
 
+PLUGIN_YANDEX_AUTH_BROWSER
+	EN	Authorize in Browser (Fast)
+	RU	Авторизация через браузер (Быстро)
+
+PLUGIN_YANDEX_AUTH_BROWSER_DESC
+	EN	Click "Login" to open the Yandex page. After logging in, click the "Capture Token" bookmark to automatically save the token.
+	RU	Нажмите «Войти», чтобы открыть страницу Яндекса. После входа нажмите на закладку «Захват токена» в браузере, чтобы автоматически сохранить его.
+
+PLUGIN_YANDEX_AUTH_LOGIN
+	EN	Login to Yandex
+	RU	Войти в Яндекс
+
+PLUGIN_YANDEX_AUTH_CAPTURE
+	EN	Capture Token
+	RU	Захват токена
+
+PLUGIN_YANDEX_AUTH_SUCCESS_MSG
+	EN	Authorization successful! Please refresh the page.
+	RU	Авторизация успешна! Пожалуйста, обновите страницу.
+
+PLUGIN_YANDEX_AUTH_FAILED_MSG
+	EN	Authorization failed.
+	RU	Ошибка авторизации.
+
+PLUGIN_YANDEX_AUTH_DRAG_DROP
+	EN	Drag & Drop (Alternative)
+	RU	Перетаскивание (Альтернатива)
+
+PLUGIN_YANDEX_AUTH_DRAG_DROP_DESC
+	EN	Alternatively, you can simply drag the URL from the browser's address bar (of the page where the token is) and drop it into the area below.
+	RU	В качестве альтернативы вы можете просто перетащить ссылку из адресной строки браузера (со страницы, где отображается токен) в область ниже.
+
+PLUGIN_YANDEX_AUTH_DRAG_ZONE
+	EN	Drop URL here
+	RU	Перетащите ссылку сюда
+
 PLUGIN_YANDEX_MAX_BITRATE
 	EN	Maximum Audio Quality
 	RU	Максимальное качество звука
@@ -45,6 +81,50 @@ PLUGIN_YANDEX_RADIOSTATIONS
 	EN	Radio Stations
 	RU	Радиостанции
 
+PLUGIN_YANDEX_CHART
+	EN	Hot Tracks
+	RU	Горячие треки
+
+PLUGIN_YANDEX_SHOW_CHART
+	EN	Show Hot Tracks
+	RU	Показывать Горячие треки
+
+PLUGIN_YANDEX_SHOW_CHART_DESC
+	EN	Display the Hot Tracks (trending tracks) menu item in the main navigation
+	RU	Показывать пункт "Горячие треки" (популярные треки) в главном меню
+
+PLUGIN_YANDEX_NEW_RELEASES
+	EN	New Releases
+	RU	Новые релизы
+
+PLUGIN_YANDEX_SHOW_NEW_RELEASES
+	EN	Show New Releases
+	RU	Показывать Новые релизы
+
+PLUGIN_YANDEX_SHOW_NEW_RELEASES_DESC
+	EN	Display the New Releases menu item in the main navigation
+	RU	Показывать пункт "Новые релизы" в главном меню
+
+PLUGIN_YANDEX_NEW_PLAYLISTS
+	EN	New Playlists
+	RU	Новые плейлисты
+
+PLUGIN_YANDEX_SHOW_NEW_PLAYLISTS
+	EN	Show New Playlists
+	RU	Показывать Новые плейлисты
+
+PLUGIN_YANDEX_SHOW_NEW_PLAYLISTS_DESC
+	EN	Display the New Playlists menu item in the main navigation
+	RU	Показывать пункт "Новые плейлисты" в главном меню
+
+PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION
+	EN	Show Audiobooks in My Collection
+	RU	Показывать Аудиокниги в Моей коллекции
+
+PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC
+	EN	Display audiobooks from favorites in the My Collection section
+	RU	Показывать аудиокниги из избранного в разделе "Моя коллекция"
+
 PLUGIN_YANDEX_FOR_YOU
 	EN	For You
 	RU	Для вас
@@ -64,6 +144,18 @@ PLUGIN_YANDEX_ARTISTS
 PLUGIN_YANDEX_PLAYLISTS
 	EN	Playlists
 	RU	Плейлисты
+
+PLUGIN_YANDEX_AUDIOBOOKS
+	EN	Audiobooks
+	RU	Аудиокниги
+
+PLUGIN_YANDEX_PODCASTS
+	EN	Podcasts
+	RU	Подкасты
+
+PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS
+	EN	Audiobooks & Podcasts
+	RU	Аудиокниги & Подкасты
 
 PLUGIN_YANDEX_PICKS
 	EN	Picks
@@ -372,3 +464,18 @@ PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE
 PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC
 	EN	When enabled, tracks that have already been played during the current radio session will not be added to the queue again.
 	RU	Если включено, треки, которые уже играли во время текущей сессии Радио, больше не будут добавляться в очередь.
+
+PLUGIN_YANDEX_SEARCH_PODCASTS
+	EN	Search in Podcasts & Audiobooks
+	RU	Искать в Подкастах и Аудиокнигах
+
+PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
+	EN	Show a separate category for Podcasts and Audiobooks in search results.
+PLUGIN_YANDEX_ENABLE_YNISON
+	EN	Enable Ynison (Casting, Experimental)
+	RU	Включить поддержку Ynison (Casting, Экспериментально)
+
+PLUGIN_YANDEX_ENABLE_YNISON_DESC
+	EN	Make this player visible in the Yandex Music app for remote control and casting.
+	RU	Сделать этот плеер видимым в приложении Яндекс Музыка для управления и трансляции.
+

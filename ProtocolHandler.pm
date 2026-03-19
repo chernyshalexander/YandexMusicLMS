@@ -9,6 +9,7 @@ use Plugins::yandex::Browse;
 use base qw(Slim::Player::Protocols::HTTPS);
 use URI::Escape;
 use Slim::Utils::Prefs;
+use Time::HiRes;
 
 require Slim::Player::Playlist;
 require Slim::Player::Source;
@@ -17,6 +18,7 @@ require Slim::Control::Request;
 
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
+my @pendingMeta = ();  # Global queue for pending metadata requests (prevent duplicates, limit to 10 parallel)
 
 
 # 1. CONSTRUCTOR 
@@ -326,6 +328,7 @@ sub getNextTrack {
                 $cached_meta->{bitrate}  = $bitrate  if $bitrate;
                 $cached_meta->{codec}    = $codec    if $codec;
                 $cached_meta->{aes_key}  = $aes_key  if $aes_key;
+                # Using 3600 for stream-specific metadata (AES keys etc)
                 $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
             }
 
@@ -341,6 +344,8 @@ sub getNextTrack {
             };
 
             $song->streamUrl($final_url);
+
+            # Report success
             $successCb->();
         } else {
             $log->error("YANDEX: URL resolution failed: $error");
@@ -405,16 +410,22 @@ sub isAudio { 1 }
 
 sub getMetadataFor {
     my ($class, $client, $url) = @_;
-    
+
     # Try to find in cache
     if ($url =~ /yandexmusic:\/\/(\d+)/) {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
-        if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
+        my $cached_meta = $cache->get('yandex_meta_' . $track_id);
+
+        # Helper to check if currently playing this track
+        my $is_playing_this = $client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url;
+
+        # If we have complete metadata (or not currently playing), return immediately without API request
+        if ($cached_meta && ($cached_meta->{_complete} || !$is_playing_this)) {
             $log->debug("YANDEX: Returning cached metadata for $url");
             
-            my $bitrate    = $cached_meta->{bitrate} || 0;
-            my $codec      = $cached_meta->{codec};
+            my $bitrate     = $cached_meta->{bitrate} || 0;
+            my $codec       = $cached_meta->{codec};
             my $max_bitrate = $prefs->get('max_bitrate') || 320;
 
             # Determine type: use actual codec if known, otherwise infer from quality setting
@@ -442,7 +453,7 @@ sub getMetadataFor {
                 Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
 
                 # Also update track objects if something is playing right now
-                if ($client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url) {
+                if ($is_playing_this) {
                     $client->playingSong()->bitrate($bitrate);
                     $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
                 }
@@ -459,6 +470,74 @@ sub getMetadataFor {
                 type     => $type,
             };
         }
+
+        # Prepare default metadata with proper icon
+        my $default_icon = 'plugins/yandex/html/images/yandex.png';
+        my $default_meta = {
+            title  => "Yandex Track $track_id",
+            artist => "Yandex Music",
+            cover  => $default_icon,
+            icon   => $default_icon,
+            type   => 'mp3',
+        };
+
+        # If we have cached metadata (but not _complete), return it with default icon
+        if ($cached_meta) {
+            my $bitrate = $cached_meta->{bitrate} || 192000;
+            eval {
+                Slim::Music::Info::setBitrate($url, $bitrate);
+                Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
+            };
+
+            return {
+                title    => $cached_meta->{title},
+                artist   => $cached_meta->{artist},
+                album    => $cached_meta->{album},
+                duration => $cached_meta->{duration},
+                cover    => $cached_meta->{cover} || $default_icon,
+                icon     => $cached_meta->{cover} || $default_icon,
+                bitrate  => sprintf("%.0fkbps", $bitrate/1000),
+                type     => 'mp3',
+            };
+        }
+
+        # Fetch metadata asynchronously using pending queue (like Deezer)
+        my $yandex_client = Plugins::yandex::Plugin->getClient();
+        if ($yandex_client) {
+            my $now = time();
+            # Cleanup old requests (lost after 60 seconds)
+            @pendingMeta = grep { $_->{time} + 60 > $now } @pendingMeta;
+
+            # Only proceed if not already pending and less than 10 parallel requests
+            if ( !(grep { $_->{id} == $track_id } @pendingMeta) && scalar(@pendingMeta) < 10 ) {
+                push @pendingMeta, { id => $track_id, time => $now };
+
+                $yandex_client->tracks([$track_id], sub {
+                    my $tracks = shift;
+                    # Remove this track from pending queue
+                    @pendingMeta = grep { $_->{id} != $track_id } @pendingMeta;
+
+                    return unless $tracks && ref $tracks eq 'ARRAY' && @$tracks;
+
+                    # Cache the metadata with _complete flag
+                    Plugins::yandex::Browse::cache_track_metadata($tracks->[0]);
+
+                    # Only notify if queue is empty (batch notifications like Deezer)
+                    return if @pendingMeta;
+
+                    # Notify LMS that metadata has changed
+                    if ($client) {
+                        $client->currentPlaylistUpdateTime(Time::HiRes::time()) if $client->can('currentPlaylistUpdateTime');
+                        Slim::Control::Request::notifyFromArray($client, ['newmetadata']);
+                    }
+                }, sub {
+                    # Error callback: remove from pending queue
+                    @pendingMeta = grep { $_->{id} != $track_id } @pendingMeta;
+                });
+            }
+        }
+
+        return $default_meta;
     }
 
     return {};
@@ -636,6 +715,65 @@ sub explodePlaylist {
             } @$tracks;
 			$cb->(\@items);
 		}, sub { $cb->([]) });
+	}
+	# yandexmusic://chart
+	elsif ($url =~ /yandexmusic:\/\/chart/) {
+		$yandex_client->get_chart(
+			'',
+			sub {
+				my $tracks_short = shift;
+				my @track_ids;
+
+				foreach my $track_short (@$tracks_short) {
+					my $track_data = $track_short->{track} // $track_short;
+					if ($track_data->{id}) {
+						push @track_ids, $track_data->{id};
+					}
+				}
+
+				if (!@track_ids) {
+					$cb->([]);
+					return;
+				}
+
+				my @all_tracks_detailed;
+				my $chunk_size = 50;
+				my @chunks;
+				while (@track_ids) {
+					push @chunks, [ splice(@track_ids, 0, $chunk_size) ];
+				}
+				my $pending_chunks = scalar @chunks;
+
+				foreach my $chunk_ids (@chunks) {
+					$yandex_client->tracks(
+						$chunk_ids,
+						sub {
+							my $tracks_chunk = shift;
+							push @all_tracks_detailed, @$tracks_chunk;
+							$pending_chunks--;
+							if ($pending_chunks == 0) {
+								my @items = map {
+									Plugins::yandex::Browse::cache_track_metadata($_);
+									'yandexmusic://' . $_->{id}
+								} @all_tracks_detailed;
+								$cb->(\@items);
+							}
+						},
+						sub {
+							$pending_chunks--;
+							if ($pending_chunks == 0) {
+								my @items = map {
+									Plugins::yandex::Browse::cache_track_metadata($_);
+									'yandexmusic://' . $_->{id}
+								} @all_tracks_detailed;
+								$cb->(\@items);
+							}
+						}
+					);
+				}
+			},
+			sub { $cb->([]) }
+		);
 	}
 	# yandexmusic://favorites/tracks
 	elsif ($url =~ /yandexmusic:\/\/favorites\/tracks/) {
