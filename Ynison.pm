@@ -698,11 +698,12 @@ sub _handle_ynison_message {
         }
     }
 
-    # Fix #2 & #3: Extract active_device_id once (may be undefined if field absent)
-    my $active_id = $msg->{active_device_id_optional};
+    # Fix #2 & #3: Extract active_device_id once (undefined/absent → empty string)
+    # Empty string won't match device_id, so sync safely skipped for unknown state
+    my $active_id = $msg->{active_device_id_optional} // '';
 
     # Fix #2: Handle commands — only if WE are the active device
-    if (defined $active_id && $active_id eq $self->{device_id}) {
+    if ($active_id eq $self->{device_id}) {
         if (exists $msg->{put_commands}) {
             foreach my $cmd_obj (@{$msg->{put_commands}}) {
                 my $cmd = $cmd_obj->{command} // 'UNKNOWN';
@@ -743,12 +744,6 @@ sub _handle_ynison_message {
     # Process player state sync (using extracted player_state)
     if ($player_state) {
         my $ps = $player_state;
-
-        # Fix #3: If active_id is undefined, skip sync (unknown state)
-        if (!defined $active_id) {
-            $log->debug("Ynison [" . $client->name() . "]: active_device_id unknown, skipping sync");
-            return;
-        }
 
         # Log current track
         if (exists $ps->{player_queue}->{playable_list} && @{$ps->{player_queue}->{playable_list}} > 0) {
