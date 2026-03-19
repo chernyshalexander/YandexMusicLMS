@@ -384,6 +384,10 @@ sub _send_full_state_msg {
     my $player_state = $self->_get_player_state();
     my $ts = int(time() * 1000);
 
+    # Fix #5: Send real volume instead of hardcoded 0
+    my $current_vol = $self->{client}->volume() || 0;
+    my $vol_fraction = $current_vol / 100.0;
+
     my $msg = {
         update_full_state => {
             player_state => $player_state,
@@ -400,14 +404,14 @@ sub _send_full_state_msg {
                     app_name => "Chrome"
                 },
                 volume_info => {
-                    volume => 0
+                    volume => $vol_fraction
                 },
                 is_shadow => \0
             },
             is_currently_active => \0
         },
         rid => "ac281c26-a047-4419-ad00-e4fbfda1cba3",
-        player_action_timestamp_ms => $ts,
+        player_action_timestamp_ms => "$ts",
         activity_interception_type => "DO_NOT_INTERCEPT_BY_DEFAULT"
     };
     $self->_send_message($msg);
@@ -482,23 +486,23 @@ sub _send_one_off_command {
     my ($self, $command_type, $data) = @_;
     return unless $self->{is_connected};
 
-    # Generate a temporary device_id for this command (critical!)
-    # This prevents 500 errors when sending update_player_state
-    my $temp_device_id = sprintf("%08x%08x", rand(0xffffffff), rand(0xffffffff));
-    my $ts = int(time() * 1000000000); # Use nanoseconds for version
+    # Use nanoseconds for version — as string (Yandex expects string type)
+    my $ts_num = int(time() * 1000000000);
+    my $ts = "$ts_num";
+    my $ts_ms = int(time() * 1000);
 
     my $msg = {
         rid => sprintf("%08x-%04x-%04x-%04x-%012x",
             int(rand(0xffffffff)), int(rand(0xffff)), int(rand(0xffff)),
             int(rand(0xffff)), int(rand(0xffffffffffff))),
-        player_action_timestamp_ms => int(time() * 1000),
+        player_action_timestamp_ms => "$ts_ms",
         activity_interception_type => "DO_NOT_INTERCEPT_BY_DEFAULT"
     };
 
     my $version = {
-        device_id => $temp_device_id,
-        version => $ts,
-        timestamp_ms => 0
+        device_id    => $self->{device_id},
+        version      => $ts,
+        timestamp_ms => "0"
     };
 
     if ($command_type eq 'update_player_state') {
@@ -517,6 +521,12 @@ sub _send_one_off_command {
             }
         }
 
+        # Fix #7: Convert duration_ms and progress_ms to strings before updating version
+        if ($player_state->{status}) {
+            $player_state->{status}->{duration_ms} = "$player_state->{status}->{duration_ms}" if defined $player_state->{status}->{duration_ms};
+            $player_state->{status}->{progress_ms} = "$player_state->{status}->{progress_ms}" if defined $player_state->{status}->{progress_ms};
+        }
+
         # Update version in both status and queue
         $player_state->{status}->{version} = $version;
         $player_state->{player_queue}->{version} = $version;
@@ -525,12 +535,14 @@ sub _send_one_off_command {
             player_state => $player_state
         };
     } elsif ($command_type eq 'play') {
+        my $dur = $data->{duration_ms} || 0;
+        my $prog = $data->{progress_ms} || 0;
         $msg->{update_player_state} = {
             player_state => {
                 status => {
                     paused => \0,
-                    duration_ms => $data->{duration_ms} || 0,
-                    progress_ms => $data->{progress_ms} || 0,
+                    duration_ms => "$dur",
+                    progress_ms => "$prog",
                     playback_speed => 1,
                     version => $version
                 },
@@ -547,12 +559,14 @@ sub _send_one_off_command {
             }
         };
     } elsif ($command_type eq 'pause') {
+        my $dur = $data->{duration_ms} || 0;
+        my $prog = $data->{progress_ms} || 0;
         $msg->{update_player_state} = {
             player_state => {
                 status => {
                     paused => \1,
-                    duration_ms => $data->{duration_ms} || 0,
-                    progress_ms => $data->{progress_ms} || 0,
+                    duration_ms => "$dur",
+                    progress_ms => "$prog",
                     playback_speed => 1,
                     version => $version
                 },
@@ -569,11 +583,13 @@ sub _send_one_off_command {
             }
         };
     } elsif ($command_type eq 'volume') {
-        # Volume update: use real device_id in version (not temp), for consistency with _send_volume_update()
+        # Volume update: use real device_id in version, strings for version fields
+        my $vol_ver_num = int(rand(0x7fffffff));
+        my $vol_ts = int(time() * 1000);
         my $volume_version = {
-            device_id => $self->{device_id},
-            version => int(rand(0x7fffffff)),
-            timestamp_ms => int(time() * 1000),
+            device_id    => $self->{device_id},
+            version      => "$vol_ver_num",
+            timestamp_ms => "$vol_ts",
         };
         $msg->{update_volume_info} = {
             device_id => $self->{device_id},
@@ -593,20 +609,21 @@ sub _get_player_state {
     my $song = $client->playingSong();
     my $paused = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
 
-    # Use nanosecond timestamp for version (like streamdeck/hikka do)
-    my $ts = int(time() * 1000000000);
+    # Fix #7: Use nanosecond timestamp for version — as string
+    my $ts_num = int(time() * 1000000000);
+    my $ts = "$ts_num";
     my $version = {
-        device_id => $self->{device_id},
-        version => $ts,
-        timestamp_ms => 0
+        device_id    => $self->{device_id},
+        version      => $ts,
+        timestamp_ms => "0"
     };
 
     my $state = {
         status => {
-            duration_ms => 0,
+            duration_ms => "0",
             paused => $paused,
             playback_speed => 1.0,
-            progress_ms => 0,
+            progress_ms => "0",
             version => $version
         },
         player_queue => {
@@ -648,8 +665,10 @@ sub _get_player_state {
 
             $state->{player_queue}->{playable_list} = [$track];
         }
-        $state->{status}->{duration_ms} = int(($song->duration() || 0) * 1000);
-        $state->{status}->{progress_ms} = int((Slim::Player::Source::songTime($client) || 0) * 1000);
+        my $dur_ms = int(($song->duration() || 0) * 1000);
+        my $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000);
+        $state->{status}->{duration_ms} = "$dur_ms";
+        $state->{status}->{progress_ms} = "$prog_ms";
     }
     return $state;
 }
@@ -679,15 +698,20 @@ sub _handle_ynison_message {
         }
     }
 
-    # Handle commands from Yandex Music app
-    if (exists $msg->{put_commands}) {
-        foreach my $cmd_obj (@{$msg->{put_commands}}) {
-            my $cmd = $cmd_obj->{command} // 'UNKNOWN';
-            # Log compact command info
-            my $active_dev_name = $self->_get_device_name_by_id($msg->{active_device_id_optional}, $msg->{devices});
-            $log->info("Ynison [" . $client->name() . "]: Command $cmd from $active_dev_name");
+    # Fix #2 & #3: Extract active_device_id once (may be undefined if field absent)
+    my $active_id = $msg->{active_device_id_optional};
 
-            $self->_execute_lms_command($cmd, $cmd_obj);
+    # Fix #2: Handle commands — only if WE are the active device
+    if (defined $active_id && $active_id eq $self->{device_id}) {
+        if (exists $msg->{put_commands}) {
+            foreach my $cmd_obj (@{$msg->{put_commands}}) {
+                my $cmd = $cmd_obj->{command} // 'UNKNOWN';
+                # Log compact command info
+                my $active_dev_name = $self->_get_device_name_by_id($active_id, $msg->{devices});
+                $log->info("Ynison [" . $client->name() . "]: Command $cmd from $active_dev_name");
+
+                $self->_execute_lms_command($cmd, $cmd_obj);
+            }
         }
     }
 
@@ -705,12 +729,10 @@ sub _handle_ynison_message {
             if (abs($lms_volume - $current_volume) >= 1) {
                 $log->info("Ynison [" . $client->name() . "]: Volume update: $volume_float (0.0-1.0) → $lms_volume (0-100)");
 
-                # Set flag to prevent update_state() feedback loop
+                # Fix #4: Kill old timer before setting new one to prevent accumulation
+                Slim::Utils::Timers::killTimers($self, \&_clear_syncing_flag);
                 $self->{syncing_from_yandex} = 1;
-                Slim::Utils::Timers::setTimer($self, time() + 2, sub {
-                    my $s = shift;
-                    $s->{syncing_from_yandex} = 0;
-                });
+                Slim::Utils::Timers::setTimer($self, time() + 2, \&_clear_syncing_flag);
 
                 $self->{client}->execute(['mixer', 'volume', $lms_volume]);
             }
@@ -721,7 +743,12 @@ sub _handle_ynison_message {
     # Process player state sync (using extracted player_state)
     if ($player_state) {
         my $ps = $player_state;
-        my $active_id = $msg->{active_device_id_optional} // '';
+
+        # Fix #3: If active_id is undefined, skip sync (unknown state)
+        if (!defined $active_id) {
+            $log->debug("Ynison [" . $client->name() . "]: active_device_id unknown, skipping sync");
+            return;
+        }
 
         # Log current track
         if (exists $ps->{player_queue}->{playable_list} && @{$ps->{player_queue}->{playable_list}} > 0) {
@@ -729,8 +756,16 @@ sub _handle_ynison_message {
             if ($idx >= 0 && $idx < @{$ps->{player_queue}->{playable_list}}) {
                 my $track = $ps->{player_queue}->{playable_list}->[$idx];
                 my $paused = $ps->{status}->{paused} ? "PAUSED" : "PLAYING";
-                my $progress = int(($ps->{status}->{progress_ms} || 0) / 1000);
-                my $duration = int(($ps->{status}->{duration_ms} || 0) / 1000);
+                # Handle progress_ms and duration_ms as strings (Fix #7)
+                my $progress_ms = $ps->{status}->{progress_ms};
+                my $duration_ms = $ps->{status}->{duration_ms};
+                $progress_ms = 0 if !defined $progress_ms;
+                $duration_ms = 0 if !defined $duration_ms;
+                # Convert from string if needed
+                $progress_ms =~ s/[^\d]//g;
+                $duration_ms =~ s/[^\d]//g;
+                my $progress = int($progress_ms / 1000);
+                my $duration = int($duration_ms / 1000);
                 my $track_id = $track->{playable_id};
                 my $title = $track->{title} // 'Unknown';
 
@@ -752,10 +787,8 @@ sub _handle_ynison_message {
                         $self->_sync_player_commands($ps);
                     }
                 } else {
-                    # Another device is active — stop LMS to prevent simultaneous playback
-                    if ($client->isPlaying()) {
-                        $client->execute(['stop']);
-                    }
+                    # Fix #1: Another device is active — do NOT stop LMS (could be playing non-Yandex source)
+                    $log->debug("Ynison [" . $client->name() . "]: Active device is $active_id, not syncing");
                 }
             }
         }
@@ -828,12 +861,11 @@ sub _sync_player_commands {
     my $client = $self->{client};
     return unless $player_state && $player_state->{status};
 
+    # Fix #4: Kill old timer before setting new one to prevent accumulation
+    Slim::Utils::Timers::killTimers($self, \&_clear_syncing_flag);
     # Set flag to prevent update_state() from interfering during sync
     $self->{syncing_from_yandex} = 1;
-    Slim::Utils::Timers::setTimer($self, time() + 2, sub {
-        my $s = shift;
-        $s->{syncing_from_yandex} = 0;
-    });
+    Slim::Utils::Timers::setTimer($self, time() + 2, \&_clear_syncing_flag);
 
     my $status = $player_state->{status};
     my $remote_paused = $status->{paused} ? 1 : 0;
@@ -869,12 +901,11 @@ sub _sync_new_track {
 
     $log->debug("Ynison [" . $client->name() . "]: Syncing playlist with " . scalar(@{$queue->{playable_list}}) . " track(s)");
 
+    # Fix #4: Kill old timer before setting new one to prevent accumulation
+    Slim::Utils::Timers::killTimers($self, \&_clear_syncing_flag);
     # Set flag to prevent update_state() from interfering during sync
     $self->{syncing_from_yandex} = 1;
-    Slim::Utils::Timers::setTimer($self, time() + 3, sub {
-        my $s = shift;
-        $s->{syncing_from_yandex} = 0;
-    });
+    Slim::Utils::Timers::setTimer($self, time() + 3, \&_clear_syncing_flag);
 
     # Clear playlist and load ALL tracks from Yandex (not just current one)
     $client->execute(['playlist', 'clear']);
@@ -905,25 +936,32 @@ sub _send_volume_update {
     $volume_float = 1 if $volume_float > 1;
 
     my $ts = int(time() * 1000);
+    my $vol_ver = int(rand(0x7fffffff));
     my $msg = {
         update_volume_info => {
             device_id => $self->{device_id},
             volume_info => {
                 volume => $volume_float,
                 version => {
-                    device_id => $self->{device_id},
-                    version => int(rand(0x7fffffff)),
-                    timestamp_ms => $ts,
+                    device_id    => $self->{device_id},
+                    version      => "$vol_ver",
+                    timestamp_ms => "$ts",
                 }
             }
         },
         rid => '',
-        player_action_timestamp_ms => $ts,
+        player_action_timestamp_ms => "$ts",
         activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
     };
 
     $log->debug("Ynison [" . $self->{client}->name() . "]: Sending volume update: $volume_float");
     $self->_send_message($msg);
+}
+
+# Fix #4: Helper to clear syncing flag (used by killTimers + setTimer)
+sub _clear_syncing_flag {
+    my $self = shift;
+    $self->{syncing_from_yandex} = 0;
 }
 
 1;
