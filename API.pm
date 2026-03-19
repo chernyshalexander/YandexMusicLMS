@@ -62,7 +62,11 @@ sub get {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            $callback->($json);
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
+            } else {
+                $callback->($json);
+            }
         },
         sub {
             my ($http, $error) = @_;
@@ -81,7 +85,11 @@ sub post {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            $callback->($json);
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
+            } else {
+                $callback->($json);
+            }
         },
         sub {
             my ($http, $error) = @_;
@@ -103,8 +111,8 @@ sub post_form {
             my $http = shift;
             my $content = $http->content();
             my $json = eval { decode_json($content) };
-            if ($@) {
-                $callback->($content); 
+            if ($@ || !defined $json) {
+                $error_callback->($@ || "Failed to decode JSON response");
             } else {
                 $callback->($json);
             }
@@ -564,14 +572,16 @@ sub rotor_session_tracks {
 }
 
 sub search {
-    my ($self, $query, $type, $callback, $error_callback) = @_;
+    my ($self, $query, $type, $callback, $error_callback, $page, $page_size) = @_;
     my $url = 'https://api.music.yandex.net/search';
     my $params = {
         'text' => $query,
         'type' => $type, 
-        'page' => 0,
-        'noclear' => 'false'
+        'page' => $page || 0,
+        'nocorrect' => 'false'
     };
+
+    $params->{'page-size'} = $page_size if defined $page_size;
 
     $self->get(
         $url,
@@ -642,6 +652,75 @@ sub landing_personal_playlists {
         $error_callback,
     );
 }
+
+sub get_chart {
+    my ($self, $chart_option, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/chart';
+    if ($chart_option) {
+        $url .= '/' . $chart_option;
+    }
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{chart}) {
+                my $chart = $result->{result}->{chart};
+                my $tracks = $chart->{tracks} // [];
+                $callback->($tracks);
+            } else {
+                $error_callback->("Failed to get chart");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub get_new_releases {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/new-releases';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{newReleases}) {
+                my $releases = $result->{result}->{newReleases};
+                $callback->($releases);
+            } else {
+                $error_callback->("Failed to get new releases");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub get_new_playlists {
+    my ($self, $callback, $error_callback) = @_;
+
+    my $url = 'https://api.music.yandex.net/landing3/new-playlists';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{newPlaylists}) {
+                my $playlists = $result->{result}->{newPlaylists};
+                my @playlist_data = map { { uid => $_->{uid}, kind => $_->{kind} } } @$playlists;
+                $callback->(\@playlist_data);
+            } else {
+                $error_callback->("Failed to get new playlists");
+            }
+        },
+        $error_callback,
+    );
+}
+
 
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
@@ -1078,6 +1157,47 @@ sub _find_curl {
         }
     }
     return undef;
+}
+
+sub album {
+    my ($self, $album_id, $callback, $error_callback) = @_;
+
+    $self->albums([$album_id], sub {
+        my $albums = shift;
+        if ($albums && @$albums) {
+            $callback->($albums->[0]);
+        } else {
+            $error_callback->("Album not found");
+        }
+    }, $error_callback);
+}
+
+sub albums {
+    my ($self, $album_ids, $callback, $error_callback) = @_;
+
+    return unless $album_ids && @$album_ids;
+
+    my $url = 'https://api.music.yandex.net/albums';
+    my @ids = ref $album_ids eq 'ARRAY' ? @$album_ids : ($album_ids);
+
+    my $data = {
+        'album-ids' => \@ids,
+    };
+
+    $self->post_form(
+        $url,
+        $data,
+        sub {
+            my $result = shift;
+            if (exists $result->{result}) {
+                my $albums = $result->{result};
+                $callback->($albums);
+            } else {
+                $error_callback->("Failed to get albums");
+            }
+        },
+        $error_callback,
+    );
 }
 
 1;
