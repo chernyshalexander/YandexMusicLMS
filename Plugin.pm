@@ -186,8 +186,8 @@ sub playerEventCallback {
     # Ynison state update and volume sync
     if ($prefs->get('enable_ynison')) {
         if ($ynison_instances{$client->id()}) {
-            # Send volume update if volume changed and not syncing from Yandex
-            if (!$ynison_instances{$client->id()}->{syncing_from_yandex}) {
+            # Fix #6: Send volume update only on volume event, not on all events
+            if ($command eq 'volume' && !$ynison_instances{$client->id()}->{syncing_from_yandex}) {
                 my $vol = $client->volume() || 0;
                 # Don't send volume 0 (can be misinterpreted as pause/stop)
                 $ynison_instances{$client->id()}->_send_volume_update($vol / 100.0) if $vol > 0;
