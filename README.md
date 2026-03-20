@@ -3,7 +3,7 @@
 **Для работы плагина необходима действующая подписка Яндекс Плюс.**
 #### Возможности
 - Доступ к вашей коллекции: треки, альбомы, исполнители и плейлисты.
-- Раздел «Для вас»: персональные рекомендации, «Моя волна» (My Vibe) и персональные плейлисты.
+- Раздел «Для вас»: персональные рекомендации, «Моя волна» и персональные плейлисты.
 - Радиостанции по жанрам, настроениям, действиям и эпохам.
 - Умные плейлисты и миксы. Поиск по трекам, альбомам, исполнителям, подкастам и аудиокнигам.
 - Отображение «Горячих треков» и «Новых релизов» в главном меню (при желании).
@@ -32,7 +32,7 @@ A plugin to play Yandex Music on Lyrion Music Server (LMS).
 **An active Yandex Plus subscription is required for the plugin to work.**
 #### Features
 - Personal Collection: Access to liked tracks, albums, artists, and playlists.
-- "For You": Personal recommendations, "My Vibe" (My Wave), and personal playlists.
+- "For You": Personal recommendations, "My Vibe", and personal playlists.
 - Radio Stations: Browse and play by genre, mood, activity, and era.
 - Smart Playlists and Mixes. Search for tracks, albums, artists, podcasts, and audiobooks.
 - Discovery: Optional "Hot Tracks" and "New Releases" in the main menu.
