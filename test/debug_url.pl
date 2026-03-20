@@ -12,11 +12,7 @@ use Digest::MD5 qw(md5_hex);
 use Data::Dumper;
 
 # === НАСТРОЙКИ ===
-<<<<<<< HEAD
-
-=======
-#my тут должен быть токен
->>>>>>> 52f1982 (+ProtocolHandler)
+my $TOKEN = 'YOUR_TOKEN_HERE';
 my $TRACK_ID = '47742192'; # ID трека из вашего debug-tracks.json (Partyfine)
 # =================
 
