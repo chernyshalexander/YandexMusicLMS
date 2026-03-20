@@ -15,9 +15,7 @@
 2. **Встроенный 2, Drag-and-Drop:** нажмите «Login to yandex», в открывшемся окне авторизуйтесь в Яндексе и перетащите URL с токеном из адресной строки в окне с браузера в поле настройки.
 3. **Вручную:** используйте [yandex-music-token](https://github.com/MarshalX/yandex-music-token) и вставьте токен в поле настроек.
 #### В планах (TODO)
-- Поддержка FLAC и протокола Ynison.
-- Запуск «Моей волны» по треку, артисту, альбому или коллекции.
-- Работа с несколькими учетными записями и более глубокая интеграция с LMS.
+- Поддержка FLAC и протокола Ynison; запуск «Моей волны» по треку, артисту, альбому или коллекции; работа с несколькими учетными записями; более глубокая интеграция с LMS.
 #### Благодарности
 За идеи и вдохновение: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 #### Установка
@@ -42,9 +40,7 @@ OAuth token is required. Methods to obtain:
 2. **Built-in 2, Drag-and-Drop:** Click "Login to yandex", authenticate in the opened window, and drag the URL with the token from the browser's address bar into the settings field.
 3. **Manual:** Use [yandex-music-token](https://github.com/MarshalX/yandex-music-token) and paste the token manually.
 #### Roadmap (TODO)
-- FLAC and Ynison protocol support.
-- Start "My Vibe" by track, artist, album, or collection.
-- Multiple account support and deeper LMS integration.
+- FLAC and Ynison protocol support; start "My Vibe" by track, artist, album, or collection; multiple account support; deeper LMS integration.
 #### Credits
 For ideas and inspiration: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 #### Installation
