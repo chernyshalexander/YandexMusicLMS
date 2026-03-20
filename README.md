@@ -21,9 +21,7 @@
 #### Благодарности
 За идеи и вдохновение: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 #### Установка
-В настройках LMS (Plugins -> Additional Repositories) добавьте ссылку:
-`https://chernyshalexander.github.io/YandexMusicLMS/public.xml`
-Разработка: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
+В настройках LMS (Plugins -> Additional Repositories) добавьте ссылку: Стабильная версия:`https://chernyshalexander.github.io/YandexMusicLMS/public.xml`, версия в разработке: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
 #### Лицензия
 Лицензия MIT. Подробности в LICENSE. Яндекс Музыка и логотип являются товарными знаками ООО «Яндекс». Данный плагин не связан с компанией Яндекс.
 ***
@@ -51,7 +49,6 @@ OAuth token is required. Methods to obtain:
 For ideas and inspiration: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 #### Installation
 In LMS settings (Plugins -> Additional Repositories) add:
-`https://chernyshalexander.github.io/YandexMusicLMS/public.xml`
-Dev: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
+Stable: `https://chernyshalexander.github.io/YandexMusicLMS/public.xml`, Dev: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
 #### License
 MIT License. See LICENSE for details. Yandex Music is a trademark of Yandex LLC. No association between Yandex and this plugin.
