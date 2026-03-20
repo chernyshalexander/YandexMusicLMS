@@ -416,16 +416,11 @@ sub getMetadataFor {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
         my $cached_meta = $cache->get('yandex_meta_' . $track_id);
-
-        # Helper to check if currently playing this track
-        my $is_playing_this = $client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url;
-
-        # If we have complete metadata (or not currently playing), return immediately without API request
-        if ($cached_meta && ($cached_meta->{_complete} || !$is_playing_this)) {
+        if ($cached_meta) {
             $log->debug("YANDEX: Returning cached metadata for $url");
             
-            my $bitrate     = $cached_meta->{bitrate} || 0;
-            my $codec       = $cached_meta->{codec};
+            my $bitrate    = $cached_meta->{bitrate} || 0;
+            my $codec      = $cached_meta->{codec} || '';
             my $max_bitrate = $prefs->get('max_bitrate') || 320;
 
             # Determine type: use actual codec if known, otherwise infer from quality setting
@@ -447,28 +442,34 @@ sub getMetadataFor {
                 $bitrate_str = sprintf("%.0fkbps", ($bitrate || 192000) / 1000);
             }
 
-            # Save values to LMS DB for correct seeking (canSeek) operation
-            eval {
-                Slim::Music::Info::setBitrate($url, $bitrate);
-                Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
+            # Helper to check if currently playing this track
+            my $is_playing_this = $client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url;
+            
+            # If we have complete metadata (or not currently playing), return immediately without API request
+            if ($cached_meta->{_complete} || !$is_playing_this) {
+                # Save values to LMS DB for correct seeking (canSeek) operation
+                eval {
+                    Slim::Music::Info::setBitrate($url, $bitrate);
+                    Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
 
-                # Also update track objects if something is playing right now
-                if ($is_playing_this) {
-                    $client->playingSong()->bitrate($bitrate);
-                    $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
-                }
-            };
+                    # Also update track objects if something is playing right now
+                    if ($is_playing_this) {
+                        $client->playingSong()->bitrate($bitrate);
+                        $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
+                    }
+                };
 
-            return {
-                title    => $cached_meta->{title},
-                artist   => $cached_meta->{artist},
-                album    => $cached_meta->{album},
-                duration => $cached_meta->{duration},
-                cover    => $cached_meta->{cover},
-                icon     => $cached_meta->{cover},
-                bitrate  => $bitrate_str,
-                type     => $type,
-            };
+                return {
+                    title    => $cached_meta->{title},
+                    artist   => $cached_meta->{artist},
+                    album    => $cached_meta->{album},
+                    duration => $cached_meta->{duration},
+                    cover    => $cached_meta->{cover},
+                    icon     => $cached_meta->{cover},
+                    bitrate  => $bitrate_str,
+                    type     => $type,
+                };
+            }
         }
 
         # Prepare default metadata with proper icon
@@ -483,7 +484,17 @@ sub getMetadataFor {
 
         # If we have cached metadata (but not _complete), return it with default icon
         if ($cached_meta) {
-            my $bitrate = $cached_meta->{bitrate} || 192000;
+            my $codec   = $cached_meta->{codec} || '';
+            my $bitrate = $cached_meta->{bitrate};
+            
+            # Use appropriate bitrate fallback based on codec
+            if (!$bitrate) {
+                $bitrate = ($codec eq 'flac' || $codec eq 'flac-mp4') ? 900000 : 192000;
+            }
+            
+            # Determine type
+            my $type = ($codec eq 'flac' || $codec eq 'flac-mp4') ? 'flc' : 'mp3';
+
             eval {
                 Slim::Music::Info::setBitrate($url, $bitrate);
                 Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
@@ -496,8 +507,8 @@ sub getMetadataFor {
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover} || $default_icon,
                 icon     => $cached_meta->{cover} || $default_icon,
-                bitrate  => sprintf("%.0fkbps", $bitrate/1000),
-                type     => 'mp3',
+                bitrate  => ($type eq 'flc') ? 'FLAC' : sprintf("%.0fkbps", $bitrate/1000),
+                type     => $type,
             };
         }
 
