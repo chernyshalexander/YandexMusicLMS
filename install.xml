@@ -2,7 +2,8 @@
 <extension>
     <name>PLUGIN_YANDEX</name>
     <module>Plugins::yandex::Plugin</module>
-    <version>0.62</version>
+    <version>0.63</version>
+    <defaultState>enabled</defaultState>
     <description>PLUGIN_YANDEX_DESC</description>
     <defaultState>enabled</defaultState>
     <targetApplication>
@@ -13,5 +14,8 @@
     <optionsURL>plugins/yandex/settings/basic.html</optionsURL>
     <icon>plugins/yandex/html/images/yandex.png</icon>
     <creator>Alexander Charnysh</creator>
-    <homepageURL></homepageURL>
+    <homepageURL>https://github.com/chernyshalexander/YandexMusicLMS</homepageURL>
+    <category>musicservices</category>
+    <onlineLibrary>true</onlineLibrary>
+    <email>chernysh.a@gmail.com</email>
 </extension>
