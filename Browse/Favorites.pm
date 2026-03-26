@@ -41,7 +41,7 @@ sub handleFavorites {
                 my $albums = shift;
                 my $found = 0;
                 foreach my $album (@$albums) {
-                    if ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                    if (($album->{type} // '') =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
                         $found = 1;
                         last;
                     }
@@ -146,7 +146,7 @@ sub handleLikedAlbums {
 
             my @filtered_albums;
             foreach my $album (reverse @$albums_all) {
-                if ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                if (($album->{type} // '') =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
                     $has_podcasts = 1;
                     next;
                 }
@@ -208,7 +208,7 @@ sub handleLikedPodcasts {
             my $has_podcasts = 0;
 
             foreach my $album (@$albums) {
-                unless ($album->{type} =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
+                unless (($album->{type} // '') =~ /podcast|audiobook/i || ($album->{metaType} && $album->{metaType} =~ /podcast|audiobook/i)) {
                     next;
                 }
                 $has_podcasts = 1;
