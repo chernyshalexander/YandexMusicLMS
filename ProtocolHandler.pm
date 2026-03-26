@@ -344,7 +344,7 @@ sub getNextTrack {
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
                 } elsif ($codec eq 'flac-mp4') {
-                    $ct          = 'mp4';
+                    $ct          = 'unk';  # 'unk' → infoContentType delegates to getMetadataFor → shows 'flac-MP4'
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
                 } elsif ($codec =~ /-mp4$/) {
@@ -453,18 +453,20 @@ sub getMetadataFor {
             my $max_bitrate = $prefs->get('max_bitrate') || 320;
 
             # Determine type: use actual codec if known, otherwise infer from quality setting
-            my $type;
-            if ($codec && ($codec eq 'flac' || $codec eq 'flac-mp4')) {
-                $type = 'flc';
+            my ($type, $display_type);
+            if ($codec eq 'flac-mp4') {
+                $type = $display_type = 'flac-MP4';
+            } elsif ($codec eq 'flac') {
+                $type = $display_type = 'flc';
             } elsif (!$codec && $max_bitrate eq 'flac') {
-                $type = 'flc';  # not yet resolved, but will be FLAC
+                $type = $display_type = 'flc';  # not yet resolved, but will be FLAC
             } else {
-                $type = 'mp3';
+                $type = $display_type = 'mp3';
             }
 
             # Bitrate display: FLAC is variable/lossless — show estimated bitrate or "FLAC"
             my $bitrate_str;
-            if ($type eq 'flc') {
+            if ($type =~ /flac|flc/) {
                 # For FLAC: show "FLAC" if bitrate unknown, otherwise estimated bitrate
                 $bitrate_str = !$bitrate ? 'FLAC' : sprintf("~%.0fkbps FLAC", ($bitrate || 900000) / 1000);
             } else {
@@ -496,7 +498,7 @@ sub getMetadataFor {
                     cover    => $cached_meta->{cover},
                     icon     => $cached_meta->{cover},
                     bitrate  => $bitrate_str,
-                    type     => $type,
+                    type     => $display_type,
                 };
             }
         }
@@ -522,7 +524,9 @@ sub getMetadataFor {
             }
             
             # Determine type
-            my $type = ($codec eq 'flac' || $codec eq 'flac-mp4') ? 'flc' : 'mp3';
+            my $display_type = ($codec eq 'flac-mp4') ? 'flac-MP4'
+                             : ($codec eq 'flac')     ? 'flc'
+                             :                          'mp3';
 
             eval {
                 Slim::Music::Info::setBitrate($url, $bitrate);
@@ -536,8 +540,8 @@ sub getMetadataFor {
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover} || $default_icon,
                 icon     => $cached_meta->{cover} || $default_icon,
-                bitrate  => ($type eq 'flc') ? 'FLAC' : sprintf("%.0fkbps", $bitrate/1000),
-                type     => $type,
+                bitrate  => ($display_type =~ /flac|flc/) ? 'FLAC' : sprintf("%.0fkbps", $bitrate/1000),
+                type     => $display_type,
             };
         }
 
