@@ -368,6 +368,12 @@ sub getNextTrack {
 
             $song->streamUrl($final_url);
 
+            # Notify controllers to refresh track info display now that content_type/bitrate are set
+            if (my $client = $song->master()) {
+                $client->currentPlaylistUpdateTime(Time::HiRes::time());
+                Slim::Control::Request::notifyFromArray($client, ['newmetadata']);
+            }
+
             # Report success
             $successCb->();
         } else {
