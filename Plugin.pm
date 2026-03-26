@@ -52,6 +52,10 @@ sub initPlugin {
     # Handle enable_ynison preference changes
     $prefs->setChange(\&_on_enable_ynison_change, 'enable_ynison');
 
+    # Register ffmpeg path with LMS so custom-convert.conf [ffmpeg] rule can be resolved.
+    # LMS service may not inherit the user/system PATH change, so we search explicitly.
+    _register_ffmpeg_path();
+
     # Protocol registration
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
@@ -416,6 +420,36 @@ sub _renderRootMenu {
 # method for accessing client from other modules
 sub getClient {
     return $yandex_client_instance;
+}
+
+# Find ffmpeg and register its directory with LMS findbin so [ffmpeg] in
+# custom-convert.conf can be resolved even if the LMS service was started
+# before ffmpeg was added to PATH.
+sub _register_ffmpeg_path {
+    my @search_dirs;
+
+    if (main::ISWINDOWS) {
+        # Common Windows installation paths
+        push @search_dirs, 'C:\\ffmpeg\\bin', 'C:\\Program Files\\ffmpeg\\bin',
+                           'C:\\ffmpeg', 'C:\\tools\\ffmpeg\\bin';
+        # Also search directories from PATH
+        push @search_dirs, split /;/, ($ENV{PATH} || '');
+    } else {
+        push @search_dirs, '/usr/bin', '/usr/local/bin',
+                           '/opt/homebrew/bin', '/opt/local/bin';
+    }
+
+    my $ffmpeg_name = main::ISWINDOWS ? 'ffmpeg.exe' : 'ffmpeg';
+    for my $dir (@search_dirs) {
+        next unless $dir && -d $dir;
+        if (-e "$dir/$ffmpeg_name" || -e "$dir\\$ffmpeg_name") {
+            $log->info("YANDEX: Registering ffmpeg path with LMS: $dir");
+            Slim::Utils::Misc::addFindBinPaths($dir);
+            return;
+        }
+    }
+
+    $log->warn("YANDEX: ffmpeg not found - FLAC-in-MP4 (ymf) transcoding will not work");
 }
 
 1;

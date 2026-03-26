@@ -1143,6 +1143,12 @@ sub _find_ffmpeg {
     for my $path ('/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/local/bin/ffmpeg') {
         return $path if -x $path;
     }
+    if ($^O eq 'MSWin32') {
+        for my $dir (split /;/, $ENV{PATH} || '') {
+            my $p = "$dir\\ffmpeg.exe";
+            return $p if -e $p;
+        }
+    }
     return undef;
 }
 
