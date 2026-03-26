@@ -337,13 +337,34 @@ sub getNextTrack {
             # Explicitly set metadata in LMS DB for proper UI display
             my $track_url = $song->track()->url();
             eval {
-                if ($codec && ($codec eq 'flac' || $codec eq 'flac-mp4')) {
-                    # Set bitrate (FLAC is lossless, but estimate bitrate for seekbar)
-                    my $est_bitrate = $bitrate || 900000;  # 900kbps estimate for FLAC
-                    Slim::Music::Info::setBitrate($track_url, $est_bitrate);
-                    $log->info("YANDEX: Set bitrate=$est_bitrate for FLAC track");
+                # Determine correct content_type and bitrate based on actual codec
+                my ($ct, $est_bitrate, $is_vbr);
+                if ($codec eq 'flac') {
+                    $ct          = 'flc';
+                    $est_bitrate = $bitrate || 900000;
+                    $is_vbr      = 1;
+                } elsif ($codec eq 'flac-mp4') {
+                    $ct          = 'mp4';
+                    $est_bitrate = $bitrate || 900000;
+                    $is_vbr      = 1;
+                } elsif ($codec =~ /-mp4$/) {
+                    $ct          = 'mp4';
+                    $est_bitrate = ($bitrate || 0) * 1000 || 192000;
+                    $is_vbr      = undef;
+                }
+
+                if ($ct) {
+                    Slim::Schema->updateOrCreate({
+                        url        => $track_url,
+                        readTags   => 0,
+                        commit     => 1,
+                        attributes => { CONTENT_TYPE => $ct },
+                    });
+                    Slim::Music::Info::setBitrate($track_url, $est_bitrate, $is_vbr);
+                    $log->info("YANDEX: Set content_type=$ct bitrate=$est_bitrate vbr=" . ($is_vbr ? 1 : 0) . " for $codec track");
                 }
             };
+            $log->warn("YANDEX: metadata update failed: $@") if $@;
 
             $song->streamUrl($final_url);
 
@@ -947,7 +968,8 @@ sub _parse_flac_streaminfo {
     $track->samplerate($sample_rate);
     $track->samplesize($bits_per_sample);
     $track->channels($channels);
-    Slim::Music::Info::setBitrate($track, $avg_bitrate);
+    $track->content_type('flc');
+    Slim::Music::Info::setBitrate($track, $avg_bitrate, 1);  # 1 = VBR (FLAC is variable bitrate)
     Slim::Music::Info::setDuration($track, $duration) if $duration;
 
     # Register FLAC frame alignment processor — enables seeking support
