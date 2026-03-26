@@ -349,7 +349,7 @@ sub getNextTrack {
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
                 } elsif ($codec eq 'flac-mp4') {
-                    $ct          = 'unk';  # 'unk' → infoContentType delegates to getMetadataFor → shows 'flac-MP4'
+                    $ct          = 'flac-MP4';  # stored directly: not 'unk' → no typeFromPath fallback → shown as-is
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
                 } elsif ($codec =~ /-mp4$/) {
