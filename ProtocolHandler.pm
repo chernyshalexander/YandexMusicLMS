@@ -282,10 +282,12 @@ sub canDirectStreamSong {
 }
 
 # --- 3. canEnhanceHTTP
-# FORCIBLY ENABLE BUFFERING (Buffered Mode = 2).
-# Without this, LMS can work in direct proxy mode, downloading data at player speed.
-# Mode 2 forces LMS to download the entire file as quickly as possible into a local .buf file.
-sub canEnhanceHTTP { return 0 }
+# BUFFERED mode (2): LMS downloads the full encrypted file to a .buf temp file at max speed.
+# _sysread() decrypts via AES-CTR during buffered download (saveStream calls _sysread).
+# After download, readChunk reads decrypted data from .buf for ffmpeg transcoding.
+# Without buffering (0), LMS reads at player speed (~32KB/s) and Yandex CDN drops
+# slow connections after ~2 minutes.
+sub canEnhanceHTTP { return 2 }
 
 # 3. scanUrl 
 sub scanUrl {
@@ -408,17 +410,17 @@ sub formatOverride {
 
             # FLAC in MP4: needs ffmpeg demuxing (custom-convert.conf ymf → flc rule)
             if ($codec eq 'flac-mp4') {
-                $log->info("YANDEX: formatOverride → ymf for $url (flac-mp4 with ffmpeg demux)");
+                $log->info("YANDEX: formatOverride -> ymf for $url (flac-mp4 with ffmpeg demux)");
                 return 'ymf';
             }
-            # aac-mp4, he-aac-mp4: ffmpeg demuxes MP4 → raw AAC ADTS (custom-convert.conf yma rule)
+            # aac-mp4, he-aac-mp4: ffmpeg transcodes to FLAC or MP3 via custom-convert.conf yma rule
             if ($codec =~ /-mp4$/) {
-                $log->info("YANDEX: formatOverride → yma for $url (codec=$codec, ffmpeg demux MP4→AAC)");
+                $log->info("YANDEX: formatOverride -> yma for $url (codec=$codec)");
                 return 'yma';
             }
             # Plain FLAC: no conversion needed, decrypted via _sysread()
             if ($codec eq 'flac') {
-                $log->info("YANDEX: formatOverride → flc for $url (plain flac)");
+                $log->info("YANDEX: formatOverride -> flc for $url (plain flac)");
                 return 'flc';
             }
         }
@@ -428,7 +430,6 @@ sub formatOverride {
 
 sub getFormatForURL {
     my ($class, $url) = @_;
-    $log->info("YANDEX: getFormatForURL called with: $url");
     # Pre-demuxed FLAC temp file
     return 'flc' if $url =~ /^file:\/\//;
     if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
@@ -437,7 +438,7 @@ sub getFormatForURL {
         if ($meta && $meta->{codec}) {
             # flac-mp4: custom format ymf for ffmpeg demux via stdin
             return 'ymf' if $meta->{codec} eq 'flac-mp4';
-            # aac-mp4, he-aac-mp4: ffmpeg demux via yma rule
+            # aac-mp4, he-aac-mp4: ffmpeg transcoding via yma rule
             return 'yma' if $meta->{codec} =~ /-mp4$/;
             # plain FLAC: decrypted via _sysread()
             return 'flc' if $meta->{codec} eq 'flac';
@@ -457,7 +458,6 @@ sub getMetadataFor {
         my $cache = Slim::Utils::Cache->new();
         my $cached_meta = $cache->get('yandex_meta_' . $track_id);
         if ($cached_meta) {
-            $log->debug("YANDEX: Returning cached metadata for $url");
             
             my $bitrate    = $cached_meta->{bitrate} || 0;
             my $codec      = $cached_meta->{codec} || '';
