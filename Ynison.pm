@@ -360,7 +360,7 @@ sub update_state {
     }
 
     # Don't send state during initial track load (not playing and not paused = still loading)
-    # This prevents echo loop: LMS sends paused=true → Yandex sends PAUSED back
+    # This prevents echo loop: LMS sends paused=true -> Yandex sends PAUSED back
     unless ($client->isPlaying() || $client->isPaused()) {
         return;
     }
@@ -486,7 +486,7 @@ sub _send_one_off_command {
     my ($self, $command_type, $data) = @_;
     return unless $self->{is_connected};
 
-    # Use nanoseconds for version — as string (Yandex expects string type)
+    # Use nanoseconds for version - as string (Yandex expects string type)
     my $ts_num = int(time() * 1000000000);
     my $ts = "$ts_num";
     my $ts_ms = int(time() * 1000);
@@ -609,7 +609,7 @@ sub _get_player_state {
     my $song = $client->playingSong();
     my $paused = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
 
-    # Fix #7: Use nanosecond timestamp for version — as string
+    # Fix #7: Use nanosecond timestamp for version - as string
     my $ts_num = int(time() * 1000000000);
     my $ts = "$ts_num";
     my $version = {
@@ -698,11 +698,11 @@ sub _handle_ynison_message {
         }
     }
 
-    # Fix #2 & #3: Extract active_device_id once (undefined/absent → empty string)
+    # Fix #2 & #3: Extract active_device_id once (undefined/absent -> empty string)
     # Empty string won't match device_id, so sync safely skipped for unknown state
     my $active_id = $msg->{active_device_id_optional} // '';
 
-    # Fix #2: Handle commands — only if WE are the active device
+    # Fix #2: Handle commands - only if WE are the active device
     if ($active_id eq $self->{device_id}) {
         if (exists $msg->{put_commands}) {
             foreach my $cmd_obj (@{$msg->{put_commands}}) {
@@ -728,7 +728,7 @@ sub _handle_ynison_message {
 
             # Only set if changed significantly (avoid feedback loop)
             if (abs($lms_volume - $current_volume) >= 1) {
-                $log->info("Ynison [" . $client->name() . "]: Volume update: $volume_float (0.0-1.0) → $lms_volume (0-100)");
+                $log->info("Ynison [" . $client->name() . "]: Volume update: $volume_float (0.0-1.0) -> $lms_volume (0-100)");
 
                 # Fix #4: Kill old timer before setting new one to prevent accumulation
                 Slim::Utils::Timers::killTimers($self, \&_clear_syncing_flag);
@@ -764,7 +764,7 @@ sub _handle_ynison_message {
                 my $track_id = $track->{playable_id};
                 my $title = $track->{title} // 'Unknown';
 
-                $log->info("Ynison [" . $client->name() . "]: Track: \"$title\" ($track_id) — $paused $progress/$duration sec");
+                $log->info("Ynison [" . $client->name() . "]: Track: \"$title\" ($track_id) - $paused $progress/$duration sec");
 
                 # Determine if we should sync based on active device
                 if ($active_id eq $self->{device_id}) {
@@ -773,16 +773,16 @@ sub _handle_ynison_message {
                     my $new_url = "yandexmusic://$track_id";
 
                     if ($current_url ne $new_url) {
-                        # Track changed — sync new track (NEXT/PREV or redirect from mobile)
+                        # Track changed - sync new track (NEXT/PREV or redirect from mobile)
                         my $source_dev = $self->_get_device_name_by_id($active_id, $msg->{devices});
-                        $log->info("Ynison [" . $client->name() . "]: Active: $source_dev → syncing new track");
+                        $log->info("Ynison [" . $client->name() . "]: Active: $source_dev -> syncing new track");
                         $self->_sync_new_track($ps, $idx);
                     } else {
-                        # Same track — just sync play/pause/seek
+                        # Same track - just sync play/pause/seek
                         $self->_sync_player_commands($ps);
                     }
                 } else {
-                    # Fix #1: Another device is active — do NOT stop LMS (could be playing non-Yandex source)
+                    # Fix #1: Another device is active - do NOT stop LMS (could be playing non-Yandex source)
                     $log->debug("Ynison [" . $client->name() . "]: Active device is $active_id, not syncing");
                 }
             }
@@ -869,17 +869,17 @@ sub _sync_player_commands {
     my $current_paused = $client->isPaused() ? 1 : 0;
     my $is_playing = $client->isPlaying();
 
-    # Sync pause/play state — but only if state actually differs
-    # Do NOT seek — every seek causes stream restart in LMS every 2-3 sec (Yandex push interval)
+    # Sync pause/play state - but only if state actually differs
+    # Do NOT seek - every seek causes stream restart in LMS every 2-3 sec (Yandex push interval)
     # LMS tracks position internally correctly; small drift is normal
     if ($remote_paused && $is_playing) {
-        # Remote paused but LMS playing — pause LMS
+        # Remote paused but LMS playing - pause LMS
         $client->execute(['pause', 1]);
     } elsif (!$remote_paused && !$is_playing && $current_paused) {
-        # Remote playing but LMS paused — play LMS (not just buffering)
+        # Remote playing but LMS paused - play LMS (not just buffering)
         $client->execute(['play']);
     }
-    # No seek sync — prevents stream restart on every Yandex push
+    # No seek sync - prevents stream restart on every Yandex push
 }
 
 sub _sync_new_track {
