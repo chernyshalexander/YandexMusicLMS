@@ -873,7 +873,7 @@ sub get_track_direct_url {
                 # Tier 1: Real-time protocol-level decryption via ProtocolHandler._sysread()
                 # For flac-mp4: LMS pipes decrypted MP4 to ffmpeg via stdin (custom-convert.conf rule)
                 # For plain flac: ProtocolHandler returns plain FLAC bytes
-                $log->info("YANDEX FLAC: Rijndael available – streaming decryption for codec=$codec");
+                $log->info("YANDEX FLAC: Rijndael available - streaming decryption for codec=$codec");
                 $cb->($url, undef, $bitrate, $codec, $aes_key);
             } elsif (my $openssl = _find_openssl()) {
                 # Tier 2: download encrypted file, decrypt with openssl, return file:// URL
@@ -1000,9 +1000,9 @@ sub _has_rijndael {
         eval { require Crypt::Rijndael; $HAS_RIJNDAEL = 1 };
         $HAS_RIJNDAEL = 0 unless $HAS_RIJNDAEL;
         if ($HAS_RIJNDAEL) {
-            $log->info("YANDEX: Crypt::Rijndael available – streaming FLAC decryption enabled");
+            $log->info("YANDEX: Crypt::Rijndael available - streaming FLAC decryption enabled");
         } else {
-            $log->warn("YANDEX: Crypt::Rijndael NOT available – will try openssl fallback for FLAC");
+            $log->warn("YANDEX: Crypt::Rijndael NOT available - will try openssl fallback for FLAC");
         }
     }
     return $HAS_RIJNDAEL;
@@ -1135,7 +1135,7 @@ sub _demux_flac_mp4 {
         $cb->(undef, "ffmpeg demux failed with exit " . ($ret >> 8));
         return;
     }
-    $log->info("YANDEX FLAC: Demuxed flac-mp4 → $flac_file");
+    $log->info("YANDEX FLAC: Demuxed flac-mp4 -> $flac_file");
     $cb->('file://' . $flac_file, undef);
 }
 
