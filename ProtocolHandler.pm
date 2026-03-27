@@ -353,8 +353,8 @@ sub getNextTrack {
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
                 } elsif ($codec =~ /-mp4$/) {
-                    $ct          = 'mp4';
-                    $est_bitrate = ($bitrate || 0) * 1000 || 192000;
+                    $ct          = 'aac-MP4';  # shown as-is, like flac-MP4
+                    $est_bitrate = $bitrate || 192000;  # already in bps
                     $is_vbr      = undef;
                 }
 
@@ -411,10 +411,10 @@ sub formatOverride {
                 $log->info("YANDEX: formatOverride → ymf for $url (flac-mp4 with ffmpeg demux)");
                 return 'ymf';
             }
-            # Other MP4 containers (aac-mp4, he-aac-mp4): play as native MP4
+            # aac-mp4, he-aac-mp4: ffmpeg demuxes MP4 → raw AAC ADTS (custom-convert.conf yma rule)
             if ($codec =~ /-mp4$/) {
-                $log->info("YANDEX: formatOverride → mp4 for $url (codec=$codec, no demux needed)");
-                return 'mp4';
+                $log->info("YANDEX: formatOverride → yma for $url (codec=$codec, ffmpeg demux MP4→AAC)");
+                return 'yma';
             }
             # Plain FLAC: no conversion needed, decrypted via _sysread()
             if ($codec eq 'flac') {
@@ -437,8 +437,8 @@ sub getFormatForURL {
         if ($meta && $meta->{codec}) {
             # flac-mp4: custom format ymf for ffmpeg demux via stdin
             return 'ymf' if $meta->{codec} eq 'flac-mp4';
-            # Other MP4 containers: play as native MP4
-            return 'mp4' if $meta->{codec} =~ /-mp4$/;
+            # aac-mp4, he-aac-mp4: ffmpeg demux via yma rule
+            return 'yma' if $meta->{codec} =~ /-mp4$/;
             # plain FLAC: decrypted via _sysread()
             return 'flc' if $meta->{codec} eq 'flac';
         }
@@ -471,6 +471,8 @@ sub getMetadataFor {
                 $type = $display_type = 'flc';
             } elsif (!$codec && $max_bitrate eq 'flac') {
                 $type = $display_type = 'flc';  # not yet resolved, but will be FLAC
+            } elsif ($codec =~ /-mp4$/) {
+                $type = $display_type = 'aac-MP4';
             } else {
                 $type = $display_type = 'mp3';
             }
@@ -537,6 +539,7 @@ sub getMetadataFor {
             # Determine type
             my $display_type = ($codec eq 'flac-mp4') ? 'flac-MP4'
                              : ($codec eq 'flac')     ? 'flc'
+                             : ($codec =~ /-mp4$/)    ? 'aac-MP4'
                              :                          'mp3';
 
             eval {
