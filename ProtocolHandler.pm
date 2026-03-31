@@ -327,19 +327,19 @@ sub getNextTrack {
             $log->info("YANDEX: URL resolved codec=" . ($codec||'mp3') . " bitrate=" . ($bitrate||0) . " encrypted=" . ($aes_key ? 'yes' : 'no'));
 
             # Save bitrate, codec and AES key to cache for use in new() / _sysread()
+            # Use existing entry if available (preserves title/artist/duration), otherwise create one.
             my $cache = Slim::Utils::Cache->new();
-            if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {
-                # For FLAC codecs the API always returns bitrate=0 — store the estimate
-                if ($codec && $codec =~ /^flac/) {
-                    $cached_meta->{bitrate} = $bitrate || 900000;
-                } elsif ($bitrate) {
-                    $cached_meta->{bitrate} = $bitrate;
-                }
-                $cached_meta->{codec}   = $codec   if $codec;
-                $cached_meta->{aes_key} = $aes_key if $aes_key;
-                # Using 3600 for stream-specific metadata (AES keys etc)
-                $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
+            my $cached_meta = $cache->get('yandex_meta_' . $track_id) || {};
+            # For FLAC codecs the API always returns bitrate=0 — store the estimate
+            if ($codec && $codec =~ /^flac/) {
+                $cached_meta->{bitrate} = $bitrate || 900000;
+            } elsif ($bitrate) {
+                $cached_meta->{bitrate} = $bitrate;
             }
+            $cached_meta->{codec}   = $codec   if $codec;
+            $cached_meta->{aes_key} = $aes_key if $aes_key;
+            # Using 3600 for stream-specific metadata (AES keys etc)
+            $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
 
             # Explicitly set metadata in LMS DB for proper UI display
             my $track_url = $song->track()->url();
