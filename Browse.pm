@@ -5,7 +5,10 @@ use warnings;
 use utf8;
 
 use Slim::Utils::Log;
+use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
+
+my $prefs = preferences('plugin.yandex');
 
 use Plugins::yandex::Browse::Common;
 use Plugins::yandex::Browse::Search;
@@ -70,20 +73,34 @@ sub _handleAlbum {
 sub _handleArtist {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
 
+    my $base_url = $prefs->get('use_new_radio_api')
+        ? 'yandexmusic://rotor_session/'
+        : 'yandexmusic://rotor/';
+
     my @items = (
         {
-            name => 'Popular Tracks',
-            type => 'playlist',
-            url => \&_handleArtistTracks,
+            name  => cstring($client, 'PLUGIN_YANDEX_POPULAR_TRACKS'),
+            type  => 'playlist',
+            url   => \&_handleArtistTracks,
             passthrough => [$yandex_client, $artist_id],
-            play => 'yandexmusic://artist/' . $artist_id,
+            play  => 'yandexmusic://artist/' . $artist_id,
+            image => 'html/images/musicfolder.png',
         },
         {
-            name => 'Albums',
-            type => 'link',
-            url => \&_handleArtistAlbums,
+            name  => cstring($client, 'PLUGIN_YANDEX_ALBUMS'),
+            type  => 'link',
+            url   => \&_handleArtistAlbums,
             passthrough => [$yandex_client, $artist_id],
-        }
+            image => 'html/images/albums.png',
+        },
+        {
+            name     => cstring($client, 'PLUGIN_YANDEX_WAVE_BY_ARTIST'),
+            type     => 'audio',
+            url      => $base_url . 'artist:' . $artist_id,
+            play     => $base_url . 'artist:' . $artist_id,
+            on_select => 'play',
+            image    => 'plugins/yandex/html/images/radio.png',
+        },
     );
 
     $cb->({
@@ -130,12 +147,12 @@ sub _handleArtistAlbums {
                 }
 
                 push @items, {
-                    name => $title,
-                    type => 'album',
-                    url => \&_handleAlbum,
+                    name  => $title,
+                    type  => 'album',
+                    url   => \&_handleAlbum,
                     passthrough => [$yandex_client, $album->{id}],
                     image => $icon,
-                    play => 'yandexmusic://album/' . $album->{id},
+                    play  => 'yandexmusic://album/' . $album->{id},
                 };
             }
 

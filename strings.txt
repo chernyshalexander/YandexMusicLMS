@@ -381,6 +381,15 @@ PLUGIN_YANDEX_MY_WAVE
 	EN	My Vibe
 	RU	Моя волна
 
+PLUGIN_YANDEX_POPULAR_TRACKS
+	EN	Popular Tracks
+	RU	Популярные треки
+
+PLUGIN_YANDEX_WAVE_BY_ARTIST
+	EN	My Vibe by Artist
+	RU	Моя волна по исполнителю
+
+
 PLUGIN_YANDEX_MODE_DEFAULT
 	EN	Default
 	RU	По умолчанию
