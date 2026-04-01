@@ -55,9 +55,10 @@ sub new {
         device_id     => undef,
         oauth_token   => undef,
         user_id       => undef,
-        last_playable_list => [],  # Cache last playable list from Yandex
-        last_state_version => undef,  # Cache last version to avoid duplicate updates
-        syncing_from_yandex => 0,  # Flag to prevent update_state() loop during sync
+        last_playable_list  => [],   # Cache last playable list from Yandex
+        last_state_version  => undef,
+        syncing_from_yandex => 0,    # Prevent update_state() echo loop during Yandex sync
+        local_mode          => 0,    # User took local control — ignore Yandex commands until next Cast
     }, $class;
 
     $self->init();
@@ -95,6 +96,7 @@ sub init {
 sub connect_redirector {
     my $self = shift;
 
+    $self->{local_mode}    = 0;   # Fresh connection resets local control state
     $self->{current_state} = STATE_REDIRECTOR;
     my $host = "ynison.music.yandex.ru";
     my $path = "/redirector.YnisonRedirectService/GetRedirectToYnison";
@@ -358,6 +360,7 @@ sub update_state {
         $log->debug("Ynison [" . $client->name() . "]: Skipping update - syncing from Yandex");
         return;
     }
+    return if $self->{local_mode};
 
     # Don't send state during initial track load (not playing and not paused = still loading)
     # This prevents echo loop: LMS sends paused=true -> Yandex sends PAUSED back
@@ -380,41 +383,56 @@ sub update_state {
 }
 
 sub _send_full_state_msg {
-    my $self = shift;
+    my ($self, %opts) = @_;
+    my $client = $self->{client};
     my $player_state = $self->_get_player_state();
     my $ts = int(time() * 1000);
 
-    # Fix #5: Send real volume instead of hardcoded 0
-    my $current_vol = $self->{client}->volume() || 0;
+    my $current_vol  = $client->volume() || 0;
     my $vol_fraction = $current_vol / 100.0;
+    my $is_active    = $opts{force_inactive} ? \0
+                     : (($client->isPlaying() || $client->isPaused()) ? \1 : \0);
+    my $interception = $opts{force_inactive} ? "DO_NOT_INTERCEPT_BY_DEFAULT"
+                     : "INTERCEPT_IF_NO_ONE_ACTIVE";
 
     my $msg = {
         update_full_state => {
             player_state => $player_state,
             device => {
                 capabilities => {
-                    can_be_player => \1,
+                    can_be_player            => \1,
                     can_be_remote_controller => \0,
-                    volume_granularity => 16
+                    volume_granularity       => 16
                 },
                 info => {
                     device_id => $self->{device_id},
-                    type => "WEB",
-                    title => $self->{client}->name() . " (LMS)",
-                    app_name => "Chrome"
+                    type      => "WEB",
+                    title     => $client->name() . " (LMS)",
+                    app_name  => "Chrome"
                 },
-                volume_info => {
-                    volume => $vol_fraction
-                },
-                is_shadow => \0
+                volume_info => { volume => $vol_fraction },
+                is_shadow    => \0
             },
-            is_currently_active => \0
+            is_currently_active => $is_active
         },
-        rid => "ac281c26-a047-4419-ad00-e4fbfda1cba3",
+        rid => sprintf("%08x-%04x-%04x-%04x-%06x%06x",
+            int(rand(0xffffffff)), int(rand(0xffff)), int(rand(0xffff)),
+            int(rand(0xffff)), int(rand(0xffffff)), int(rand(0xffffff))),
         player_action_timestamp_ms => "$ts",
-        activity_interception_type => "DO_NOT_INTERCEPT_BY_DEFAULT"
+        activity_interception_type => $interception
     };
+    $log->debug("Ynison [" . $client->name() . "]: Sending UpdateFullState, is_active=" . ($$is_active ? "true" : "false"));
     $self->_send_message($msg);
+}
+
+sub detach_from_yandex {
+    my $self = shift;
+    return unless $self->{is_connected};
+    return if $self->{local_mode};
+
+    $self->{local_mode} = 1;
+    $log->info("Ynison [" . $self->{client}->name() . "]: Local control taken - detaching from Yandex");
+    $self->_send_full_state_msg(force_inactive => 1);
 }
 
 sub _on_readable {
@@ -492,9 +510,9 @@ sub _send_one_off_command {
     my $ts_ms = int(time() * 1000);
 
     my $msg = {
-        rid => sprintf("%08x-%04x-%04x-%04x-%012x",
+        rid => sprintf("%08x-%04x-%04x-%04x-%06x%06x",
             int(rand(0xffffffff)), int(rand(0xffff)), int(rand(0xffff)),
-            int(rand(0xffff)), int(rand(0xffffffffffff))),
+            int(rand(0xffff)), int(rand(0xffffff)), int(rand(0xffffff))),
         player_action_timestamp_ms => "$ts_ms",
         activity_interception_type => "DO_NOT_INTERCEPT_BY_DEFAULT"
     };
@@ -641,29 +659,31 @@ sub _get_player_state {
     if ($song && $song->track()) {
         my $url = $song->track()->url();
         if ($url =~ /yandexmusic:\/\/(\d+)/) {
-            $state->{player_queue}->{current_playable_index} = 0;
-            my $track = {
-                playable_id => "$1",
-                playable_type => "TRACK",
-                from => "direct"
-            };
+            my $current_track_id = "$1";
 
-            # Add cover art if available
-            my $cover_url = $song->track()->cover();
-            if ($cover_url) {
-                $cover_url =~ s/%%/200x200/g;  # Replace %% with size
-                if ($cover_url !~ m{^https?://}) {
-                    $cover_url = "https://" . $cover_url;
+            # Use cached playable_list from Yandex if available — it contains full queue
+            # and correct server-side metadata (titles, covers). This enables NEXT/PREV on remote.
+            if ($self->{last_playable_list} && @{$self->{last_playable_list}} > 0) {
+                my $idx = 0;
+                for my $i (0 .. $#{$self->{last_playable_list}}) {
+                    if (($self->{last_playable_list}[$i]->{playable_id} // '') eq $current_track_id) {
+                        $idx = $i;
+                        last;
+                    }
                 }
-                $track->{cover_url_optional} = $cover_url;
+                $state->{player_queue}->{playable_list}          = $self->{last_playable_list};
+                $state->{player_queue}->{current_playable_index} = $idx;
+            } else {
+                # No cached list yet — send minimal single-track entry.
+                # Do NOT include title/cover: LMS strings may lack the Perl UTF-8 flag,
+                # causing encode_json to garble Cyrillic. Yandex resolves metadata by playable_id.
+                $state->{player_queue}->{playable_list} = [{
+                    playable_id   => $current_track_id,
+                    playable_type => "TRACK",
+                    from          => "direct"
+                }];
+                $state->{player_queue}->{current_playable_index} = 0;
             }
-
-            # Add title if available
-            if ($song->track()->title()) {
-                $track->{title} = $song->track()->title();
-            }
-
-            $state->{player_queue}->{playable_list} = [$track];
         }
         my $dur_ms = int(($song->duration() || 0) * 1000);
         my $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000);
@@ -698,19 +718,17 @@ sub _handle_ynison_message {
         }
     }
 
-    # Fix #2 & #3: Extract active_device_id once (undefined/absent -> empty string)
-    # Empty string won't match device_id, so sync safely skipped for unknown state
+    # Extract active_device_id once (undefined/absent -> empty string)
     my $active_id = $msg->{active_device_id_optional} // '';
+    $log->debug("Ynison [" . $client->name() . "]: active_device_id=" . ($active_id || "(none)") . " our_device_id=" . $self->{device_id});
 
-    # Fix #2: Handle commands - only if WE are the active device
-    if ($active_id eq $self->{device_id}) {
+    # Handle commands - only if WE are the active device and not in local_mode
+    if ($active_id eq $self->{device_id} && !$self->{local_mode}) {
         if (exists $msg->{put_commands}) {
             foreach my $cmd_obj (@{$msg->{put_commands}}) {
                 my $cmd = $cmd_obj->{command} // 'UNKNOWN';
-                # Log compact command info
                 my $active_dev_name = $self->_get_device_name_by_id($active_id, $msg->{devices});
                 $log->info("Ynison [" . $client->name() . "]: Command $cmd from $active_dev_name");
-
                 $self->_execute_lms_command($cmd, $cmd_obj);
             }
         }
@@ -773,12 +791,16 @@ sub _handle_ynison_message {
                     my $new_url = "yandexmusic://$track_id";
 
                     if ($current_url ne $new_url) {
-                        # Track changed - sync new track (NEXT/PREV or redirect from mobile)
+                        # Track changed: Cast from mobile re-attaches local_mode
+                        if ($self->{local_mode}) {
+                            $log->info("Ynison [" . $client->name() . "]: Cast received - re-attaching from local mode");
+                            $self->{local_mode} = 0;
+                        }
                         my $source_dev = $self->_get_device_name_by_id($active_id, $msg->{devices});
                         $log->info("Ynison [" . $client->name() . "]: Active: $source_dev -> syncing new track");
                         $self->_sync_new_track($ps, $idx);
-                    } else {
-                        # Same track - just sync play/pause/seek
+                    } elsif (!$self->{local_mode}) {
+                        # Same track - sync play/pause (only when not in local control)
                         $self->_sync_player_commands($ps);
                     }
                 } else {
@@ -828,9 +850,9 @@ sub _execute_lms_command {
         # Sync will happen when player_state arrives from Yandex
     }
     elsif ($command eq "SEEK") {
-        my $seek_pos = ($data->{progress_ms} || 0) / 1000;
-        $client->execute(['time', $seek_pos]);
-        # Sync will happen when player_state arrives from Yandex
+        # Seek causes full stream restart in LMS (new HTTP connection + AES-CTR reinit).
+        # Disabled until ProtocolHandler supports HTTP Range requests.
+        $log->debug("Ynison [" . $client->name() . "]: SEEK ignored (stream restart not supported)");
     }
     else {
         $log->warn("Ynison [" . $client->name() . "]: Unknown command: $command");
@@ -879,7 +901,9 @@ sub _sync_player_commands {
         # Remote playing but LMS paused - play LMS (not just buffering)
         $client->execute(['play']);
     }
-    # No seek sync - prevents stream restart on every Yandex push
+    # Seek is not synced: ['time', X] on an HTTP stream causes a full stream
+    # restart in LMS (new HTTP connection + AES-CTR reinit + fast-forward noise).
+    # Proper seek requires Range-request support in ProtocolHandler (future task).
 }
 
 sub _sync_new_track {
@@ -908,7 +932,7 @@ sub _sync_new_track {
     foreach my $track (@{$queue->{playable_list}}) {
         next unless $track && $track->{playable_id};
         my $track_url = "yandexmusic://" . $track->{playable_id};
-        $client->execute(['playlist', 'insert', $track_url]);
+        $client->execute(['playlist', 'add', $track_url]);
     }
 
     # Set current track position based on current_playable_index
@@ -924,6 +948,7 @@ sub _sync_new_track {
 sub _send_volume_update {
     my ($self, $volume_float) = @_;
     return unless $self->{is_connected};
+    return if $self->{local_mode};
     return unless defined $volume_float;
 
     # Ensure volume is in [0.0, 1.0] range

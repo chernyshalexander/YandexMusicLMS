@@ -166,12 +166,12 @@ sub renderAlbumList {
         }
 
         push @items, {
-            name => $album_title . ' (' . $artist_name . ')',
-            type => 'album',
-            url => \&Plugins::yandex::Browse::_handleAlbum,
+            name  => $album_title . ' (' . $artist_name . ')',
+            type  => 'album',
+            url   => \&Plugins::yandex::Browse::_handleAlbum,
             passthrough => [$yandex_client, $album_id],
             image => $icon,
-            play => 'yandexmusic://album/' . $album_id,
+            play  => 'yandexmusic://album/' . $album_id,
         };
     }
 
