@@ -73,6 +73,7 @@ sub initPlugin {
         weight => 50,
     );
 
+
     # Initialize Yandex client at startup if token is available
     my $token = $prefs->get('token');
     if ($token) {
@@ -190,13 +191,31 @@ sub playerEventCallback {
     # Ynison state update and volume sync
     if ($prefs->get('enable_ynison')) {
         if ($ynison_instances{$client->id()}) {
-            # Fix #6: Send volume update only on volume event, not on all events
-            if ($command eq 'volume' && !$ynison_instances{$client->id()}->{syncing_from_yandex}) {
+            my $ynison = $ynison_instances{$client->id()};
+
+            # Detach from Yandex when user takes local control
+            if (!$ynison->{syncing_from_yandex}) {
+                my $source = $request->source() // '';
+                my $sub    = ($command eq 'playlist') ? ($request->getRequest(2) // '') : '';
+                if (   $command eq 'jump'
+                    || $command eq 'stop'
+                    || $command eq 'clear'
+                    || $command eq 'volume'
+                    || ($command eq 'newsong' && $source ne '')
+                    || ($command eq 'playlist'
+                        && $sub =~ /^(?:play|load|playtracks|loadtracks|playalbum|loadalbum)$/i)
+                ) {
+                    $ynison->detach_from_yandex();
+                }
+            }
+
+            # Send volume update to Yandex (skipped automatically if local_mode)
+            if ($command eq 'volume' && !$ynison->{syncing_from_yandex}) {
                 my $vol = $client->volume() || 0;
                 # Don't send volume 0 (can be misinterpreted as pause/stop)
-                $ynison_instances{$client->id()}->_send_volume_update($vol / 100.0) if $vol > 0;
+                $ynison->_send_volume_update($vol / 100.0) if $vol > 0;
             }
-            $ynison_instances{$client->id()}->update_state();
+            $ynison->update_state();
         } else {
             # Try to initialize if not yet done (e.g. if enable_ynison was tuned on after startup)
             if ($yandex_client_instance) {
@@ -451,5 +470,6 @@ sub _register_ffmpeg_path {
 
     $log->warn("YANDEX: ffmpeg not found - FLAC-in-MP4 (ymf) transcoding will not work");
 }
+
 
 1;
