@@ -28,7 +28,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate use_new_radio_api remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language));
 }
 
 sub handler {
@@ -67,7 +67,6 @@ sub handler {
 
 	if ($params->{saveSettings}) {
 		# Handle checkbox values - unchecked checkboxes don't appear in POST data (like Spotty-Plugin does)
-		$params->{pref_use_new_radio_api}              ||= 0;
 		$params->{pref_remove_duplicates}              ||= 0;
 		$params->{pref_show_chart}                     ||= 0;
 		$params->{pref_show_new_releases}              ||= 0;
@@ -75,6 +74,11 @@ sub handler {
 		$params->{pref_show_audiobooks_in_collection}  ||= 0;
 		$params->{pref_search_podcasts}                ||= 0;
 		$params->{pref_enable_ynison}                  ||= 0;
+		$params->{pref_show_wave_wizard}               ||= 0;
+		$params->{pref_wizard_station_type}            //= 'activity';
+		$params->{pref_wizard_cat_diversity}           ||= 0;
+		$params->{pref_wizard_cat_mood}                ||= 0;
+		$params->{pref_wizard_cat_language}            ||= 0;
 
 		my $token = $params->{pref_token};
 		my $oldToken = $prefs->get('token');

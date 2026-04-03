@@ -73,9 +73,7 @@ sub _handleAlbum {
 sub _handleArtist {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
 
-    my $base_url = $prefs->get('use_new_radio_api')
-        ? 'yandexmusic://rotor_session/'
-        : 'yandexmusic://rotor/';
+    my $base_url = 'yandexmusic://rotor_session/';
 
     my @items = (
         {

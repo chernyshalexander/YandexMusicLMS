@@ -40,13 +40,18 @@ sub initPlugin {
         token => '',
         fullName => '',
         max_bitrate => 320,
-        use_new_radio_api => 0,
         remove_duplicates => 1,
         show_chart => 0,
         show_new_releases => 0,
         show_new_playlists => 0,
         show_audiobooks_in_collection => 1,
         enable_ynison => 0,
+        yandex_wave_presets => [],
+        show_wave_wizard     => 1,
+        wizard_station_type  => 'activity',
+        wizard_cat_diversity => 1,
+        wizard_cat_mood      => 1,
+        wizard_cat_language  => 1,
     });
 
     # Handle enable_ynison preference changes
@@ -237,16 +242,7 @@ sub _handleRotorFeedback {
         return unless $song;
         my $url = $song->track()->url;
         
-        if ($url && $url =~ /rotor_station=([^&]+)/) {
-            my $station = URI::Escape::uri_unescape($1);
-            my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
-            my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
-            
-            return unless $track_id;
-            
-            $log->info("YANDEX ROTOR: Track started. Station: $station, batch: " . ($batch_id||'none') . ", track: $track_id");
-            $yandex_client->rotor_station_feedback($station, 'trackStarted', $batch_id, $track_id, 0, sub {}, sub {});
-        } elsif ($url && $url =~ /rotor_session=([^&]+)/) {
+        if ($url && $url =~ /rotor_session=([^&]+)/) {
             my $radio_session_id = URI::Escape::uri_unescape($1);
             my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
             my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
@@ -268,9 +264,9 @@ sub _handleRotorFeedback {
         my $url = $client->pluginData('yandex_radio_url');
         my $duration = $client->pluginData('yandex_track_duration') || 0;
         
-        if ($url && $url =~ /rotor_(station|session)=([^&]+)/) {
-            my $is_session = ($1 eq 'session');
-            my $station_or_session_id = URI::Escape::uri_unescape($2);
+        if ($url && $url =~ /rotor_session=([^&]+)/) {
+            my $is_session = 1;
+            my $station_or_session_id = URI::Escape::uri_unescape($1);
             my $batch_id = ($url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
             my $track_id = ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
             return unless $track_id;
@@ -310,15 +306,10 @@ sub _handleRotorFeedback {
                 return;
             }
 
-            if ($is_session) {
-                require Plugins::yandex::ProtocolHandler;
-                my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
-                $log->info("YANDEX NEW ROTOR SESSION: Sending '$type' feedback. Played: $played_seconds s. batch: " . ($batch_id||'none') . ", track: $track_id");
-                $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, $timestamp, sub {}, sub {});
-            } else {
-                $log->info("YANDEX ROTOR: Sending '$type' feedback. Played: $played_seconds s. Station: $station_or_session_id, batch: " . ($batch_id||'none') . ", track: $track_id");
-                $yandex_client->rotor_station_feedback($station_or_session_id, $type, $batch_id, $track_id, $played_seconds, sub {}, sub {});
-            }
+            require Plugins::yandex::ProtocolHandler;
+            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
+            $log->info("YANDEX ROTOR SESSION: Sending '$type' feedback. Played: $played_seconds s. batch: " . ($batch_id||'none') . ", track: $track_id");
+            $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, $timestamp, sub {}, sub {});
             
             # Mark feedback as sent so we don't send it again on natural_finish
             $client->pluginData('yandex_track_active', 0);

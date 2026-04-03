@@ -422,6 +422,162 @@ PLUGIN_YANDEX_MODE_SAD
 	EN	Sad
 	RU	Грустное
 
+PLUGIN_YANDEX_MODE_LANG_RUSSIAN
+	EN	Russian tracks
+	RU	Русские треки
+
+PLUGIN_YANDEX_MODE_LANG_NOT_RUSSIAN
+	EN	Foreign tracks
+	RU	Иностранные треки
+
+PLUGIN_YANDEX_MODE_LANG_WITHOUT_WORDS
+	EN	Instrumental
+	RU	Без слов
+
+PLUGIN_YANDEX_MODE_LANG_ANY
+	EN	Any language
+	RU	Любой язык
+
+PLUGIN_YANDEX_WAVE_WIZARD
+	EN	Wave Constructor
+	RU	Конструктор волны
+
+PLUGIN_YANDEX_MY_PRESETS
+	EN	My Presets
+	RU	Мои пресеты
+
+PLUGIN_YANDEX_WIZARD_ANY_ACTIVITY
+	EN	Any activity
+	RU	Любое занятие
+
+PLUGIN_YANDEX_WIZARD_ANY_DIVERSITY
+	EN	Any character
+	RU	Любой характер
+
+PLUGIN_YANDEX_WIZARD_ANY_MOOD
+	EN	Any mood
+	RU	Любое настроение
+
+PLUGIN_YANDEX_WIZARD_ANY_LANGUAGE
+	EN	Any language
+	RU	Любой язык
+
+PLUGIN_YANDEX_WIZARD_DIVERSITY_DEFAULT
+	EN	Default
+	RU	По умолчанию
+
+PLUGIN_YANDEX_WIZARD_DIVERSITY_FAVORITE
+	EN	Favorite
+	RU	Любимое
+
+PLUGIN_YANDEX_WIZARD_DIVERSITY_DISCOVER
+	EN	Discover
+	RU	Незнакомое
+
+PLUGIN_YANDEX_WIZARD_DIVERSITY_POPULAR
+	EN	Popular
+	RU	Популярное
+
+PLUGIN_YANDEX_WIZARD_MOOD_CALM
+	EN	Calm
+	RU	Спокойное
+
+PLUGIN_YANDEX_WIZARD_MOOD_ACTIVE
+	EN	Active
+	RU	Бодрое
+
+PLUGIN_YANDEX_WIZARD_MOOD_FUN
+	EN	Fun
+	RU	Весёлое
+
+PLUGIN_YANDEX_WIZARD_MOOD_SAD
+	EN	Sad
+	RU	Грустное
+
+PLUGIN_YANDEX_WIZARD_PLAY
+	EN	Play radio
+	RU	Запустить радио
+
+PLUGIN_YANDEX_WIZARD_SAVE
+	EN	Save as preset
+	RU	Сохранить как пресет
+
+PLUGIN_YANDEX_WIZARD_SAVED
+	EN	Preset saved
+	RU	Пресет сохранён
+
+PLUGIN_YANDEX_PRESET_PLAY
+	EN	Play
+	RU	Запустить
+
+PLUGIN_YANDEX_PRESET_DELETE
+	EN	Delete preset
+	RU	Удалить пресет
+
+PLUGIN_YANDEX_PRESETS_CLEAR
+	EN	Clear all presets
+	RU	Очистить все пресеты
+
+PLUGIN_YANDEX_SHOW_WAVE_WIZARD
+	EN	Show Wave Constructor
+	RU	Показывать конструктор волны
+
+PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC
+	EN	Show Wave Constructor in the Radio menu
+	RU	Показывать конструктор волны в разделе Радио
+
+PLUGIN_YANDEX_WIZARD_STATION_TYPE
+	EN	Station type (choose one)
+	RU	Тип станции (выберите один)
+
+PLUGIN_YANDEX_WIZARD_STATION_TYPE_DESC
+	EN	Selects which type of radio station the wizard will offer as the first step
+	RU	Определяет, какой тип радиостанции конструктор предложит на первом шаге
+
+PLUGIN_YANDEX_WIZARD_NO_STATION_STEP
+	EN	My Wave only (skip station step)
+	RU	Только Моя волна (без шага выбора станции)
+
+PLUGIN_YANDEX_WIZARD_CATS_HINT
+	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including station type selection).
+	RU	Выберите категории для шагов конструктора. Всего должно быть не менее 3 этапов (включая выбор типа станции)
+
+PLUGIN_YANDEX_WIZARD_CATS_MIN3
+	EN	At least 3 steps must be selected in total (including station type selection).
+	RU	Суммарно должно быть выбрано не менее 3 этапов (включая выбор типа станции)
+
+PLUGIN_YANDEX_WIZARD_CAT_ACTIVITY
+	EN	Activities
+	RU	Занятия
+
+PLUGIN_YANDEX_WIZARD_CAT_DIVERSITY
+	EN	Character
+	RU	Характер
+
+PLUGIN_YANDEX_WIZARD_CAT_MOOD
+	EN	Moods
+	RU	Настроения
+
+PLUGIN_YANDEX_WIZARD_CAT_LANGUAGE
+	EN	Language
+	RU	Язык
+
+PLUGIN_YANDEX_WIZARD_CAT_EPOCH
+	EN	Epochs
+	RU	Эпохи
+
+PLUGIN_YANDEX_WIZARD_CAT_GENRE
+	EN	Genres
+	RU	Жанры
+
+PLUGIN_YANDEX_WIZARD_ANY_EPOCH
+	EN	Any epoch
+	RU	Любая эпоха
+
+PLUGIN_YANDEX_WIZARD_ANY_GENRE
+	EN	Any genre
+	RU	Любой жанр
+
 PLUGIN_YANDEX_RADIO_GENRES
 	EN	Genres
 	RU	Жанры
