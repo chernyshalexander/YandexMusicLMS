@@ -106,12 +106,6 @@
 </div>
 [% END %]
 
-[% WRAPPER setting title="PLUGIN_YANDEX_USE_NEW_RADIO_API_TITLE" desc="PLUGIN_YANDEX_USE_NEW_RADIO_API_DESC" %]
-<div class="prefDesc">
-    <input type="checkbox" name="pref_use_new_radio_api" id="pref_use_new_radio_api" [% IF prefs.use_new_radio_api
-        %]checked[% END %]>
-</div>
-[% END %]
 
 [% WRAPPER setting title="PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE" desc="PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC" %]
 <div class="prefDesc">
@@ -157,6 +151,97 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 
 <hr>
 
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_WAVE_WIZARD" desc="PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_wave_wizard" id="pref_show_wave_wizard"
+        [% IF prefs.show_wave_wizard %]checked[% END %]>
+</div>
+[% END %]
+
+<div id="wave_wizard_settings" style="[% IF !prefs.show_wave_wizard %]display:none;[% END %] margin-left:20px; border-left: 3px solid #ccc; padding-left:15px; margin-bottom:10px;">
+
+    <p style="color:#666; font-size:0.9em; margin-bottom:15px;">[% "PLUGIN_YANDEX_WIZARD_CATS_HINT" | string %]</p>
+
+    [% WRAPPER setting title="PLUGIN_YANDEX_WIZARD_STATION_TYPE" desc="PLUGIN_YANDEX_WIZARD_STATION_TYPE_DESC" %]
+    <div class="prefDesc" style="border: 1px solid #ddd; border-radius:6px; padding:10px; background:#f9f9f9;">
+        <label style="display:block; margin-bottom:6px;">
+            <input type="radio" name="pref_wizard_station_type" value="activity"
+                [% IF prefs.wizard_station_type == 'activity' || !prefs.wizard_station_type %]checked[% END %]>
+            [% "PLUGIN_YANDEX_WIZARD_CAT_ACTIVITY" | string %]
+        </label>
+        <label style="display:block; margin-bottom:6px;">
+            <input type="radio" name="pref_wizard_station_type" value="epoch"
+                [% IF prefs.wizard_station_type == 'epoch' %]checked[% END %]>
+            [% "PLUGIN_YANDEX_WIZARD_CAT_EPOCH" | string %]
+        </label>
+        <label style="display:block; margin-bottom:6px;">
+            <input type="radio" name="pref_wizard_station_type" value="genre"
+                [% IF prefs.wizard_station_type == 'genre' %]checked[% END %]>
+            [% "PLUGIN_YANDEX_WIZARD_CAT_GENRE" | string %]
+        </label>
+        <label style="display:block;">
+            <input type="radio" name="pref_wizard_station_type" value=""
+                [% IF prefs.wizard_station_type == '' %]checked[% END %]>
+            [% "PLUGIN_YANDEX_WIZARD_NO_STATION_STEP" | string %]
+        </label>
+    </div>
+    [% END %]
+
+    [% WRAPPER setting title="PLUGIN_YANDEX_WIZARD_CAT_DIVERSITY" %]
+    <input type="checkbox" class="wizard-cat-cb" name="pref_wizard_cat_diversity"
+        [% IF prefs.wizard_cat_diversity %]checked[% END %]>
+    [% END %]
+
+    [% WRAPPER setting title="PLUGIN_YANDEX_WIZARD_CAT_MOOD" %]
+    <input type="checkbox" class="wizard-cat-cb" name="pref_wizard_cat_mood"
+        [% IF prefs.wizard_cat_mood %]checked[% END %]>
+    [% END %]
+
+    [% WRAPPER setting title="PLUGIN_YANDEX_WIZARD_CAT_LANGUAGE" %]
+    <input type="checkbox" class="wizard-cat-cb" name="pref_wizard_cat_language"
+        [% IF prefs.wizard_cat_language %]checked[% END %]>
+    [% END %]
+</div>
+
+<script type="text/javascript">
+(function () {
+    var toggle  = document.getElementById('pref_show_wave_wizard');
+    var section = document.getElementById('wave_wizard_settings');
+
+    toggle.addEventListener('change', function () {
+        section.style.display = this.checked ? 'block' : 'none';
+    });
+
+    function countActiveSteps() {
+        var radioVal = document.querySelector('input[name="pref_wizard_station_type"]:checked');
+        var stationCount = (radioVal && radioVal.value !== '') ? 1 : 0;
+        var filterCount  = document.querySelectorAll('.wizard-cat-cb:checked').length;
+        return stationCount + filterCount;
+    }
+
+    document.querySelectorAll('.wizard-cat-cb').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+            if (!this.checked && countActiveSteps() < 3) {
+                this.checked = true;
+                alert('[% "PLUGIN_YANDEX_WIZARD_CATS_MIN3" | string %]');
+            }
+        });
+    });
+
+    document.querySelectorAll('input[name="pref_wizard_station_type"]').forEach(function (rb) {
+        rb.addEventListener('change', function () {
+            if (this.value === '' && document.querySelectorAll('.wizard-cat-cb:checked').length < 3) {
+                alert('[% "PLUGIN_YANDEX_WIZARD_CATS_MIN3" | string %]');
+                document.querySelector('input[name="pref_wizard_station_type"][value="activity"]').checked = true;
+            }
+        });
+    });
+})();
+</script>
+
+
+<hr>
+
 [% WRAPPER setting title="PLUGIN_YANDEX_ENABLE_YNISON" desc="PLUGIN_YANDEX_ENABLE_YNISON_DESC" %]
 <div class="prefDesc">
     <input type="checkbox" name="pref_enable_ynison" id="pref_enable_ynison" [% IF prefs.enable_ynison %]checked[% END
@@ -164,4 +249,4 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 [% END %]
 
-[% PROCESS settings/footer.html %]
+[% PROCESS settings/footer.html %]
