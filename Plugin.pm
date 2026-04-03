@@ -61,6 +61,13 @@ sub initPlugin {
     # LMS service may not inherit the user/system PATH change, so we search explicitly.
     _register_ffmpeg_path();
 
+    my $deps = Plugins::yandex::API::check_dependencies();
+    if (!$deps->{rijndael} || !$deps->{ffmpeg}) {
+        $log->error("YANDEX: Missing critical dependencies! FLAC/AAC(MP4) playback may fail. Missing: " . 
+            (!$deps->{rijndael} ? 'Crypt::Rijndael ' : '') . 
+            (!$deps->{ffmpeg} ? 'ffmpeg' : ''));
+    }
+
     # Protocol registration
     $log->error("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');

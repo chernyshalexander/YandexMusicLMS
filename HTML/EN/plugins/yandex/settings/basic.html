@@ -1,5 +1,15 @@
 [% PROCESS settings/header.html %]
 
+[% IF rijndael_missing OR ffmpeg_missing %]
+<div style="background:#fee; border:1px solid #f00; padding:15px; border-radius:5px; margin-bottom:20px; color:#c00;">
+    <b style="font-size:1.1em;">[% "PLUGIN_YANDEX_DEPENDENCY_WARNING" | string %]</b>
+    <ul style="margin-top:10px; margin-bottom:0; padding-left:25px;">
+        [% IF rijndael_missing %]<li>[% "PLUGIN_YANDEX_RIJNDAEL_MISSING" | string %]</li>[% END %]
+        [% IF ffmpeg_missing %]<li>[% "PLUGIN_YANDEX_FFMPEG_MISSING" | string %]</li>[% END %]
+    </ul>
+</div>
+[% END %]
+
 [% IF pref_fullName %]
 [% WRAPPER setting title="PLUGIN_YANDEX_LOGGED_IN_AS" %]
 <div class="prefDesc"><b>[% pref_fullName | html %]</b></div>

@@ -149,6 +149,10 @@ sub beforeRender {
 	}
 
 	$params->{enable_ynison} = $prefs->get('enable_ynison') // 0;
+	
+	my $deps = Plugins::yandex::API::check_dependencies();
+	$params->{rijndael_missing} = !$deps->{rijndael};
+	$params->{ffmpeg_missing}   = !$deps->{ffmpeg};
 
 	$log->info("Yandex Settings: beforeRender. pref_fullName=" . ($params->{pref_fullName} || 'none') . " pref_tokenValue=" . $params->{pref_tokenValue});
 }
