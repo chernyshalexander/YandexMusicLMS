@@ -722,6 +722,13 @@ sub playlists_list {
 # Get direct stream URL via /get-file-info (supports lossless/FLAC).
 # Key and signing format from https://github.com/MarshalX/yandex-music-api/issues/656
 # Calls $cb->($url, $error, $codec, $bitrate_kbps)
+sub check_dependencies {
+    return {
+        rijndael => _has_rijndael(),
+        ffmpeg   => !!_find_ffmpeg(),
+    };
+}
+
 sub get_track_file_info {
     my ($self, $track_id, $cb) = @_;
 
@@ -1094,13 +1101,25 @@ sub _demux_flac_mp4 {
 }
 
 sub _find_ffmpeg {
-    for my $path ('/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/opt/local/bin/ffmpeg') {
-        return $path if -x $path;
-    }
+    my @search_dirs;
+
     if ($^O eq 'MSWin32') {
-        for my $dir (split /;/, $ENV{PATH} || '') {
-            my $p = "$dir\\ffmpeg.exe";
-            return $p if -e $p;
+        push @search_dirs, 'C:\\ffmpeg\\bin', 'C:\\Program Files\\ffmpeg\\bin',
+                           'C:\\FFmpeg\\bin', 'C:\\Program Files\\FFmpeg\\bin',
+                           'C:\\ffmpeg', 'C:\\tools\\ffmpeg\\bin';
+        push @search_dirs, split /;/, ($ENV{PATH} || '');
+    } else {
+        push @search_dirs, '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/opt/local/bin';
+        push @search_dirs, split /:/, ($ENV{PATH} || '');
+    }
+
+    my $ffmpeg_name = ($^O eq 'MSWin32') ? 'ffmpeg.exe' : 'ffmpeg';
+
+    for my $dir (@search_dirs) {
+        next unless $dir && -d $dir;
+        my $p = ($^O eq 'MSWin32') ? "$dir\\$ffmpeg_name" : "$dir/$ffmpeg_name";
+        if (-e $p || ($^O ne 'MSWin32' && -x $p)) {
+            return $p;
         }
     }
     return undef;
