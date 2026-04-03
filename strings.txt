@@ -49,6 +49,18 @@ PLUGIN_YANDEX_AUTH_FAILED_MSG
 	EN	Authorization failed.
 	RU	Ошибка авторизации.
 
+PLUGIN_YANDEX_DEPENDENCY_WARNING
+	EN	Warning: Missing critical dependencies!
+	RU	Внимание: Обнаружены проблемы с зависимостями!
+
+PLUGIN_YANDEX_RIJNDAEL_MISSING
+	EN	Crypt::Rijndael is missing (required for FLAC)
+	RU	Отсутствует Crypt::Rijndael (нужен для FLAC)
+
+PLUGIN_YANDEX_FFMPEG_MISSING
+	EN	FFmpeg is missing (required for FLAC/AAC in MP4)
+	RU	Отсутствует FFmpeg (нужен для FLAC/AAC в MP4)
+
 PLUGIN_YANDEX_AUTH_DRAG_DROP
 	EN	Drag & Drop (Alternative)
 	RU	Перетаскивание (Альтернатива)
