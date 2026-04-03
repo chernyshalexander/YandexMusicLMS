@@ -413,37 +413,6 @@ sub get_playlist {
     );
 }
 
-sub rotor_station_tracks {
-    my ($self, $station_id, $queue, $callback, $error_callback, $extra_params) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/station/' . $station_id . '/tracks';
-    my $params = { 'settings2' => 'true' };
-    
-    if ($queue) { $params->{queue} = $queue; }
-    if ($extra_params && ref $extra_params eq 'HASH') {
-        foreach my $key (keys %$extra_params) { $params->{$key} = $extra_params->{$key}; }
-    }
-
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{sequence}) {
-                my @tracks;
-                foreach my $item (@{$result->{result}->{sequence}}) {
-                    next unless $item->{track};
-                    push @tracks, $item->{track};
-                }
-                my $batch_id = $result->{result}->{batchId};
-                $callback->({ tracks => \@tracks, batch_id => $batch_id });
-            } else {
-                $error_callback->("Failed to get station tracks");
-            }
-        },
-        $error_callback,
-    );
-}
-
 sub rotor_station_info {
     my ($self, $station, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/rotor/station/' . $station . '/info';
@@ -463,36 +432,21 @@ sub rotor_station_info {
     );
 }
 
-sub rotor_station_feedback {
-    my ($self, $station, $type, $batch_id, $track_id, $total_played_seconds, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/station/' . $station . '/feedback';
-
-    if ($batch_id) {
-        $url .= '?batch-id=' . uri_escape_utf8($batch_id);
-    }
-
-    my $data = {
-        'type' => $type,
-        'timestamp' => time(),
-    };
-    if (defined $track_id) { $data->{'trackId'} = $track_id; }
-    if (defined $total_played_seconds) { $data->{'totalPlayedSeconds'} = $total_played_seconds; }
-
-    $self->post_form(
-        $url,
-        $data,
-        sub { $callback->(1); },
-        $error_callback,
-    );
-}
-
 sub rotor_session_new {
-    my ($self, $station_id, $callback, $error_callback) = @_;
+    my ($self, $station_id, $settings, $queue, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/rotor/session/new';
-    
+
+    my @seeds = ($station_id);
+    push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
+    push @seeds, 'settingMoodEnergy:' . $settings->{moodEnergy} if $settings && $settings->{moodEnergy};
+    push @seeds, 'settingLanguage:'   . $settings->{language}   if $settings && $settings->{language};
+
     my $data = {
-        'seeds' => [$station_id],
-        'includeTracksInResponse' => \1, 
+        'seeds'                   => \@seeds,
+        'queue'                   => $queue || [],
+        'includeTracksInResponse' => \1,
+        'includeWaveModel'        => \1,
+        'interactive'             => \1,
     };
 
     $self->post(
