@@ -7,7 +7,6 @@ use JSON::XS::VersionOneAndTwo;
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;
-use POSIX qw(mkfifo);
 
 
 my $log = logger('plugin.yandex');
@@ -836,22 +835,9 @@ sub get_track_direct_url {
                 # For plain flac: ProtocolHandler returns plain FLAC bytes
                 $log->info("YANDEX FLAC: Rijndael available - streaming decryption for codec=$codec");
                 $cb->($url, undef, $bitrate, $codec, $aes_key);
-            } elsif (my $openssl = _find_openssl()) {
-                # Tier 2: download encrypted file, decrypt with openssl, return file:// URL
-                # Backup for systems without Crypt::Rijndael
-                $log->info("YANDEX FLAC: Using openssl for decryption (codec=$codec)");
-                $self->_decrypt_flac_via_openssl($url, $aes_key, $openssl, $codec, sub {
-                    my ($file_url, $err) = @_;
-                    if ($file_url) {
-                        $cb->($file_url, undef, $bitrate, $codec, undef);
-                    } else {
-                        $log->warn("YANDEX FLAC: openssl decryption failed ($err), falling back to MP3");
-                        $self->_get_track_mp3_url($track_id, 320, $cb);
-                    }
-                });
             } else {
-                # Tier 3: no decryption available
-                $log->warn("YANDEX FLAC: No decryption available (install libcrypt-rijndael-perl or openssl), falling back to MP3 320");
+                # No decryption available — install libcrypt-rijndael-perl for FLAC support
+                $log->warn("YANDEX FLAC: Crypt::Rijndael not available, falling back to MP3 320");
                 $self->_get_track_mp3_url($track_id, 320, $cb);
             }
         });
@@ -963,141 +949,10 @@ sub _has_rijndael {
         if ($HAS_RIJNDAEL) {
             $log->info("YANDEX: Crypt::Rijndael available - streaming FLAC decryption enabled");
         } else {
-            $log->warn("YANDEX: Crypt::Rijndael NOT available - will try openssl fallback for FLAC");
+            $log->warn("YANDEX: Crypt::Rijndael NOT available - FLAC will fall back to MP3 320 (install libcrypt-rijndael-perl)");
         }
     }
     return $HAS_RIJNDAEL;
-}
-
-sub _find_openssl {
-    for my $path ('/usr/bin/openssl', '/usr/local/bin/openssl', '/opt/homebrew/bin/openssl', '/opt/local/bin/openssl') {
-        return $path if -x $path;
-    }
-    if ($^O eq 'MSWin32') {
-        for my $dir (split /;/, $ENV{PATH} || '') {
-            my $p = "$dir\\openssl.exe";
-            return $p if -e $p;
-        }
-    }
-    return undef;
-}
-
-# Download encrypted FLAC to temp file, decrypt with openssl, demux if needed, return file:// URL
-sub _decrypt_flac_via_openssl {
-    my ($self, $enc_url, $hex_key, $openssl, $codec, $cb) = @_;
-
-    require File::Temp;
-    my $tmpdir = $ENV{TMPDIR} || $ENV{TEMP} || '/tmp';
-
-    # Create output FIFO (named pipe) for streaming
-    my ($out_fh, $out_file) = File::Temp::tempfile('yandex_flac_XXXXXX', SUFFIX => '.flac', DIR => $tmpdir);
-    close($out_fh);
-    unlink($out_file);  # Remove temp file, we'll create FIFO in its place
-
-    # Create FIFO on Unix-like systems
-    if ($^O ne 'MSWin32') {
-        if (!POSIX::mkfifo($out_file, 0600)) {
-            $cb->(undef, "mkfifo failed: $!");
-            return;
-        }
-    } else {
-        # Windows: use regular temp file (pipeline not as efficient but still works)
-        # Can be improved with Named Pipes if needed
-        $log->warn("YANDEX FLAC: Using temp file on Windows instead of FIFO (slower)");
-    }
-
-    # Build pipeline command: curl | openssl | ffmpeg (if flac-mp4)
-    my $pipeline_cmd;
-    my $curl = _find_curl();
-
-    # Escape shell special characters
-    my $safe_url = quotemeta($enc_url);
-    my $safe_out = quotemeta($out_file);
-
-    if ($codec eq 'flac-mp4') {
-        # curl encrypted_stream | openssl decrypt | ffmpeg demux MP4→FLAC > FIFO
-        my $ffmpeg = _find_ffmpeg();
-        unless ($ffmpeg && $curl) {
-            unlink($out_file);
-            $cb->(undef, "curl or ffmpeg not found");
-            return;
-        }
-        $pipeline_cmd = "$curl -s $safe_url 2>/dev/null | $openssl enc -aes-128-ctr -d -K $hex_key -iv " . ('0' x 32) . " -nosalt 2>/dev/null | $ffmpeg -loglevel quiet -i - -f flac $safe_out 2>&1";
-    } else {
-        # curl encrypted_stream | openssl decrypt > FIFO (plain FLAC)
-        unless ($curl) {
-            unlink($out_file);
-            $cb->(undef, "curl not found");
-            return;
-        }
-        $pipeline_cmd = "$curl -s $safe_url 2>/dev/null | $openssl enc -aes-128-ctr -d -K $hex_key -iv " . ('0' x 32) . " -nosalt > $safe_out 2>&1";
-    }
-
-    # Run pipeline in background
-    $log->info("YANDEX FLAC: Starting streaming pipeline for $codec: $pipeline_cmd");
-    system("($pipeline_cmd) > /dev/null 2>&1 &");
-
-    # Wait for FIFO to be opened/readable (max 3 seconds)
-    my $wait_count = 0;
-    while (!-e $out_file && $wait_count < 30) {
-        select(undef, undef, undef, 0.1);  # Sleep 100ms
-        $wait_count++;
-    }
-
-    unless (-e $out_file) {
-        $log->warn("YANDEX FLAC: FIFO not created: $out_file");
-        $cb->(undef, "Failed to create streaming FIFO");
-        return;
-    }
-
-    $log->info("YANDEX FLAC: Streaming to $out_file via pipeline");
-    $cb->('file://' . $out_file, undef);
-}
-
-# Download encrypted flac-mp4, decrypt with Rijndael in-memory, demux FLAC, return file:// URL
-
-# AES-128-CTR decryption using Rijndael in ECB mode (keystream XOR)
-sub _aes_ctr_decrypt {
-    use bytes;
-    my ($cipher, $data) = @_;
-    my $len = length($data);
-    my $out = '';
-    my $i   = 0;
-    while ($i < $len) {
-        my $blk_num  = int($i / 16);
-        my $blk_off  = $i % 16;
-        my $counter  = "\x00" x 12 . pack('N', $blk_num);
-        my $keystream = $cipher->encrypt($counter);
-        my $take      = 16 - $blk_off;
-        $take = $len - $i if $len - $i < $take;
-        $out .= substr($data, $i, $take) ^ substr($keystream, $blk_off, $take);
-        $i   += $take;
-    }
-    return $out;
-}
-
-# Run ffmpeg to extract raw FLAC from a decrypted FLAC-in-MP4 file, then call $cb
-sub _demux_flac_mp4 {
-    my ($m4a_file, $cb) = @_;
-
-    my $ffmpeg = _find_ffmpeg();
-    unless ($ffmpeg) {
-        $log->warn("YANDEX FLAC: ffmpeg not found, serving m4a as-is (may not play)");
-        $cb->('file://' . $m4a_file, undef);
-        return;
-    }
-
-    (my $flac_file = $m4a_file) =~ s/\.[^.]+$/.flac/;
-    my $ret = system($ffmpeg, '-y', '-i', $m4a_file,
-                     '-vn', '-acodec', 'copy', '-f', 'flac', $flac_file);
-    unlink($m4a_file);
-    if ($ret != 0 || !-f $flac_file) {
-        unlink($flac_file) if -f $flac_file;
-        $cb->(undef, "ffmpeg demux failed with exit " . ($ret >> 8));
-        return;
-    }
-    $log->info("YANDEX FLAC: Demuxed flac-mp4 -> $flac_file");
-    $cb->('file://' . $flac_file, undef);
 }
 
 sub _find_ffmpeg {
@@ -1120,19 +975,6 @@ sub _find_ffmpeg {
         my $p = ($^O eq 'MSWin32') ? "$dir\\$ffmpeg_name" : "$dir/$ffmpeg_name";
         if (-e $p || ($^O ne 'MSWin32' && -x $p)) {
             return $p;
-        }
-    }
-    return undef;
-}
-
-sub _find_curl {
-    for my $path ('/usr/bin/curl', '/usr/local/bin/curl', '/opt/homebrew/bin/curl', '/opt/local/bin/curl') {
-        return $path if -x $path;
-    }
-    if ($^O eq 'MSWin32') {
-        for my $dir (split /;/, $ENV{PATH} || '') {
-            my $p = "$dir\\curl.exe";
-            return $p if -e $p;
         }
     }
     return undef;
