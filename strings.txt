@@ -4,6 +4,7 @@ PLUGIN_YANDEX
 
 PLUGIN_YANDEX_DESC
 	EN	Play channels from Yandex Music
+	RU	Воспроизведение каналов Яндекс Музыки
 
 PLUGIN_YANDEX_MUSIC_TOKEN
 	EN	Yandex Music Token
@@ -11,7 +12,7 @@ PLUGIN_YANDEX_MUSIC_TOKEN
 
 PLUGIN_YANDEX_MUSIC_TOKEN_DESC
 	EN	Enter your Yandex Music OAuth token to access your personal collection and recommendations.
-	RU	Добавьте OAuth token.
+	RU	Введите ваш OAuth токен Яндекс Музыки для доступа к вашей коллекции и рекомендациям.
 
 PLUGIN_YANDEX_LOGGED_IN_AS
 	EN	Logged in as:
@@ -648,6 +649,7 @@ PLUGIN_YANDEX_SEARCH_PODCASTS
 
 PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
 	EN	Show a separate category for Podcasts and Audiobooks in search results.
+	RU	Показывать отдельную категорию для подкастов и аудиокниг в результатах поиска.
 PLUGIN_YANDEX_ENABLE_YNISON
 	EN	Enable Ynison (Casting, Experimental)
 	RU	Включить поддержку Ynison (Casting, Экспериментально)
