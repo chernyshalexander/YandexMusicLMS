@@ -40,6 +40,9 @@
 ##### Лицензия
 Лицензия MIT. Подробности в LICENSE. Яндекс Музыка и логотип являются товарными знаками ООО «Яндекс». Данный плагин не связан с компанией Яндекс.
 
+---
+
+
 #### Yandex Music for Lyrion Music Server
 A plugin to play Yandex Music on Lyrion Music Server (LMS).
 
