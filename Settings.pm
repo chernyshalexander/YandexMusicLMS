@@ -28,7 +28,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language));
 }
 
 sub handler {
@@ -73,6 +73,7 @@ sub handler {
 		$params->{pref_show_new_playlists}             ||= 0;
 		$params->{pref_show_audiobooks_in_collection}  ||= 0;
 		$params->{pref_search_podcasts}                ||= 0;
+		$params->{pref_enable_ynison}                  ||= 0;
 		$params->{pref_show_wave_wizard}               ||= 0;
 		$params->{pref_wizard_station_type}            //= 'activity';
 		$params->{pref_wizard_cat_diversity}           ||= 0;
@@ -83,7 +84,7 @@ sub handler {
 		my $oldToken = $prefs->get('token');
 		my $placeholder = string('PLUGIN_YANDEX_TOKEN_SET') || '(Token is set)';
 
-		$log->info("Yandex Settings: Save triggered. Token param: " . ($token || 'none'));
+		$log->info("Yandex Settings: Save triggered. Token param: " . ($token || 'none') . ", enable_ynison: " . ($params->{pref_enable_ynison} || 0));
 
 		# Handle placeholder case
 		if ($token && ($token eq $placeholder || $token eq '(Token is set)')) {
@@ -147,6 +148,8 @@ sub beforeRender {
 		$params->{pref_tokenValue} = '';
 	}
 
+	$params->{enable_ynison} = $prefs->get('enable_ynison') // 0;
+	
 	my $deps = Plugins::yandex::API::check_dependencies();
 	$params->{rijndael_missing} = !$deps->{rijndael};
 	$params->{ffmpeg_missing}   = !$deps->{ffmpeg};

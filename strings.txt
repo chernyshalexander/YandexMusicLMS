@@ -452,8 +452,8 @@ PLUGIN_YANDEX_MODE_LANG_ANY
 	RU	Любой язык
 
 PLUGIN_YANDEX_WAVE_WIZARD
-	EN	Build My Vibe
-	RU	Собери свою волну
+	EN	Wave Constructor
+	RU	Конструктор волны
 
 PLUGIN_YANDEX_MY_PRESETS
 	EN	My Presets
@@ -532,11 +532,11 @@ PLUGIN_YANDEX_PRESETS_CLEAR
 	RU	Очистить все пресеты
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD
-	EN	Show Build My Vibe
+	EN	Show Wave Constructor
 	RU	Показывать конструктор волны
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC
-	EN	Show Build My Vibe in the Radio Stations menu
+	EN	Show Wave Constructor in the Radio menu
 	RU	Показывать конструктор волны в разделе Радио
 
 PLUGIN_YANDEX_WIZARD_STATION_TYPE
@@ -548,15 +548,15 @@ PLUGIN_YANDEX_WIZARD_STATION_TYPE_DESC
 	RU	Определяет, какой тип радиостанции конструктор предложит на первом шаге
 
 PLUGIN_YANDEX_WIZARD_NO_STATION_STEP
-	EN	My Vibe only (skip radio station step)
+	EN	My Wave only (skip station step)
 	RU	Только Моя волна (без шага выбора станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_HINT
-	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including radio station type selection).
+	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including station type selection).
 	RU	Выберите категории для шагов конструктора. Всего должно быть не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_MIN3
-	EN	At least 3 steps must be selected in total (including radiostation type selection).
+	EN	At least 3 steps must be selected in total (including station type selection).
 	RU	Суммарно должно быть выбрано не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CAT_ACTIVITY
@@ -650,5 +650,11 @@ PLUGIN_YANDEX_SEARCH_PODCASTS
 PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
 	EN	Show a separate category for Podcasts and Audiobooks in search results.
 	RU	Показывать отдельную категорию для подкастов и аудиокниг в результатах поиска.
+PLUGIN_YANDEX_ENABLE_YNISON
+	EN	Enable Ynison (Casting, Experimental)
+	RU	Включить поддержку Ynison (Casting, Экспериментально)
 
+PLUGIN_YANDEX_ENABLE_YNISON_DESC
+	EN	Make this player visible in the Yandex Music app for remote control and casting.
+	RU	Сделать этот плеер видимым в приложении Яндекс Музыка для управления и трансляции.
 
