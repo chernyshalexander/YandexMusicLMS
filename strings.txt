@@ -532,11 +532,11 @@ PLUGIN_YANDEX_PRESETS_CLEAR
 	RU	Очистить все пресеты
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD
-	EN	Show Wave Constructor
+	EN	Show Build My Vibe
 	RU	Показывать конструктор волны
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC
-	EN	Show Wave Constructor in the Radio menu
+	EN	Show Build My Vibe in the Radio Stations menu
 	RU	Показывать конструктор волны в разделе Радио
 
 PLUGIN_YANDEX_WIZARD_STATION_TYPE
@@ -548,15 +548,15 @@ PLUGIN_YANDEX_WIZARD_STATION_TYPE_DESC
 	RU	Определяет, какой тип радиостанции конструктор предложит на первом шаге
 
 PLUGIN_YANDEX_WIZARD_NO_STATION_STEP
-	EN	My Wave only (skip station step)
+	EN	My Vibe only (skip radio station step)
 	RU	Только Моя волна (без шага выбора станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_HINT
-	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including station type selection).
+	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including radio station type selection).
 	RU	Выберите категории для шагов конструктора. Всего должно быть не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_MIN3
-	EN	At least 3 steps must be selected in total (including station type selection).
+	EN	At least 3 steps must be selected in total (including radiostation type selection).
 	RU	Суммарно должно быть выбрано не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CAT_ACTIVITY
