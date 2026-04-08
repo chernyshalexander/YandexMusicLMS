@@ -452,8 +452,8 @@ PLUGIN_YANDEX_MODE_LANG_ANY
 	RU	Любой язык
 
 PLUGIN_YANDEX_WAVE_WIZARD
-	EN	Wave Constructor
-	RU	Конструктор волны
+	EN	Build My Vibe
+	RU	Собери свою волну
 
 PLUGIN_YANDEX_MY_PRESETS
 	EN	My Presets
@@ -650,4 +650,5 @@ PLUGIN_YANDEX_SEARCH_PODCASTS
 PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
 	EN	Show a separate category for Podcasts and Audiobooks in search results.
 	RU	Показывать отдельную категорию для подкастов и аудиокниг в результатах поиска.
+
 
