@@ -11,7 +11,7 @@
 - **My Vibe by Artist** — персональное радио в стиле выбранного исполнителя.
 - Умные плейлисты и миксы. Поиск по трекам, альбомам, исполнителям, подкастам и аудиокнигам.
 - Отображение «Горячих треков» и «Новых релизов» в главном меню (при желании).
-- Поддержка высококачественного аудио: FLAC (включая FLAC-in-MP4) и AAC-MP4 (включая AAC-MP4 и HE-AAC).
+- Поддержка высококачественного аудио: **FLAC** (включая FLAC-in-MP4) и **AAC** (включая AAC-MP4 и HE-AAC).
 - Поддержка потоков MP3 (до 320 кбит/с) с серверной буферизацией.
 - Передача обратной связи (feedback) для улучшения персональных рекомендаций.
 
@@ -22,7 +22,7 @@
 3. **Вручную:** используйте [yandex-music-token](https://github.com/MarshalX/yandex-music-token) и вставьте токен в поле настроек.
 
 ##### В планах (TODO)
-- поддержка протокола Ynison
+- Поддержка протокола Ynison.
 - Работа с несколькими учётными записями.
 - Более глубокая интеграция с Lyrion Music Server.
 
@@ -30,6 +30,9 @@
 За идеи и вдохновение: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 
 ##### Установка
+Плагин доступен в стандартном списке плагинов Lyrion Music Server. Перейдите в настройки сервера → **Управление плагинами** (Manage Plugins), найдите **Yandex Music** и установите его. После установки перезапустите Lyrion Music Server.
+
+Чтобы добавить репозиторий вручную:  
 В настройках LMS (Plugins → Additional Repositories) добавьте ссылку:  
 Стабильная версия: `https://chernyshalexander.github.io/YandexMusicLMS/public.xml`  
 Версия в разработке: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
@@ -61,7 +64,7 @@ An OAuth token is required. Ways to obtain it:
 3. **Manual:** Use [yandex-music-token](https://github.com/MarshalX/yandex-music-token) and paste the token manually.
 
 ##### Roadmap (TODO)
-- Ynison protocol support
+- Ynison protocol support.
 - Multiple account support.
 - Deeper integration with Lyrion Music Server.
 
@@ -69,6 +72,9 @@ An OAuth token is required. Ways to obtain it:
 For ideas and inspiration: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
 
 ##### Installation
+The plugin is available in the official plugin directory of Lyrion Music Server. Go to the server settings, click **Manage Plugins**, search for **Yandex Music** and install it. Restart Lyrion Music Server after installation.
+
+To add the plugin repository manually:  
 In LMS settings (Plugins → Additional Repositories) add:  
 Stable: `https://chernyshalexander.github.io/YandexMusicLMS/public.xml`  
 Dev: `https://chernyshalexander.github.io/YandexMusicLMS/dev.xml`
