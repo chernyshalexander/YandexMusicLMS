@@ -10,15 +10,39 @@
 </div>
 [% END %]
 
-[% IF pref_fullName %]
-[% WRAPPER setting title="PLUGIN_YANDEX_LOGGED_IN_AS" %]
-<div class="prefDesc"><b>[% pref_fullName | html %]</b></div>
+[% IF accounts.size > 0 %]
+[% WRAPPER setting title="PLUGIN_YANDEX_ACCOUNTS" %]
+<table style="width:100%; border-collapse:collapse;">
+    <thead>
+        <tr style="border-bottom:1px solid #ddd;">
+            <th style="text-align:left; padding:6px 8px;">[% "PLUGIN_YANDEX_ACCOUNT_NAME" | string %]</th>
+            <th style="padding:6px 8px;"></th>
+        </tr>
+    </thead>
+    <tbody>
+    [% FOREACH acc = accounts %]
+        <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px 8px;">
+                <b>[% acc.name | html %]</b>
+                [% IF acc.login %]<br><span style="font-size:0.85em; color:#666;">[% acc.login | html %]</span>[% END %]
+            </td>
+            <td style="padding:6px 8px; text-align:right;">
+                <input type="submit" name="delete_[% acc.userId | html %]"
+                    value="[% 'PLUGIN_YANDEX_DELETE_ACCOUNT' | string %]"
+                    class="stdbutton"
+                    onclick="return confirm('[% 'PLUGIN_YANDEX_DELETE_CONFIRM' | string %]');">
+            </td>
+        </tr>
+    [% END %]
+    </tbody>
+</table>
 [% END %]
 [% END %]
 
-[% WRAPPER setting title="PLUGIN_YANDEX_MUSIC_TOKEN" desc="PLUGIN_YANDEX_MUSIC_TOKEN_DESC" %]
+[% WRAPPER setting title="PLUGIN_YANDEX_ADD_ACCOUNT" desc="PLUGIN_YANDEX_ADD_ACCOUNT_DESC" %]
 <div class="prefDesc">
-    <input type="password" name="pref_token" id="pref_token" value="[% pref_tokenValue | html %]" class="stdedit">
+    <input type="password" name="new_account_token" id="new_account_token" value="" class="stdedit"
+        placeholder="[% 'PLUGIN_YANDEX_TOKEN_PLACEHOLDER' | string %]">
 </div>
 [% END %]
 
