@@ -76,7 +76,15 @@ sub handleFavorites {
             url  => \&handleLikedPlaylists,
             passthrough => [$yandex_client],
             image => 'html/images/playlists.png',
-        }
+        },
+        {
+            name      => cstring($client, 'PLUGIN_YANDEX_WAVE_FAVORITES'),
+            type      => 'audio',
+            url       => 'yandexmusic://rotor_session/user:onyourwave?diversity=favorite',
+            play      => 'yandexmusic://rotor_session/user:onyourwave?diversity=favorite',
+            on_select => 'play',
+            image     => 'plugins/yandex/html/images/radio.png',
+        },
     );
 
     $cb->({

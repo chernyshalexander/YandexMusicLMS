@@ -452,8 +452,8 @@ PLUGIN_YANDEX_MODE_LANG_ANY
 	RU	Любой язык
 
 PLUGIN_YANDEX_WAVE_WIZARD
-	EN	Wave Constructor
-	RU	Конструктор волны
+	EN	Build My Vibe
+	RU	Построй свою волну
 
 PLUGIN_YANDEX_MY_PRESETS
 	EN	My Presets
@@ -532,12 +532,12 @@ PLUGIN_YANDEX_PRESETS_CLEAR
 	RU	Очистить все пресеты
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD
-	EN	Show Wave Constructor
+	EN	Show Build My Vibe
 	RU	Показывать конструктор волны
 
 PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC
-	EN	Show Wave Constructor in the Radio menu
-	RU	Показывать конструктор волны в разделе Радио
+	EN	Show Build My Vibe in the Radio Stations menu
+	RU	Показывать конструктор волны в разделе Радиоcтанции
 
 PLUGIN_YANDEX_WIZARD_STATION_TYPE
 	EN	Station type (choose one)
@@ -548,15 +548,15 @@ PLUGIN_YANDEX_WIZARD_STATION_TYPE_DESC
 	RU	Определяет, какой тип радиостанции конструктор предложит на первом шаге
 
 PLUGIN_YANDEX_WIZARD_NO_STATION_STEP
-	EN	My Wave only (skip station step)
+	EN	My Vibe only (skip radio station step)
 	RU	Только Моя волна (без шага выбора станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_HINT
-	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including station type selection).
+	EN	Select categories for the wizard steps. There must be at least 3 steps in total (including radio station type selection).
 	RU	Выберите категории для шагов конструктора. Всего должно быть не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CATS_MIN3
-	EN	At least 3 steps must be selected in total (including station type selection).
+	EN	At least 3 steps must be selected in total (including radio station type selection).
 	RU	Суммарно должно быть выбрано не менее 3 этапов (включая выбор типа станции)
 
 PLUGIN_YANDEX_WIZARD_CAT_ACTIVITY
@@ -657,4 +657,44 @@ PLUGIN_YANDEX_ENABLE_YNISON
 PLUGIN_YANDEX_ENABLE_YNISON_DESC
 	EN	Make this player visible in the Yandex Music app for remote control and casting.
 	RU	Сделать этот плеер видимым в приложении Яндекс Музыка для управления и трансляции.
+
+PLUGIN_YANDEX_ACCOUNTS
+	EN	Accounts
+	RU	Аккаунты
+
+PLUGIN_YANDEX_ACCOUNT_NAME
+	EN	Account
+	RU	Аккаунт
+
+PLUGIN_YANDEX_ADD_ACCOUNT
+	EN	Add Account
+	RU	Добавить аккаунт
+
+PLUGIN_YANDEX_ADD_ACCOUNT_DESC
+	EN	Enter an OAuth token to add another Yandex Music account.
+	RU	Введите OAuth токен для добавления ещё одного аккаунта Яндекс Музыки.
+
+PLUGIN_YANDEX_DELETE_ACCOUNT
+	EN	Delete
+	RU	Удалить
+
+PLUGIN_YANDEX_DELETE_CONFIRM
+	EN	Remove this account?
+	RU	Удалить этот аккаунт?
+
+PLUGIN_YANDEX_TOKEN_PLACEHOLDER
+	EN	Paste OAuth token here
+	RU	Вставьте OAuth токен сюда
+
+PLUGIN_YANDEX_SWITCH_ACCOUNT
+	EN	Account
+	RU	Аккаунт
+
+PLUGIN_YANDEX_NO_ACCOUNTS
+	EN	No accounts configured. Please add a token in plugin settings.
+	RU	Аккаунты не настроены. Добавьте токен в настройках плагина.
+
+PLUGIN_YANDEX_WAVE_FAVORITES
+	EN	My Vibe (Favorites)
+	RU	Моя волна (Любимое)
 

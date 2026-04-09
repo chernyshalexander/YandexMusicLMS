@@ -9,15 +9,6 @@ use Slim::Utils::Log;
 
 my $log   = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
-#$prefs->init({
-#    token => '',
-#    pref_fullName => '',
-#    menuLocation => 'radio',
-#    streamingQuality => 'highest',
-#    descriptionInTitle => 0,
-#    secondLineText => 'description',
-#    translitSearch => 1
-#});
 
 sub name {
     return 'PLUGIN_YANDEX';
@@ -34,25 +25,50 @@ sub prefs {
 sub handler {
 	my ($class, $client, $params, $callback, @args) = @_;
 
+	# Handle account deletion
+	foreach my $key (keys %$params) {
+		if ($key =~ /^delete_(.+)$/) {
+			my $userId   = $1;
+			my $accounts = $prefs->get('accounts') || {};
+			if (exists $accounts->{$userId}) {
+				delete $accounts->{$userId};
+				$prefs->set('accounts', $accounts);
+				Plugins::yandex::Plugin::_remove_api_client($userId);
+				$log->info("Yandex Settings: Deleted account userId=$userId");
+			}
+		}
+	}
+
+	# OAuth callback — token arrives via URL parameter (bookmarklet/drag-drop)
 	if ($params->{save_token}) {
 		my $token = $params->{token};
 		if ($token) {
-			$prefs->set('token', $token);
-			$log->info("Yandex Settings: Token captured via URL parameter.");
+			$log->info("Yandex Settings: Token received via OAuth callback, validating...");
 
-			# Validate in background
 			require Plugins::yandex::API;
 			my $yandex_client = Plugins::yandex::API->new($token);
 			$yandex_client->init(
 				sub {
 					my $client_instance = shift;
-					my $me = $client_instance->{me} || {};
-					my $name = _format_full_name($me);
-					$prefs->set('pref_fullName', $name || 'User');
-					$log->info("Yandex Settings: Background validation successful for $name");
+					my $me   = $client_instance->{me} || {};
+					my $userId = $me->{uid};
+					my $name   = _format_full_name($me);
+
+					if ($userId) {
+						my $accounts = $prefs->get('accounts') || {};
+						$accounts->{$userId} = {
+							token => $token,
+							login => $me->{login} || '',
+							name  => $name || 'Account',
+						};
+						$prefs->set('accounts', $accounts);
+						$log->info("Yandex Settings: Account added/updated: userId=$userId name=$name");
+						# Initialize API client for this account
+						Plugins::yandex::Plugin::_init_api_client($userId);
+					}
 				},
 				sub {
-					$log->error("Yandex Settings: Background validation failed.");
+					$log->error("Yandex Settings: OAuth token validation failed.");
 				}
 			);
 
@@ -66,7 +82,7 @@ sub handler {
 	}
 
 	if ($params->{saveSettings}) {
-		# Handle checkbox values - unchecked checkboxes don't appear in POST data (like Spotty-Plugin does)
+		# Handle checkbox values
 		$params->{pref_remove_duplicates}              ||= 0;
 		$params->{pref_show_chart}                     ||= 0;
 		$params->{pref_show_new_releases}              ||= 0;
@@ -80,58 +96,47 @@ sub handler {
 		$params->{pref_wizard_cat_mood}                ||= 0;
 		$params->{pref_wizard_cat_language}            ||= 0;
 
-		my $token = $params->{pref_token};
-		my $oldToken = $prefs->get('token');
-		my $placeholder = string('PLUGIN_YANDEX_TOKEN_SET') || '(Token is set)';
+		# Handle adding a new account via token field
+		my $newToken = $params->{new_account_token};
+		if ($newToken && $newToken !~ /^\s*$/) {
+			$log->info("Yandex Settings: Adding new account, validating token...");
 
-		$log->info("Yandex Settings: Save triggered. Token param: " . ($token || 'none') . ", enable_ynison: " . ($params->{pref_enable_ynison} || 0));
-
-		# Handle placeholder case
-		if ($token && ($token eq $placeholder || $token eq '(Token is set)')) {
-			if ($prefs->get('pref_fullName') && $oldToken) {
-				$log->info("Yandex Settings: Token unchanged (placeholder detected).");
-				delete $params->{pref_token};
-				$token = undef;
-			} else {
-				$log->info("Yandex Settings: Name missing, re-validating with existing token...");
-				$token = $oldToken;
-			}
-		} 
-
-		# If we have a token and (it's new OR name is missing), validate it
-		if ($token && ($token ne ($oldToken || '') || !$prefs->get('pref_fullName'))) {
-			$log->info("Yandex Settings: Validating token...");
-			
 			require Plugins::yandex::API;
-			my $yandex_client = Plugins::yandex::API->new($token);
-			
+			my $yandex_client = Plugins::yandex::API->new($newToken);
+
 			$yandex_client->init(
 				sub {
 					my $client_instance = shift;
-					my $me = $client_instance->{me} || {};
-					my $name = _format_full_name($me);
-					
-					$prefs->set('token', $token);
-					$prefs->set('pref_fullName', $name || 'User');
-					$log->info("Yandex Settings: Login successful for " . $prefs->get('pref_fullName'));
-					
-					# Continue with standard handler
+					my $me     = $client_instance->{me} || {};
+					my $userId = $me->{uid};
+					my $name   = _format_full_name($me);
+
+					if ($userId) {
+						my $accounts = $prefs->get('accounts') || {};
+						$accounts->{$userId} = {
+							token => $newToken,
+							login => $me->{login} || '',
+							name  => $name || 'Account',
+						};
+						$prefs->set('accounts', $accounts);
+						$log->info("Yandex Settings: Account added: userId=$userId ($name)");
+						Plugins::yandex::Plugin::_init_api_client($userId);
+					}
+
 					$class->beforeRender($params);
 					my $body = $class->SUPER::handler($client, $params);
 					$callback->($client, $params, $body, @args);
 				},
 				sub {
 					my $error = shift;
-					$log->error("Yandex Settings: Login failed: $error");
+					$log->error("Yandex Settings: Token validation failed: $error");
 					$params->{warning} = string('PLUGIN_YANDEX_AUTH_FAILED');
-					
-					# Re-render with warning
 					$class->beforeRender($params);
 					my $body = $class->SUPER::handler($client, $params);
 					$callback->($client, $params, $body, @args);
 				}
 			);
-			return; # Wait for async callback
+			return;  # Wait for async callback
 		}
 	}
 
@@ -141,29 +146,35 @@ sub handler {
 
 sub beforeRender {
 	my ($class, $params) = @_;
-	$params->{pref_fullName} = $prefs->get('pref_fullName');
-	if ($prefs->get('token')) {
-		$params->{pref_tokenValue} = string('PLUGIN_YANDEX_TOKEN_SET') || '(Token is set)';
-	} else {
-		$params->{pref_tokenValue} = '';
-	}
 
-	$params->{enable_ynison} = $prefs->get('enable_ynison') // 0;
-	
+	# Build accounts list for template
+	my $accounts = $prefs->get('accounts') || {};
+	my @accounts_list;
+	foreach my $userId (sort keys %$accounts) {
+		next if $userId eq 'migrating';
+		my $acc = $accounts->{$userId};
+		push @accounts_list, {
+			userId => $userId,
+			name   => $acc->{name} || $acc->{login} || $userId,
+			login  => $acc->{login} || '',
+		};
+	}
+	$params->{accounts} = \@accounts_list;
+
 	my $deps = Plugins::yandex::API::check_dependencies();
 	$params->{rijndael_missing} = !$deps->{rijndael};
 	$params->{ffmpeg_missing}   = !$deps->{ffmpeg};
 
-	$log->info("Yandex Settings: beforeRender. pref_fullName=" . ($params->{pref_fullName} || 'none') . " pref_tokenValue=" . $params->{pref_tokenValue});
+	$log->info("Yandex Settings: beforeRender. accounts=" . scalar(@accounts_list));
 }
 
 sub _format_full_name {
 	my $me = shift;
-	
-	my $login = $me->{login} || '';
+
+	my $login   = $me->{login}       || '';
 	my $display = $me->{displayName} || '';
-	my $second = $me->{secondName} || '';
-	
+	my $second  = $me->{secondName}  || '';
+
 	my $name = $login;
 	if ($display || $second) {
 		my $full = $display;
@@ -172,7 +183,7 @@ sub _format_full_name {
 		}
 		$name .= " ($full)";
 	}
-	
+
 	return $name;
 }
 

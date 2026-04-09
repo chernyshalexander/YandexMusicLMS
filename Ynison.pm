@@ -40,9 +40,10 @@ use constant {
 }
 
 sub new {
-    my ($class, $client) = @_;
+    my ($class, $client, $token, $user_id) = @_;
 
     return unless $client;
+    return unless $token && $user_id;
 
     my $self = bless {
         client        => $client,
@@ -53,8 +54,8 @@ sub new {
         is_connected  => 0,
         current_state => STATE_DISCONNECTED,
         device_id     => undef,
-        oauth_token   => undef,
-        user_id       => undef,
+        oauth_token   => $token,
+        user_id       => $user_id,
         last_playable_list  => [],   # Cache last playable list from Yandex
         last_state_version  => undef,
         syncing_from_yandex => 0,    # Prevent update_state() echo loop during Yandex sync
@@ -71,14 +72,10 @@ sub init {
     my $client = $self->{client};
     $log->info("Ynison: Initializing protocol for player: " . $client->name());
 
-    my $yandex_client = Plugins::yandex::Plugin->getClient();
-    if (!$yandex_client || !$yandex_client->get_me()) {
-        $log->error("Ynison: Yandex client not fully initialized yet.");
+    if (!$self->{oauth_token} || !$self->{user_id}) {
+        $log->error("Ynison: No token or user_id provided.");
         return;
     }
-
-    $self->{oauth_token} = $yandex_client->{token};
-    $self->{user_id} = $yandex_client->get_me()->{uid};
 
     # Use a persistent random device ID per player if not already set
     if (!$self->{device_id}) {
