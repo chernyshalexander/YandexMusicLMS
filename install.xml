@@ -12,7 +12,7 @@
     </targetApplication>
     <optionsURL>plugins/yandex/settings/basic.html</optionsURL>
     <icon>plugins/yandex/html/images/yandex_svg.png</icon>
-    <creator>Alexander Charnysh</creator>
+    <creator>Alexander Chernysh</creator>
     <email>chernysh.a@gmail.com</email>
     <homepageURL>https://github.com/chernyshalexander/YandexMusicLMS</homepageURL>
 </extension>
