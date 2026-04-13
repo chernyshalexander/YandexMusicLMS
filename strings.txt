@@ -75,16 +75,32 @@ PLUGIN_YANDEX_AES_BACKEND_DESC
 	RU	Бэкенд AES-128-CTR для дешифрования потоков FLAC и AAC.
 
 PLUGIN_YANDEX_AES_RIJNDAEL
-	EN	Rijndael (Crypt::Rijndael)
-	RU	Rijndael (Crypt::Rijndael)
+	EN	Crypt::Rijndael
+	RU	Crypt::Rijndael
 
 PLUGIN_YANDEX_AES_INTERNAL
 	EN	Internal (pure Perl)
 	RU	Встроенный (чистый Perl)
 
+PLUGIN_YANDEX_DEMUX_BACKEND
+	EN	FLAC-in-MP4 Demux Backend
+	RU	Бэкенд демуксинга FLAC-in-MP4
+
+PLUGIN_YANDEX_DEMUX_BACKEND_DESC
+	EN	FLAC extraction from MP4 container: Internal: pure Perl demuxing (FFmpeg not required). FFmpeg uses the external transcoder.
+	RU	Способ извлечения FLAC из контейнера MP4: Встроенный - чистый Perl (без ffmpeg). Через FFmpeg - внешний транскодер.
+
+PLUGIN_YANDEX_DEMUX_INTERNAL
+	EN	Internal (pure Perl, no ffmpeg)
+	RU	Встроенный (чистый Perl, без ffmpeg)
+
+PLUGIN_YANDEX_DEMUX_FFMPEG
+	EN	FFmpeg (external)
+	RU	FFmpeg (внешний)
+
 PLUGIN_YANDEX_FFMPEG_MISSING
-	EN	FFmpeg is missing (required for FLAC/AAC in MP4)
-	RU	Отсутствует FFmpeg (нужен для FLAC/AAC в MP4)
+	EN	FFmpeg is missing (required for AAC-in-MP4, recommended for FLAC-in-MP4)
+	RU	Отсутствует FFmpeg (обязателен для AAC-in-MP4, рекомендуется для FLAC-in-MP4)
 
 PLUGIN_YANDEX_AUTH_DRAG_DROP
 	EN	Drag & Drop (Alternative)

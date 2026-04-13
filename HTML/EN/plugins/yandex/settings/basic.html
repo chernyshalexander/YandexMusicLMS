@@ -140,7 +140,7 @@
         <option value="128" [% IF prefs.max_bitrate==128 %]selected[% END %]>128 kbps MP3</option>
         <option value="192" [% IF prefs.max_bitrate==192 %]selected[% END %]>192 kbps MP3</option>
         <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps MP3</option>
-        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)/256 kbps AAC</option>
+        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)[% IF ffmpeg_available %]/256 kbps AAC[% END %]</option>
     </select>
 </div>
 [% END %]
@@ -156,6 +156,20 @@
 [% ELSE %]
     <input type="hidden" name="pref_aes_backend" value="internal">
     <span style="color:#666;">[% "PLUGIN_YANDEX_AES_INTERNAL" | string %]</span>
+[% END %]
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_DEMUX_BACKEND" desc="PLUGIN_YANDEX_DEMUX_BACKEND_DESC" %]
+<div class="prefDesc">
+[% IF ffmpeg_available %]
+    <select name="pref_demux_backend" id="pref_demux_backend" class="stdedit">
+        <option value="internal" [% IF !prefs.demux_backend || prefs.demux_backend == 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_INTERNAL" | string %]</option>
+        <option value="ffmpeg" [% IF prefs.demux_backend == 'ffmpeg' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_FFMPEG" | string %]</option>
+    </select>
+[% ELSE %]
+    <input type="hidden" name="pref_demux_backend" value="internal">
+    <span style="color:#666;">[% "PLUGIN_YANDEX_DEMUX_INTERNAL" | string %]</span>
 [% END %]
 </div>
 [% END %]
