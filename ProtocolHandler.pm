@@ -94,14 +94,18 @@ sub new {
                 };
                 $log->error("YANDEX: AES cipher init failed: $@") if $@;
             }
-            # Set up MP4Demux for flac-mp4 with internal demux backend
-            if ($meta->{codec} && $meta->{codec} eq 'flac-mp4' && ${*$sock}{yandex_cipher}) {
+            # Set up MP4Demux for flac-mp4 and aac-mp4 with internal demux backend
+            if ($meta->{codec} && ($meta->{codec} eq 'flac-mp4' || $meta->{codec} =~ /-mp4$/) && ${*$sock}{yandex_cipher}) {
                 my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
                 if ($demux_backend eq 'internal') {
                     eval {
                         require Plugins::yandex::MP4Demux;
-                        ${*$sock}{yandex_demux} = Plugins::yandex::MP4Demux->new();
-                        $log->info("YANDEX: MP4Demux (internal) enabled for flac-mp4 track $track_id");
+                        my $demux_codec = ($meta->{codec} =~ /aac/) ? 'aac' : 'flac';
+                        ${*$sock}{yandex_demux} = Plugins::yandex::MP4Demux->new(codec => $demux_codec);
+                        if ($demux_codec eq 'aac') {
+                            $content_type = 'audio/aac';
+                        }
+                        $log->info("YANDEX: MP4Demux (internal) enabled for $meta->{codec} track $track_id");
                     };
                     $log->error("YANDEX: MP4Demux init failed: $@") if $@;
                 }
@@ -366,8 +370,12 @@ sub formatOverride {
                 $log->info("YANDEX: formatOverride -> ymf for $url (flac-mp4, ffmpeg demux)");
                 return 'ymf';
             }
-            # aac-mp4, he-aac-mp4: ffmpeg transcodes to FLAC or MP3 via custom-convert.conf yma rule
+            # aac-mp4, he-aac-mp4: pure-Perl demux -> aac, ffmpeg transcoding -> yma
             if ($codec =~ /-mp4$/) {
+                if (($prefs->get('demux_backend') || 'ffmpeg') eq 'internal') {
+                    $log->info("YANDEX: formatOverride -> aac for $url ($codec, internal demux)");
+                    return 'aac';
+                }
                 $log->info("YANDEX: formatOverride -> yma for $url (codec=$codec)");
                 return 'yma';
             }
@@ -394,8 +402,11 @@ sub getFormatForURL {
                 return 'flc' if ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal';
                 return 'ymf';
             }
-            # aac-mp4, he-aac-mp4: ffmpeg transcoding via yma rule
-            return 'yma' if $meta->{codec} =~ /-mp4$/;
+            # aac-mp4, he-aac-mp4: pure-Perl demux -> aac, ffmpeg transcoding -> yma
+            if ($meta->{codec} =~ /-mp4$/) {
+                return 'aac' if ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal';
+                return 'yma';
+            }
             # plain FLAC: decrypted via _sysread()
             return 'flc' if $meta->{codec} eq 'flac';
         }
@@ -877,7 +888,19 @@ sub _sysread {
             my $plain = _aes_ctr_xor($cipher, $raw, $sp);
             ${*$self}{yandex_offset} = $sp + $n;
 
-            $flac_out .= $demux->process($plain);
+            my $demuxed = $demux->process($plain);
+            if (length($demuxed) > 0) {
+                if (!${*$self}{_first_chunk_logged}++) {
+                    my $sizes = '';
+                    if ($demux->{aac_sizes} && ref $demux->{aac_sizes} eq 'ARRAY') {
+                        my $count = scalar(@{$demux->{aac_sizes}});
+                        my $last = $count > 5 ? 4 : $count - 1;
+                        $sizes = " (Table sizes: " . join(", ", @{$demux->{aac_sizes}}[0..$last]) . ")";
+                    }
+                    $log->warn("YANDEX: First demuxed chunk (" . length($demuxed) . " bytes). Start HEX: " . unpack("H14", $demuxed) . $sizes);
+                }
+                $flac_out .= $demuxed;
+            }
         }
 
         return 0 unless length($flac_out);  # EOF with no pending output

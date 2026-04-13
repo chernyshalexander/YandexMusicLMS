@@ -49,22 +49,26 @@ PLUGIN_YANDEX_AUTH_SUCCESS_MSG
 PLUGIN_YANDEX_AUTH_FAILED_MSG
 	EN	Authorization failed.
 	RU	Ошибка авторизации.
-
+        
 PLUGIN_YANDEX_DEPENDENCY_WARNING
-	EN	Warning: Missing critical dependencies!
-	RU	Внимание: Обнаружены проблемы с зависимостями!
+	EN	FFmpeg is missing - Built-in demuxing will be used.
+	RU	FFmpeg не найден - используется встроенный демуксинг.
+
+PLUGIN_YANDEX_FFMPEG_MISSING
+	EN	FFmpeg is not installed. Built-in pure-Perl demuxing will be used. This may cause higher CPU usage and delays on slow processors.
+	RU	FFmpeg не установлен. Будет использован встроенный демуксинг на Perl. На медленных процессорах возможны повышенная нагрузка на CPU и задержки при запуске трека.
 
 PLUGIN_YANDEX_RIJNDAEL_MISSING
-	EN	Crypt::Rijndael is not installed
-	RU	Crypt::Rijndael не установлен
+	EN	Crypt::Rijndael is not installed.
+	RU	Crypt::Rijndael не установлен.
 
 PLUGIN_YANDEX_RIJNDAEL_MISSING_TITLE
-	EN	Crypt::Rijndael not found — using built-in AES
-	RU	Crypt::Rijndael не найден — используется встроенный AES
+	EN	Crypt::Rijndael not found - using built-in AES
+	RU	Crypt::Rijndael не найден - используется встроенный AES
 
 PLUGIN_YANDEX_RIJNDAEL_MISSING_INFO
 	EN	Crypt::Rijndael is not installed. The built-in pure-Perl AES implementation will be used for stream decryption. This may cause delays and higher CPU usage on slow processors. To install: sudo apt install libcrypt-rijndael-perl
-	RU	Crypt::Rijndael не установлен. Для дешифрования потоков будет использована встроенная реализация AES на чистом Perl. На медленных процессорах это может привести к задержкам и повышенному расходу ресурсов. Для установки: sudo apt install libcrypt-rijndael-perl
+	RU	Crypt::Rijndael не установлен. Для дешифрования потоков будет использована встроенная реализация AES на Perl. На медленных процессорах возможны повышенная нагрузка на CPU и задержки при запуске трека. Для установки: sudo apt install libcrypt-rijndael-perl
 
 PLUGIN_YANDEX_AES_BACKEND
 	EN	AES Decryption Backend
@@ -83,12 +87,12 @@ PLUGIN_YANDEX_AES_INTERNAL
 	RU	Встроенный (чистый Perl)
 
 PLUGIN_YANDEX_DEMUX_BACKEND
-	EN	FLAC-in-MP4 Demux Backend
-	RU	Бэкенд демуксинга FLAC-in-MP4
+	EN	Demux Backend
+	RU	Бэкенд демуксинга
 
 PLUGIN_YANDEX_DEMUX_BACKEND_DESC
-	EN	FLAC extraction from MP4 container: Internal: pure Perl demuxing (FFmpeg not required). FFmpeg uses the external transcoder.
-	RU	Способ извлечения FLAC из контейнера MP4: Встроенный - чистый Perl (без ffmpeg). Через FFmpeg - внешний транскодер.
+	EN	FLAC & AAC extraction from MP4 container: Internal: pure Perl demuxing (FFmpeg not required). FFmpeg uses the external transcoder.
+	RU	Способ извлечения FLAC и AAC из контейнера MP4: Встроенный - чистый Perl (без ffmpeg). Через FFmpeg - внешний транскодер.
 
 PLUGIN_YANDEX_DEMUX_INTERNAL
 	EN	Internal (pure Perl, no ffmpeg)
@@ -97,10 +101,6 @@ PLUGIN_YANDEX_DEMUX_INTERNAL
 PLUGIN_YANDEX_DEMUX_FFMPEG
 	EN	FFmpeg (external)
 	RU	FFmpeg (внешний)
-
-PLUGIN_YANDEX_FFMPEG_MISSING
-	EN	FFmpeg is missing (required for AAC-in-MP4, recommended for FLAC-in-MP4)
-	RU	Отсутствует FFmpeg (обязателен для AAC-in-MP4, рекомендуется для FLAC-in-MP4)
 
 PLUGIN_YANDEX_AUTH_DRAG_DROP
 	EN	Drag & Drop (Alternative)
@@ -119,8 +119,8 @@ PLUGIN_YANDEX_MAX_BITRATE
 	RU	Максимальное качество звука
 
 PLUGIN_YANDEX_MAX_BITRATE_DESC
-	EN	Select the maximum allowed quality for streaming tracks. FLAC requires a Yandex Music subscription with lossless support.
-	RU	Выберите максимальное качество для стриминга. FLAC требует подписки Яндекс Музыки с поддержкой lossless.
+	EN	Select the maximum allowed quality for streaming tracks.
+	RU	Выберите максимальное качество для стриминга.
 
 PLUGIN_YANDEX_SEARCH
 	EN	Search
