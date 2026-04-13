@@ -94,6 +94,18 @@ sub new {
                 };
                 $log->error("YANDEX: AES cipher init failed: $@") if $@;
             }
+            # Set up MP4Demux for flac-mp4 with internal demux backend
+            if ($meta->{codec} && $meta->{codec} eq 'flac-mp4' && ${*$sock}{yandex_cipher}) {
+                my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
+                if ($demux_backend eq 'internal') {
+                    eval {
+                        require Plugins::yandex::MP4Demux;
+                        ${*$sock}{yandex_demux} = Plugins::yandex::MP4Demux->new();
+                        $log->info("YANDEX: MP4Demux (internal) enabled for flac-mp4 track $track_id");
+                    };
+                    $log->error("YANDEX: MP4Demux init failed: $@") if $@;
+                }
+            }
             # Store song ref for FLAC header parsing in _sysread (plain flac only)
             ${*$sock}{yandex_song} = $song if $meta->{codec} && $meta->{codec} eq 'flac';
         }
@@ -291,6 +303,10 @@ sub getNextTrack {
                     $ct          = 'aac-MP4';  # shown as-is, like flac-MP4
                     $est_bitrate = $bitrate || 192000;  # already in bps
                     $is_vbr      = undef;
+                } else {
+                    $ct          = 'mp3';
+                    $est_bitrate = $bitrate || 128000;
+                    $is_vbr      = undef;
                 }
 
                 if ($ct) {
@@ -341,9 +357,13 @@ sub formatOverride {
         if ($meta && $meta->{codec}) {
             my $codec = $meta->{codec};
 
-            # FLAC in MP4: needs ffmpeg demuxing (custom-convert.conf ymf → flc rule)
+            # FLAC in MP4: internal pure-Perl demux or ffmpeg via custom-convert.conf ymf → flc
             if ($codec eq 'flac-mp4') {
-                $log->info("YANDEX: formatOverride -> ymf for $url (flac-mp4 with ffmpeg demux)");
+                if (($prefs->get('demux_backend') || 'ffmpeg') eq 'internal') {
+                    $log->info("YANDEX: formatOverride -> flc for $url (flac-mp4, internal demux)");
+                    return 'flc';
+                }
+                $log->info("YANDEX: formatOverride -> ymf for $url (flac-mp4, ffmpeg demux)");
                 return 'ymf';
             }
             # aac-mp4, he-aac-mp4: ffmpeg transcodes to FLAC or MP3 via custom-convert.conf yma rule
@@ -369,8 +389,11 @@ sub getFormatForURL {
         my $cache = Slim::Utils::Cache->new();
         my $meta  = $cache->get('yandex_meta_' . $1);
         if ($meta && $meta->{codec}) {
-            # flac-mp4: custom format ymf for ffmpeg demux via stdin
-            return 'ymf' if $meta->{codec} eq 'flac-mp4';
+            # flac-mp4: internal demux → flc, ffmpeg demux → ymf
+            if ($meta->{codec} eq 'flac-mp4') {
+                return 'flc' if ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal';
+                return 'ymf';
+            }
             # aac-mp4, he-aac-mp4: ffmpeg transcoding via yma rule
             return 'yma' if $meta->{codec} =~ /-mp4$/;
             # plain FLAC: decrypted via _sysread()
@@ -825,6 +848,51 @@ sub _sysread {
         return $bytes;
     }
 
+    # --- AES cipher active ---
+
+    my $demux = ${*$self}{yandex_demux};
+    if ($demux) {
+        # --- Internal streaming demux path (flac-mp4 → raw FLAC) ---
+
+        # Return leftover FLAC bytes from a previous oversized demux output
+        my $pending = ${*$self}{yandex_demux_pending} // '';
+        if (length($pending) > 0) {
+            my $take = $length < length($pending) ? $length : length($pending);
+            substr($_[1], $offset, $take) = substr($pending, 0, $take);
+            ${*$self}{yandex_demux_pending} = substr($pending, $take);
+            return $take;
+        }
+
+        # Read encrypted MP4 bytes from network, decrypt, demux → FLAC.
+        # Loop until StreamingDemux produces output or we hit true EOF.
+        # (The loop runs at most a handful of times: moov is only ~13KB.)
+        my $flac_out = '';
+        while (length($flac_out) == 0) {
+            my $raw = '';
+            my $n = $self->SUPER::_sysread($raw, $length, 0);
+            return undef unless defined $n;
+            last if $n == 0;  # true EOF — FLAC frames need no flush
+
+            my $sp    = ${*$self}{yandex_offset} // 0;
+            my $plain = _aes_ctr_xor($cipher, $raw, $sp);
+            ${*$self}{yandex_offset} = $sp + $n;
+
+            $flac_out .= $demux->process($plain);
+        }
+
+        return 0 unless length($flac_out);  # EOF with no pending output
+
+        # Store excess if demux produced more than one read's worth
+        if (length($flac_out) > $length) {
+            ${*$self}{yandex_demux_pending} = substr($flac_out, $length);
+            $flac_out = substr($flac_out, 0, $length);
+        }
+
+        substr($_[1], $offset, length($flac_out)) = $flac_out;
+        return length($flac_out);
+    }
+
+    # --- Normal AES-CTR path (plain flac, aac-mp4, etc.) ---
     my $bytes_read = $self->SUPER::_sysread($_[1], $length, $offset);
     return $bytes_read unless defined $bytes_read && $bytes_read > 0;
 

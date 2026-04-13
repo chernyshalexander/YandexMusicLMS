@@ -836,6 +836,24 @@ sub get_track_direct_url {
             }
 
             $log->info("YANDEX: get-file-info OK codec=$codec bitrate=$bitrate_kbps encrypted=" . ($aes_key ? 'yes' : 'no'));
+
+            # Fallback to MP3 if codec requires FFmpeg and it's missing
+            if ($codec =~ /-mp4$/) {
+                my $needs_fallback = 0;
+                if ($codec eq 'flac-mp4') {
+                    my $demux = Slim::Utils::Prefs::preferences('plugin.yandex')->get('demux_backend') || 'ffmpeg';
+                    $needs_fallback = 1 if $demux eq 'ffmpeg' && !_find_ffmpeg();
+                } else {
+                    $needs_fallback = 1 if !_find_ffmpeg();
+                }
+
+                if ($needs_fallback) {
+                    $log->warn("YANDEX: High-quality codec=$codec requires FFmpeg but it's missing, falling back to MP3");
+                    $self->_get_track_mp3_url($track_id, 320, $cb);
+                    return;
+                }
+            }
+
             my $bitrate = ($bitrate_kbps || 0) * 1000;
 
             unless ($aes_key) {
