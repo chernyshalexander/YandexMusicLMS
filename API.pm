@@ -840,11 +840,11 @@ sub get_track_direct_url {
             # Fallback to MP3 if codec requires FFmpeg and it's missing
             if ($codec =~ /-mp4$/) {
                 my $needs_fallback = 0;
-                if ($codec eq 'flac-mp4') {
-                    my $demux = Slim::Utils::Prefs::preferences('plugin.yandex')->get('demux_backend') || 'ffmpeg';
-                    $needs_fallback = 1 if $demux eq 'ffmpeg' && !_find_ffmpeg();
-                } else {
-                    $needs_fallback = 1 if !_find_ffmpeg();
+                my $demux = Slim::Utils::Prefs::preferences('plugin.yandex')->get('demux_backend') || 'ffmpeg';
+                
+                # Both flac-mp4 and aac-mp4 are supported by the internal pure-Perl demuxer.
+                if ($demux eq 'ffmpeg' && !_find_ffmpeg()) {
+                    $needs_fallback = 1;
                 }
 
                 if ($needs_fallback) {

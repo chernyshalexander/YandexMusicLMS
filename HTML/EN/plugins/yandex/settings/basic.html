@@ -7,11 +7,9 @@
 </div>
 [% END %]
 [% IF ffmpeg_missing %]
-<div style="background:#fee; border:1px solid #f00; padding:15px; border-radius:5px; margin-bottom:20px; color:#c00;">
+<div style="background:#fff8e1; border:1px solid #f9a825; padding:15px; border-radius:5px; margin-bottom:20px; color:#5d4037;">
     <b style="font-size:1.1em;">[% "PLUGIN_YANDEX_DEPENDENCY_WARNING" | string %]</b>
-    <ul style="margin-top:10px; margin-bottom:0; padding-left:25px;">
-        <li>[% "PLUGIN_YANDEX_FFMPEG_MISSING" | string %]</li>
-    </ul>
+    <p style="margin:8px 0 0;">[% "PLUGIN_YANDEX_FFMPEG_MISSING" | string %]</p>
 </div>
 [% END %]
 
@@ -140,7 +138,7 @@
         <option value="128" [% IF prefs.max_bitrate==128 %]selected[% END %]>128 kbps MP3</option>
         <option value="192" [% IF prefs.max_bitrate==192 %]selected[% END %]>192 kbps MP3</option>
         <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps MP3</option>
-        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)[% IF ffmpeg_available %]/256 kbps AAC[% END %]</option>
+        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)/256 kbps AAC</option>
     </select>
 </div>
 [% END %]
