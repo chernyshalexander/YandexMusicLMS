@@ -1,11 +1,16 @@
 [% PROCESS settings/header.html %]
 
-[% IF rijndael_missing OR ffmpeg_missing %]
+[% IF rijndael_missing %]
+<div style="background:#fff8e1; border:1px solid #f9a825; padding:15px; border-radius:5px; margin-bottom:20px; color:#5d4037;">
+    <b style="font-size:1.1em;">[% "PLUGIN_YANDEX_RIJNDAEL_MISSING_TITLE" | string %]</b>
+    <p style="margin:8px 0 0;">[% "PLUGIN_YANDEX_RIJNDAEL_MISSING_INFO" | string %]</p>
+</div>
+[% END %]
+[% IF ffmpeg_missing %]
 <div style="background:#fee; border:1px solid #f00; padding:15px; border-radius:5px; margin-bottom:20px; color:#c00;">
     <b style="font-size:1.1em;">[% "PLUGIN_YANDEX_DEPENDENCY_WARNING" | string %]</b>
     <ul style="margin-top:10px; margin-bottom:0; padding-left:25px;">
-        [% IF rijndael_missing %]<li>[% "PLUGIN_YANDEX_RIJNDAEL_MISSING" | string %]</li>[% END %]
-        [% IF ffmpeg_missing %]<li>[% "PLUGIN_YANDEX_FFMPEG_MISSING" | string %]</li>[% END %]
+        <li>[% "PLUGIN_YANDEX_FFMPEG_MISSING" | string %]</li>
     </ul>
 </div>
 [% END %]
@@ -140,6 +145,20 @@
 </div>
 [% END %]
 
+
+[% WRAPPER setting title="PLUGIN_YANDEX_AES_BACKEND" desc="PLUGIN_YANDEX_AES_BACKEND_DESC" %]
+<div class="prefDesc">
+[% IF rijndael_available %]
+    <select name="pref_aes_backend" id="pref_aes_backend" class="stdedit">
+        <option value="rijndael" [% IF !prefs.aes_backend || prefs.aes_backend != 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_AES_RIJNDAEL" | string %]</option>
+        <option value="internal" [% IF prefs.aes_backend == 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_AES_INTERNAL" | string %]</option>
+    </select>
+[% ELSE %]
+    <input type="hidden" name="pref_aes_backend" value="internal">
+    <span style="color:#666;">[% "PLUGIN_YANDEX_AES_INTERNAL" | string %]</span>
+[% END %]
+</div>
+[% END %]
 
 [% WRAPPER setting title="PLUGIN_YANDEX_REMOVE_DUPLICATES_TITLE" desc="PLUGIN_YANDEX_REMOVE_DUPLICATES_DESC" %]
 <div class="prefDesc">

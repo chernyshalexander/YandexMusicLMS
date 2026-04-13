@@ -19,7 +19,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language aes_backend));
 }
 
 sub handler {
@@ -162,8 +162,9 @@ sub beforeRender {
 	$params->{accounts} = \@accounts_list;
 
 	my $deps = Plugins::yandex::API::check_dependencies();
-	$params->{rijndael_missing} = !$deps->{rijndael};
-	$params->{ffmpeg_missing}   = !$deps->{ffmpeg};
+	$params->{rijndael_available} = $deps->{rijndael};
+	$params->{rijndael_missing}   = !$deps->{rijndael};
+	$params->{ffmpeg_missing}     = !$deps->{ffmpeg};
 
 	$log->info("Yandex Settings: beforeRender. accounts=" . scalar(@accounts_list));
 }
