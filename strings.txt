@@ -55,8 +55,32 @@ PLUGIN_YANDEX_DEPENDENCY_WARNING
 	RU	Внимание: Обнаружены проблемы с зависимостями!
 
 PLUGIN_YANDEX_RIJNDAEL_MISSING
-	EN	Crypt::Rijndael is missing (required for FLAC)
-	RU	Отсутствует Crypt::Rijndael (нужен для FLAC)
+	EN	Crypt::Rijndael is not installed
+	RU	Crypt::Rijndael не установлен
+
+PLUGIN_YANDEX_RIJNDAEL_MISSING_TITLE
+	EN	Crypt::Rijndael not found — using built-in AES
+	RU	Crypt::Rijndael не найден — используется встроенный AES
+
+PLUGIN_YANDEX_RIJNDAEL_MISSING_INFO
+	EN	Crypt::Rijndael is not installed. The built-in pure-Perl AES implementation will be used for stream decryption. This may cause delays and higher CPU usage on slow processors. To install: sudo apt install libcrypt-rijndael-perl
+	RU	Crypt::Rijndael не установлен. Для дешифрования потоков будет использована встроенная реализация AES на чистом Perl. На медленных процессорах это может привести к задержкам и повышенному расходу ресурсов. Для установки: sudo apt install libcrypt-rijndael-perl
+
+PLUGIN_YANDEX_AES_BACKEND
+	EN	AES Decryption Backend
+	RU	Бэкенд AES-дешифрования
+
+PLUGIN_YANDEX_AES_BACKEND_DESC
+	EN	AES-128-CTR backend used to decrypt FLAC and AAC streams.
+	RU	Бэкенд AES-128-CTR для дешифрования потоков FLAC и AAC.
+
+PLUGIN_YANDEX_AES_RIJNDAEL
+	EN	Rijndael (Crypt::Rijndael)
+	RU	Rijndael (Crypt::Rijndael)
+
+PLUGIN_YANDEX_AES_INTERNAL
+	EN	Internal (pure Perl)
+	RU	Встроенный (чистый Perl)
 
 PLUGIN_YANDEX_FFMPEG_MISSING
 	EN	FFmpeg is missing (required for FLAC/AAC in MP4)

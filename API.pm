@@ -13,6 +13,22 @@ my $log = logger('plugin.yandex');
 
 my $HAS_RIJNDAEL;
 
+# Return an AES-128 ECB cipher object for $key_bytes (16 raw bytes).
+# Respects the aes_backend preference: auto | rijndael | internal.
+sub make_aes_cipher {
+    my ($key_bytes) = @_;
+    my $backend = Slim::Utils::Prefs::preferences('plugin.yandex')->get('aes_backend') || 'rijndael';
+    if ($backend ne 'internal' && _has_rijndael()) {
+        require Crypt::Rijndael;
+        return Crypt::Rijndael->new($key_bytes, Crypt::Rijndael::MODE_ECB());
+    }
+    if ($backend ne 'internal' && !_has_rijndael()) {
+        $log->warn("YANDEX: aes_backend=$backend but Crypt::Rijndael not installed - using internal AES128");
+    }
+    require Plugins::yandex::AES128;
+    return Plugins::yandex::AES128->new($key_bytes);
+}
+
 sub new {
     my ($class, $token, %args) = @_;
 
@@ -828,18 +844,10 @@ sub get_track_direct_url {
                 return;
             }
 
-            # Encrypted stream: pick decryption method
-            if (_has_rijndael()) {
-                # Tier 1: Real-time protocol-level decryption via ProtocolHandler._sysread()
-                # For flac-mp4: LMS pipes decrypted MP4 to ffmpeg via stdin (custom-convert.conf rule)
-                # For plain flac: ProtocolHandler returns plain FLAC bytes
-                $log->info("YANDEX FLAC: Rijndael available - streaming decryption for codec=$codec");
-                $cb->($url, undef, $bitrate, $codec, $aes_key);
-            } else {
-                # No decryption available — install libcrypt-rijndael-perl for FLAC support
-                $log->warn("YANDEX FLAC: Crypt::Rijndael not available, falling back to MP3 320");
-                $self->_get_track_mp3_url($track_id, 320, $cb);
-            }
+            # Encrypted stream: AES backend is always available (Rijndael or internal pure-Perl)
+            my $backend = Slim::Utils::Prefs::preferences('plugin.yandex')->get('aes_backend') || 'auto';
+            $log->info("YANDEX FLAC: Streaming decryption for codec=$codec (aes_backend=$backend)");
+            $cb->($url, undef, $bitrate, $codec, $aes_key);
         });
         return;
     }
@@ -947,9 +955,9 @@ sub _has_rijndael {
         eval { require Crypt::Rijndael; $HAS_RIJNDAEL = 1 };
         $HAS_RIJNDAEL = 0 unless $HAS_RIJNDAEL;
         if ($HAS_RIJNDAEL) {
-            $log->info("YANDEX: Crypt::Rijndael available - streaming FLAC decryption enabled");
+            $log->info("YANDEX: Crypt::Rijndael available");
         } else {
-            $log->warn("YANDEX: Crypt::Rijndael NOT available - FLAC will fall back to MP3 320 (install libcrypt-rijndael-perl)");
+            $log->info("YANDEX: Crypt::Rijndael not available - internal AES128 will be used");
         }
     }
     return $HAS_RIJNDAEL;

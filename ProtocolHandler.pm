@@ -86,13 +86,13 @@ sub new {
 
             if ($meta->{aes_key}) {
                 eval {
-                    require Crypt::Rijndael;
+                    require Plugins::yandex::API;
                     my $key_bytes = pack('H*', $meta->{aes_key});
-                    ${*$sock}{yandex_cipher} = Crypt::Rijndael->new($key_bytes, Crypt::Rijndael::MODE_ECB());
+                    ${*$sock}{yandex_cipher} = Plugins::yandex::API::make_aes_cipher($key_bytes);
                     ${*$sock}{yandex_offset} = 0;
                     $log->info("YANDEX: AES-CTR cipher ready for track $track_id");
                 };
-                $log->error("YANDEX: Rijndael init failed: $@") if $@;
+                $log->error("YANDEX: AES cipher init failed: $@") if $@;
             }
             # Store song ref for FLAC header parsing in _sysread (plain flac only)
             ${*$sock}{yandex_song} = $song if $meta->{codec} && $meta->{codec} eq 'flac';
