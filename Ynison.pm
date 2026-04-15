@@ -1,5 +1,49 @@
 package Plugins::yandex::Ynison;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Ynison - Yandex Music Ynison playback sync protocol
+
+=head1 DESCRIPTION
+
+Implements the Ynison WebSocket protocol for bidirectional playback sync
+between LMS and the Yandex Music ecosystem (mobile app, web player, etc.).
+
+=head2 Connection flow
+
+  1. Redirector (ynison.music.yandex.ru)
+     GET /redirector.YnisonRedirectService/GetRedirectToYnison
+     → receives {host, redirect_ticket, session_id}
+
+  2. State service (host from step 1)
+     GET /ynison_state.YnisonStateService/PutYnisonState
+     with Ynison-Redirect-Ticket and Ynison-Session-Id headers
+     → bidirectional JSON-over-WebSocket stream
+
+Both connections use HTTP/1.1 WebSocket upgrade over TLS. Auth fields
+(Authorization, Ynison-Device-Id, Ynison-Device-Info) are passed in
+the Sec-WebSocket-Protocol header as a JSON blob, not in HTTP headers —
+this matches the format expected by Yandex servers.
+
+=head2 Sync model
+
+LMS is registered as a B<player-only> device (C<can_be_remote_controller: false>).
+Yandex sends C<put_commands> (PLAY/PAUSE/STOP/NEXT/PREV) which are executed on
+the LMS player. LMS reports its state back via C<update_player_state> messages.
+
+A C<local_mode> flag prevents Ynison from overriding LMS when the user takes
+manual control (volume change, direct track selection, etc.). The mode resets
+on the next Cast command from a Yandex client.
+
+The C<syncing_from_yandex> flag suppresses the C<update_state()> echo: when
+Yandex sends a command, LMS executes it (generating player events) before
+the response is sent back — without this guard the events would trigger a
+state update that loops back to Yandex.
+
+=cut
+
 use strict;
 use warnings;
 

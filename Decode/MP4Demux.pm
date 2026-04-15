@@ -1,9 +1,63 @@
-package Plugins::yandex::MP4Demux;
+package Plugins::yandex::Decode::MP4Demux;
+
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Decode::MP4Demux - Streaming ISOBMFF demuxer for Yandex Music
+
+=head1 DESCRIPTION
+
+Extracts raw audio from MP4 containers delivered by the Yandex Music API
+(transport=encraw). Operates as a streaming state machine: feed it chunks of
+(already-decrypted) MP4 bytes and receive raw audio back.
+
+Supported codecs: B<flac> and B<aac>.
+
+=head2 FLAC-in-MP4
+
+The FLAC bitstream is stored as raw FLAC frames inside the C<mdat> box.
+The codec-specific box is C<dfLa> (inside the C<fLaC>/C<fla1> sample entry),
+which contains the STREAMINFO and other metadata blocks verbatim.
+This demuxer extracts those blocks and prepends the C<fLaC> marker to produce
+a standards-compliant FLAC stream.
+
+Ref: ISOBMFF mapping of FLAC — https://github.com/xiph/flac/blob/master/doc/isoflac.txt
+
+=head2 AAC-in-MP4
+
+Raw AAC frames are stored without headers inside C<mdat>. Each frame must be
+wrapped in an ADTS header for the downstream decoder. Per-frame sizes come from:
+  • Regular MP4: C<stsz>/C<stz2> box in C<stbl>.
+  • Fragmented MP4 (fMP4): C<trun> box inside each C<moof>.
+
+The ASC (Audio Specific Config, 2 bytes) is parsed from the C<esds> descriptor
+inside the C<mp4a> sample entry to extract sample-rate index, channel count,
+and AAC object type needed to build ADTS headers.
+
+Ref: ISO 14496-3 (AAC), ISO 14496-12 (ISOBMFF), ISO 14496-14 (MP4 file format)
+
+=head2 Yandex-specific container structure
+
+Yandex typically serves AAC tracks as a two-level nested structure:
+
+  [outer moov (stub stsz, no mvex)] [outer mdat → inner fMP4]
+                                                    ↓
+                                    [inner ftyp/moov/moof.../mdat...]
+
+The outer C<moov> has a placeholder C<stsz> (zero sizes) and no C<mvex>,
+making it look like a regular MP4. The actual fragmented stream lives inside
+the outer C<mdat>. The demuxer detects this by peeking at the first 8 bytes
+of the outer C<mdat> payload and checking for known fMP4 box types.
+
+=cut
 
 use strict;
 use warnings;
 use bytes;
 
+# Create a new demuxer instance.
+# $args{codec}: 'flac' (default) or 'aac'. Must match the actual stream.
 sub new {
     my ($class, %args) = @_;
     my $log = Slim::Utils::Log::logger('plugin.yandex');
@@ -40,6 +94,19 @@ sub new {
     return $self;
 }
 
+# Feed $chunk (decrypted MP4 bytes) into the demuxer and return whatever raw
+# audio has been produced so far (may be empty string if the demuxer is still
+# consuming header boxes). Call with undef or '' to signal end of input.
+#
+# The state machine walks the ISOBMFF box tree at the top level:
+#   BOX  → dispatch on box type (moov/moof/mdat/skip)
+#   MOOV → accumulate entire moov, then parse codec parameters
+#   MOOF → accumulate entire moof, then parse per-fragment sample sizes (AAC only)
+#   MDAT → stream raw audio bytes to out_buffer (FLAC) or frame-by-frame (AAC)
+#   DONE → error state; discard all input
+#
+# Buffer compaction: consumed bytes are removed in one shot per process() call
+# (O(remaining) once) rather than via per-iteration substr shifts (O(n²)).
 sub process {
     my ($self, $chunk) = @_;
     my $log = $self->{log};
@@ -81,7 +148,9 @@ sub process {
                 $self->{moof_size} = $size;
                 $self->{moof_data} = '';
             } elsif ($type eq 'mdat') {
-                my $hdr_size     = ($hdr == 16) ? 16 : 8;
+                my $hdr_size     = ($hdr == 16) ? 16 : 8;  # same as $hdr; TODO: simplify to just $hdr
+                # NOTE: fallback 2**31 is unreachable — line 73 guards $size >= $hdr == $hdr_size,
+                # so $size > $hdr_size is always true except for a zero-payload mdat (size==hdr exactly).
                 my $payload_size = $size > $hdr_size ? $size - $hdr_size : 2**31;
                 $self->{buf_pos} += $hdr_size;
                 my $avail_after  = $avail - $hdr_size;
@@ -341,7 +410,11 @@ sub _parse_moof {
     }
 
     my $pos = $trun_off + 8;  # skip size+type
-    my $version = ord(substr($$data_ref, $pos, 1));
+    # DEAD: $version (trun version) is parsed but never used.
+    # ISO 14496-12: version==0 → unsigned CTS, version==1 → signed CTS.
+    # Both cases are skipped identically below ($pos += 4 if $has_cts).
+    # TODO: either use $version to correctly interpret CTS, or drop it.
+    my $version = ord(substr($$data_ref, $pos, 1)); ## DEAD VARIABLE
     my $flags   = _read_uint24($data_ref, $pos + 1);
     $pos += 4;
 
@@ -380,6 +453,23 @@ sub _read_uint24 {
     return ($b0 << 16) | ($b1 << 8) | $b2;
 }
 
+# Build a 7-byte ADTS header for one AAC frame.
+# ADTS (Audio Data Transport Stream) is the raw framing format expected by most
+# AAC decoders. Each frame is preceded by a sync word (0xFFF) + field-packed header.
+#
+# $asc:          2-byte Audio Specific Config from the esds box (ISO 14496-3 §1.6.5)
+# $frame_length: raw AAC frame size in bytes (payload only, without this header)
+#
+# ASC bit layout (first 2 bytes):
+#   [15:11] audioObjectType (1=AAC Main, 2=LC, 5=HE-AAC, ...)
+#   [10:7]  samplingFreqIndex (0=96kHz, 3=48kHz, 4=44.1kHz, ...)
+#   [6:3]   channelConfiguration
+#
+# ADTS header fields (ISO 13818-7 §6.2, Table 8):
+#   12 bits sync (0xFFF), 1 ID, 2 layer, 1 protection_absent=1
+#   2 profile (aot-1), 4 freq_index, 1 private, 3 channel_conf
+#   1 originality, 1 home, 1 copyright_id_bit, 1 copyright_id_start
+#   13 frame_length (payload + 7), 11 adts_buffer_fullness (0x7FF=VBR), 2 num_blocks_in_frame-1
 sub _make_adts_header {
     my ($asc, $frame_length) = @_;
     my ($asc_val) = unpack("n", substr($asc, 0, 2));
@@ -388,7 +478,7 @@ sub _make_adts_header {
     my $chan = ($asc_val >> 3) & 0x0F;
 
     my $profile = ($aot - 1) & 0x03;
-    my $flen = $frame_length + 7;
+    my $flen = $frame_length + 7;  # total frame size including this 7-byte header
 
     my $hdr = pack("C7",
         0xFF,
@@ -495,6 +585,12 @@ sub _extract_flac_metadata {
     return undef;
 }
 
+# Parse one MPEG-4 descriptor (tag + variable-length size field) from esds.
+# Returns ($tag, $length_of_payload, $bytes_consumed_by_length_field).
+#
+# The esds box uses ISO 14496-1 "expandable size" encoding: up to 4 bytes,
+# each byte contributes 7 bits to the length; the high bit signals continuation.
+# Example: 0x80 0x80 0x80 0x22 → length = 0x22 = 34 bytes.
 sub _read_descr_len {
     my ($data_ref, $pos) = @_;
     return (0, 0, 0) if $pos >= length($$data_ref);
@@ -506,7 +602,7 @@ sub _read_descr_len {
         my $b = ord(substr($$data_ref, $pos + 1 + $i, 1));
         $bytes++;
         $len = ($len << 7) | ($b & 0x7F);
-        last unless ($b & 0x80);
+        last unless ($b & 0x80);  # high bit clear → last byte of length field
     }
     return ($tag, $len, $bytes);
 }
@@ -575,6 +671,9 @@ sub _extract_stsz {
         $pos += 4;
 
         my @sizes;
+        # DEAD: field_size==4 means 4-bit sample sizes (max 15 bytes/frame).
+        # AAC frames are hundreds of bytes — this branch can never produce valid data.
+        # TODO: remove field_size==4 block (keep 8 and 16 which are realistic).
         if ($field_size == 4) {
             for my $i (0 .. $sample_count - 1) {
                 last if $pos >= $stz2_off + $stz2_size;

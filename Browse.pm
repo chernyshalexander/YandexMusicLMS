@@ -1,5 +1,24 @@
 package Plugins::yandex::Browse;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse - Thin facade over Browse:: submodules
+
+=head1 DESCRIPTION
+
+Re-exports all browse entry points under a single namespace so that
+Plugin.pm and ProtocolHandler.pm only need to C<use> one module.
+Actual logic lives in Browse::Search, Browse::Favorites, Browse::Radio,
+Browse::Collection, and Browse::Common.
+
+Also owns C<_handleAlbum>, C<_handleArtist>, C<explodePlaylist>, and
+C<canDoAction> — functions that depend on multiple submodules and don't
+belong cleanly in any one of them.
+
+=cut
+
 use strict;
 use warnings;
 use utf8;

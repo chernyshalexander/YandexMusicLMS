@@ -1,5 +1,26 @@
 package Plugins::yandex::API;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::API - Async Yandex Music API client
+
+=head1 DESCRIPTION
+
+Thin async HTTP wrapper around the Yandex Music API (api.music.yandex.net).
+All methods are non-blocking: they accept a success callback and an error
+callback, both called from the LMS event loop.
+
+Authentication uses OAuth tokens passed in the C<Authorization: OAuth> header
+with a spoofed C<X-Yandex-Music-Client: YandexMusicAndroid/...> header — the
+Android client identity is required to access the C<encraw> transport for
+lossless streams (the Desktop identity returns HTTP 403).
+
+Stream resolution entry point: C<get_track_direct_url()>.
+
+=cut
+
 use strict;
 use warnings;
 use URI;
@@ -11,6 +32,7 @@ use Slim::Networking::SimpleAsyncHTTP;
 
 my $log = logger('plugin.yandex');
 
+# Cached result of Crypt::Rijndael availability check (undef = not yet tested).
 my $HAS_RIJNDAEL;
 
 # Return an AES-128 ECB cipher object for $key_bytes (16 raw bytes).
@@ -25,8 +47,8 @@ sub make_aes_cipher {
     if ($backend ne 'internal' && !_has_rijndael()) {
         $log->warn("YANDEX: aes_backend=$backend but Crypt::Rijndael not installed - using internal AES128");
     }
-    require Plugins::yandex::AES128;
-    return Plugins::yandex::AES128->new($key_bytes);
+    require Plugins::yandex::Decode::AES128;
+    return Plugins::yandex::Decode::AES128->new($key_bytes);
 }
 
 sub new {
@@ -734,9 +756,8 @@ sub playlists_list {
 # STREAM RESOLUTION
 # -----------------------------------------------------------------------------------------
 
-# Get direct stream URL via /get-file-info (supports lossless/FLAC).
-# Key and signing format from https://github.com/MarshalX/yandex-music-api/issues/656
-# Calls $cb->($url, $error, $codec, $bitrate_kbps)
+# Returns a hashref with keys 'rijndael' and 'ffmpeg' (boolean).
+# Used by Plugin.pm and Settings.pm to show warnings about missing dependencies.
 sub check_dependencies {
     return {
         rijndael => _has_rijndael(),
@@ -744,6 +765,15 @@ sub check_dependencies {
     };
 }
 
+# Resolve the direct CDN URL for a track via the /get-file-info endpoint.
+# This endpoint supports lossless codecs (flac, flac-mp4, aac-mp4) and returns
+# an AES-128 key when transport=encraw is used.
+#
+# Request signing: HMAC-SHA256 over "${ts}${trackId}lossless${codecs_nosep}encraw"
+# with key 'p93jhgh689SBReK6ghtw62', base64-encoded, first 43 chars.
+# Source: https://github.com/MarshalX/yandex-music-api/issues/656
+#
+# Calls $cb->($url, $error, $codec, $bitrate_kbps, $aes_key_hex).
 sub get_track_file_info {
     my ($self, $track_id, $cb) = @_;
 
@@ -873,6 +903,13 @@ sub get_track_direct_url {
     $self->_get_track_mp3_url($track_id, $max_bitrate, $cb);
 }
 
+# Resolve a plain MP3 (or legacy FLAC) CDN URL via the /download-info endpoint.
+# Two-step process:
+#   1. GET /tracks/{id}/download-info → list of codec/bitrate entries with downloadInfoUrl
+#   2. GET downloadInfoUrl?format=json → JSON (or legacy XML) with {host, path, ts, s}
+#      Final URL: https://{host}/get-{codec}/{sign}/{ts}{path}
+#      where sign = MD5("XGRlBW9FXlekgbPrRHuSiA" + path[1:] + s)
+# The CDN may redirect; we do one HEAD to resolve any redirect before returning.
 sub _get_track_mp3_url {
     my ($self, $track_id, $max_bitrate, $cb) = @_;
 
@@ -1006,18 +1043,20 @@ sub _find_ffmpeg {
     return undef;
 }
 
-sub album {
-    my ($self, $album_id, $callback, $error_callback) = @_;
-
-    $self->albums([$album_id], sub {
-        my $albums = shift;
-        if ($albums && @$albums) {
-            $callback->($albums->[0]);
-        } else {
-            $error_callback->("Album not found");
-        }
-    }, $error_callback);
-}
+# DEAD CODE: sub album() — never called anywhere in the plugin.
+# It's a thin wrapper around albums() that extracts the first element.
+# albums() is used directly everywhere. TODO: remove.
+# sub album {
+#     my ($self, $album_id, $callback, $error_callback) = @_;
+#     $self->albums([$album_id], sub {
+#         my $albums = shift;
+#         if ($albums && @$albums) {
+#             $callback->($albums->[0]);
+#         } else {
+#             $error_callback->("Album not found");
+#         }
+#     }, $error_callback);
+# }
 
 sub albums {
     my ($self, $album_ids, $callback, $error_callback) = @_;
