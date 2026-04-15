@@ -162,8 +162,8 @@
 <div class="prefDesc">
 [% IF ffmpeg_available %]
     <select name="pref_demux_backend" id="pref_demux_backend" class="stdedit">
-        <option value="internal" [% IF !prefs.demux_backend || prefs.demux_backend == 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_INTERNAL" | string %]</option>
-        <option value="ffmpeg" [% IF prefs.demux_backend == 'ffmpeg' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_FFMPEG" | string %]</option>
+        <option value="ffmpeg" [% IF !prefs.demux_backend || prefs.demux_backend != 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_FFMPEG" | string %]</option>
+        <option value="internal" [% IF prefs.demux_backend == 'internal' %]selected[% END %]>[% "PLUGIN_YANDEX_DEMUX_INTERNAL" | string %]</option>
     </select>
 [% ELSE %]
     <input type="hidden" name="pref_demux_backend" value="internal">
@@ -267,7 +267,14 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
         [% IF prefs.wizard_cat_language %]checked[% END %]>
     [% END %]
 </div>
+<hr>
 
+[% WRAPPER setting title="PLUGIN_YANDEX_ENABLE_YNISON" desc="PLUGIN_YANDEX_ENABLE_YNISON_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_enable_ynison" id="pref_enable_ynison" [% IF prefs.enable_ynison %]checked[% END
+        %]>
+</div>
+[% END %]
 <script type="text/javascript">
 (function () {
     var toggle  = document.getElementById('pref_show_wave_wizard');
@@ -305,13 +312,6 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </script>
 
 
-<hr>
 
-[% WRAPPER setting title="PLUGIN_YANDEX_ENABLE_YNISON" desc="PLUGIN_YANDEX_ENABLE_YNISON_DESC" %]
-<div class="prefDesc">
-    <input type="checkbox" name="pref_enable_ynison" id="pref_enable_ynison" [% IF prefs.enable_ynison %]checked[% END
-        %]>
-</div>
-[% END %]
 
 [% PROCESS settings/footer.html %]

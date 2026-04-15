@@ -78,40 +78,86 @@ sub new {
 # Encrypt a single 16-byte block (ECB). Returns 16 bytes.
 # State is 4 big-endian 32-bit words = 4 AES columns.
 # ShiftRows byte routing (for col j): row0←col j, row1←col (j+1)%4, row2←col (j+2)%4, row3←col (j+3)%4.
+#
+# Optimisations vs. the loop version:
+#   • 9 rounds unrolled — removes for-loop overhead, $r<<2 per iter, list-assignment ($s)=($t)
+#   • Alternating s↔t variable sets — no per-round list copy
+#   • & 0xFFFFFFFF removed from round bodies — XOR of ≤32-bit values stays ≤32-bit on 64-bit Perl
+#   • Round keys copied to local array — $rk[$i] (array) vs $rk->[$i] (ref) is one fewer deref
 sub encrypt {
     my ($self, $block) = @_;
-    my $rk = $self->{rk};
+    my @rk = @{$self->{rk}};   # local copy — avoids arrayref deref in hot path
 
     my ($s0, $s1, $s2, $s3) = unpack('N4', $block);
 
-    # AddRoundKey (round 0)
-    $s0 = ($s0 ^ $rk->[0]) & 0xFFFFFFFF;
-    $s1 = ($s1 ^ $rk->[1]) & 0xFFFFFFFF;
-    $s2 = ($s2 ^ $rk->[2]) & 0xFFFFFFFF;
-    $s3 = ($s3 ^ $rk->[3]) & 0xFFFFFFFF;
+    # AddRoundKey round 0 (XOR of 32-bit values stays 32-bit, no mask needed)
+    $s0 ^= $rk[0];  $s1 ^= $rk[1];  $s2 ^= $rk[2];  $s3 ^= $rk[3];
 
-    # Rounds 1..9: SubBytes + ShiftRows + MixColumns + AddRoundKey (via T-tables)
-    for my $r (1..9) {
-        my $b = $r << 2;   # base index into round key array
-        my ($t0, $t1, $t2, $t3);
-        $t0 = ($Te0[($s0>>24)     ] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk->[$b  ]) & 0xFFFFFFFF;
-        $t1 = ($Te0[($s1>>24)     ] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk->[$b+1]) & 0xFFFFFFFF;
-        $t2 = ($Te0[($s2>>24)     ] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk->[$b+2]) & 0xFFFFFFFF;
-        $t3 = ($Te0[($s3>>24)     ] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk->[$b+3]) & 0xFFFFFFFF;
-        ($s0,$s1,$s2,$s3) = ($t0,$t1,$t2,$t3);
-    }
+    # Rounds 1..9 unrolled.  Odd rounds read s→write t; even rounds read t→write s.
+    # This eliminates the ($s0,$s1,$s2,$s3)=($t0,$t1,$t2,$t3) list-copy after every round.
+    my ($t0, $t1, $t2, $t3);
 
-    # Final round: SubBytes + ShiftRows + AddRoundKey (no MixColumns)
-    my $t0 = (($S[$s0>>24    ]<<24)|($S[($s1>>16)&0xff]<<16)|($S[($s2>>8)&0xff]<<8)|$S[$s3&0xff]) ^ $rk->[40];
-    my $t1 = (($S[$s1>>24    ]<<24)|($S[($s2>>16)&0xff]<<16)|($S[($s3>>8)&0xff]<<8)|$S[$s0&0xff]) ^ $rk->[41];
-    my $t2 = (($S[$s2>>24    ]<<24)|($S[($s3>>16)&0xff]<<16)|($S[($s0>>8)&0xff]<<8)|$S[$s1&0xff]) ^ $rk->[42];
-    my $t3 = (($S[$s3>>24    ]<<24)|($S[($s0>>16)&0xff]<<16)|($S[($s1>>8)&0xff]<<8)|$S[$s2&0xff]) ^ $rk->[43];
+    # Round 1 (rk[4..7])
+    $t0 = $Te0[$s0>>24] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk[4];
+    $t1 = $Te0[$s1>>24] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk[5];
+    $t2 = $Te0[$s2>>24] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk[6];
+    $t3 = $Te0[$s3>>24] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk[7];
 
+    # Round 2 (rk[8..11])
+    $s0 = $Te0[$t0>>24] ^ $Te1[($t1>>16)&0xff] ^ $Te2[($t2>>8)&0xff] ^ $Te3[$t3&0xff] ^ $rk[8];
+    $s1 = $Te0[$t1>>24] ^ $Te1[($t2>>16)&0xff] ^ $Te2[($t3>>8)&0xff] ^ $Te3[$t0&0xff] ^ $rk[9];
+    $s2 = $Te0[$t2>>24] ^ $Te1[($t3>>16)&0xff] ^ $Te2[($t0>>8)&0xff] ^ $Te3[$t1&0xff] ^ $rk[10];
+    $s3 = $Te0[$t3>>24] ^ $Te1[($t0>>16)&0xff] ^ $Te2[($t1>>8)&0xff] ^ $Te3[$t2&0xff] ^ $rk[11];
+
+    # Round 3 (rk[12..15])
+    $t0 = $Te0[$s0>>24] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk[12];
+    $t1 = $Te0[$s1>>24] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk[13];
+    $t2 = $Te0[$s2>>24] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk[14];
+    $t3 = $Te0[$s3>>24] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk[15];
+
+    # Round 4 (rk[16..19])
+    $s0 = $Te0[$t0>>24] ^ $Te1[($t1>>16)&0xff] ^ $Te2[($t2>>8)&0xff] ^ $Te3[$t3&0xff] ^ $rk[16];
+    $s1 = $Te0[$t1>>24] ^ $Te1[($t2>>16)&0xff] ^ $Te2[($t3>>8)&0xff] ^ $Te3[$t0&0xff] ^ $rk[17];
+    $s2 = $Te0[$t2>>24] ^ $Te1[($t3>>16)&0xff] ^ $Te2[($t0>>8)&0xff] ^ $Te3[$t1&0xff] ^ $rk[18];
+    $s3 = $Te0[$t3>>24] ^ $Te1[($t0>>16)&0xff] ^ $Te2[($t1>>8)&0xff] ^ $Te3[$t2&0xff] ^ $rk[19];
+
+    # Round 5 (rk[20..23])
+    $t0 = $Te0[$s0>>24] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk[20];
+    $t1 = $Te0[$s1>>24] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk[21];
+    $t2 = $Te0[$s2>>24] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk[22];
+    $t3 = $Te0[$s3>>24] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk[23];
+
+    # Round 6 (rk[24..27])
+    $s0 = $Te0[$t0>>24] ^ $Te1[($t1>>16)&0xff] ^ $Te2[($t2>>8)&0xff] ^ $Te3[$t3&0xff] ^ $rk[24];
+    $s1 = $Te0[$t1>>24] ^ $Te1[($t2>>16)&0xff] ^ $Te2[($t3>>8)&0xff] ^ $Te3[$t0&0xff] ^ $rk[25];
+    $s2 = $Te0[$t2>>24] ^ $Te1[($t3>>16)&0xff] ^ $Te2[($t0>>8)&0xff] ^ $Te3[$t1&0xff] ^ $rk[26];
+    $s3 = $Te0[$t3>>24] ^ $Te1[($t0>>16)&0xff] ^ $Te2[($t1>>8)&0xff] ^ $Te3[$t2&0xff] ^ $rk[27];
+
+    # Round 7 (rk[28..31])
+    $t0 = $Te0[$s0>>24] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk[28];
+    $t1 = $Te0[$s1>>24] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk[29];
+    $t2 = $Te0[$s2>>24] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk[30];
+    $t3 = $Te0[$s3>>24] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk[31];
+
+    # Round 8 (rk[32..35])
+    $s0 = $Te0[$t0>>24] ^ $Te1[($t1>>16)&0xff] ^ $Te2[($t2>>8)&0xff] ^ $Te3[$t3&0xff] ^ $rk[32];
+    $s1 = $Te0[$t1>>24] ^ $Te1[($t2>>16)&0xff] ^ $Te2[($t3>>8)&0xff] ^ $Te3[$t0&0xff] ^ $rk[33];
+    $s2 = $Te0[$t2>>24] ^ $Te1[($t3>>16)&0xff] ^ $Te2[($t0>>8)&0xff] ^ $Te3[$t1&0xff] ^ $rk[34];
+    $s3 = $Te0[$t3>>24] ^ $Te1[($t0>>16)&0xff] ^ $Te2[($t1>>8)&0xff] ^ $Te3[$t2&0xff] ^ $rk[35];
+
+    # Round 9 (rk[36..39]) — odd, reads s→writes t; final round will read t
+    $t0 = $Te0[$s0>>24] ^ $Te1[($s1>>16)&0xff] ^ $Te2[($s2>>8)&0xff] ^ $Te3[$s3&0xff] ^ $rk[36];
+    $t1 = $Te0[$s1>>24] ^ $Te1[($s2>>16)&0xff] ^ $Te2[($s3>>8)&0xff] ^ $Te3[$s0&0xff] ^ $rk[37];
+    $t2 = $Te0[$s2>>24] ^ $Te1[($s3>>16)&0xff] ^ $Te2[($s0>>8)&0xff] ^ $Te3[$s1&0xff] ^ $rk[38];
+    $t3 = $Te0[$s3>>24] ^ $Te1[($s0>>16)&0xff] ^ $Te2[($s1>>8)&0xff] ^ $Te3[$s2&0xff] ^ $rk[39];
+
+    # Final round: SubBytes + ShiftRows + AddRoundKey (no MixColumns); reads t0..t3
+    # pack 'N' masks to 32 bits implicitly — no explicit & 0xFFFFFFFF needed
     return pack('N4',
-        $t0 & 0xFFFFFFFF,
-        $t1 & 0xFFFFFFFF,
-        $t2 & 0xFFFFFFFF,
-        $t3 & 0xFFFFFFFF,
+        (($S[$t0>>24]<<24) | ($S[($t1>>16)&0xff]<<16) | ($S[($t2>>8)&0xff]<<8) | $S[$t3&0xff]) ^ $rk[40],
+        (($S[$t1>>24]<<24) | ($S[($t2>>16)&0xff]<<16) | ($S[($t3>>8)&0xff]<<8) | $S[$t0&0xff]) ^ $rk[41],
+        (($S[$t2>>24]<<24) | ($S[($t3>>16)&0xff]<<16) | ($S[($t0>>8)&0xff]<<8) | $S[$t1&0xff]) ^ $rk[42],
+        (($S[$t3>>24]<<24) | ($S[($t0>>16)&0xff]<<16) | ($S[($t1>>8)&0xff]<<8) | $S[$t2&0xff]) ^ $rk[43],
     );
 }
 

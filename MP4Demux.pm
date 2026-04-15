@@ -12,6 +12,7 @@ sub new {
         log            => $log,
         codec          => $codec,
         buffer         => '',
+        buf_pos        => 0,     # read offset into buffer — avoid O(n) substr shifts
         state          => 'BOX',
         moov_data      => '',
         moov_size      => 0,
@@ -44,23 +45,29 @@ sub process {
     my $log = $self->{log};
     $self->{buffer} .= $chunk if defined $chunk;
 
-    while (length($self->{buffer}) > 0) {
+    my $buf = \$self->{buffer};  # scalar ref — avoids repeated hash lookup in hot loop
+
+    while (1) {
+        my $avail = length($$buf) - $self->{buf_pos};
+        last if $avail <= 0;
+
         my $state = $self->{state};
 
         if ($state eq 'BOX') {
-            last if length($self->{buffer}) < 8;
+            last if $avail < 8;
 
-            my ($size, $type) = unpack('Na4', substr($self->{buffer}, 0, 8));
+            my $pos = $self->{buf_pos};
+            my ($size, $type) = unpack('Na4', substr($$buf, $pos, 8));
             my $hdr = 8;
 
             if ($size == 1) {
-                last if length($self->{buffer}) < 16;
-                my ($hi, $lo) = unpack('NN', substr($self->{buffer}, 8, 8));
+                last if $avail < 16;
+                my ($hi, $lo) = unpack('NN', substr($$buf, $pos + 8, 8));
                 $size = $hi * 4294967296 + $lo;
                 $hdr  = 16;
             } elsif ($size == 0) {
-                # size==0 means "extends to end of file" — treat as very large
-                $size = length($self->{buffer});
+                # size==0 means "extends to end of file" — treat as remaining avail
+                $size = $avail;
             }
 
             last if $size < $hdr;
@@ -74,15 +81,16 @@ sub process {
                 $self->{moof_size} = $size;
                 $self->{moof_data} = '';
             } elsif ($type eq 'mdat') {
-                my $hdr_size = ($hdr == 16) ? 16 : 8;
+                my $hdr_size     = ($hdr == 16) ? 16 : 8;
                 my $payload_size = $size > $hdr_size ? $size - $hdr_size : 2**31;
-                substr($self->{buffer}, 0, $hdr_size) = '';
+                $self->{buf_pos} += $hdr_size;
+                my $avail_after  = $avail - $hdr_size;
 
                 # Detect nested fMP4 inside outer mdat.
                 # Yandex structure: [outer moov (stub stsz, no mvex)] [outer mdat containing full inner fMP4]
                 if ($self->{codec} ne 'flac' && !$self->{is_fmp4}) {
-                    if (length($self->{buffer}) >= 8) {
-                        my (undef, $inner_type) = unpack('Na4', substr($self->{buffer}, 0, 8));
+                    if ($avail_after >= 8) {
+                        my (undef, $inner_type) = unpack('Na4', substr($$buf, $self->{buf_pos}, 8));
                         if ($inner_type =~ /^(?:ftyp|styp|moov|moof|free|sidx|emsg)$/) {
                             $log->info("YANDEX: MP4Demux: nested fMP4 in outer mdat (first_box='$inner_type')");
                             _reset_for_inner_mp4($self);
@@ -103,14 +111,15 @@ sub process {
                     $self->{aac_frame_pos} = 0;
                 }
             } else {
-                last if length($self->{buffer}) < $size;
-                substr($self->{buffer}, 0, $size) = '';
+                last if $avail < $size;
+                $self->{buf_pos} += $size;
             }
 
         } elsif ($state eq 'MOOV') {
             my $needed = $self->{moov_size} - length($self->{moov_data});
-            my $take   = length($self->{buffer}) < $needed ? length($self->{buffer}) : $needed;
-            $self->{moov_data} .= substr($self->{buffer}, 0, $take, '');
+            my $take   = $avail < $needed ? $avail : $needed;
+            $self->{moov_data} .= substr($$buf, $self->{buf_pos}, $take);
+            $self->{buf_pos}   += $take;
 
             if (length($self->{moov_data}) == $self->{moov_size}) {
                 $self->_parse_moov();
@@ -122,8 +131,9 @@ sub process {
 
         } elsif ($state eq 'MOOF') {
             my $needed = $self->{moof_size} - length($self->{moof_data});
-            my $take   = length($self->{buffer}) < $needed ? length($self->{buffer}) : $needed;
-            $self->{moof_data} .= substr($self->{buffer}, 0, $take, '');
+            my $take   = $avail < $needed ? $avail : $needed;
+            $self->{moof_data} .= substr($$buf, $self->{buf_pos}, $take);
+            $self->{buf_pos}   += $take;
 
             if (length($self->{moof_data}) == $self->{moof_size}) {
                 my $sizes = $self->_parse_moof();
@@ -142,7 +152,7 @@ sub process {
 
         } elsif ($state eq 'MDAT') {
             unless ($self->{header_parsed}) {
-                if (length($self->{buffer}) > 8 * 1024 * 1024) {
+                if ($avail > 8 * 1024 * 1024) {
                     $log->error("YANDEX: MP4Demux: buffer exceeded 8MB waiting for moov");
                     $self->{state} = 'DONE';
                 }
@@ -154,9 +164,10 @@ sub process {
                     $self->{out_buffer} .= $self->{flac_header};
                     $self->{flac_header} = 'SENT';
                 }
-                if ($self->{mdat_remaining} > 0 && length($self->{buffer}) > 0) {
-                    my $take = length($self->{buffer}) < $self->{mdat_remaining} ? length($self->{buffer}) : $self->{mdat_remaining};
-                    $self->{out_buffer} .= substr($self->{buffer}, 0, $take, '');
+                if ($self->{mdat_remaining} > 0 && $avail > 0) {
+                    my $take = $avail < $self->{mdat_remaining} ? $avail : $self->{mdat_remaining};
+                    $self->{out_buffer}     .= substr($$buf, $self->{buf_pos}, $take);
+                    $self->{buf_pos}        += $take;
                     $self->{mdat_remaining} -= $take;
                 }
             } else {
@@ -164,9 +175,9 @@ sub process {
 
                 # Deferred nested fMP4 check (when buffer had < 8 bytes at mdat entry)
                 if ($self->{_check_nested}) {
-                    last if length($self->{buffer}) < 8;
+                    last if $avail < 8;
                     $self->{_check_nested} = 0;
-                    my (undef, $inner_type) = unpack('Na4', substr($self->{buffer}, 0, 8));
+                    my (undef, $inner_type) = unpack('Na4', substr($$buf, $self->{buf_pos}, 8));
                     if ($inner_type =~ /^(?:ftyp|styp|moov|moof|free|sidx|emsg)$/) {
                         $log->info("YANDEX: MP4Demux: nested fMP4 in outer mdat [deferred] (first_box='$inner_type')");
                         _reset_for_inner_mp4($self);
@@ -176,26 +187,27 @@ sub process {
 
                 if ($self->{aac_frame_idx} >= scalar(@{$self->{aac_sizes}})) {
                     # No more frames in table — drain remaining mdat bytes
-                    if ($self->{mdat_remaining} > 0 && length($self->{buffer}) > 0) {
-                        my $take = length($self->{buffer}) < $self->{mdat_remaining} ? length($self->{buffer}) : $self->{mdat_remaining};
-                        substr($self->{buffer}, 0, $take, '');
+                    if ($self->{mdat_remaining} > 0 && $avail > 0) {
+                        my $take = $avail < $self->{mdat_remaining} ? $avail : $self->{mdat_remaining};
+                        $self->{buf_pos}        += $take;
                         $self->{mdat_remaining} -= $take;
                     }
                 } else {
                     my $frame_size = $self->{aac_sizes}->[$self->{aac_frame_idx}];
 
-                    if (length($self->{buffer}) > 0) {
+                    if ($avail > 0) {
                         if ($self->{aac_frame_pos} == 0) {
                             $self->{out_buffer} .= _make_adts_header($self->{aac_asc}, $frame_size);
                         }
 
                         my $bytes_needed = $frame_size - $self->{aac_frame_pos};
-                        my $take = length($self->{buffer}) < $bytes_needed ? length($self->{buffer}) : $bytes_needed;
+                        my $take = $avail < $bytes_needed ? $avail : $bytes_needed;
                         $take = $self->{mdat_remaining} if $take > $self->{mdat_remaining};
 
                         if ($take > 0) {
-                            $self->{out_buffer} .= substr($self->{buffer}, 0, $take, '');
-                            $self->{aac_frame_pos} += $take;
+                            $self->{out_buffer}     .= substr($$buf, $self->{buf_pos}, $take);
+                            $self->{buf_pos}        += $take;
+                            $self->{aac_frame_pos}  += $take;
                             $self->{mdat_remaining} -= $take;
                         }
 
@@ -217,6 +229,13 @@ sub process {
         } elsif ($state eq 'DONE') {
             last;
         }
+    }
+
+    # Compact: drop consumed bytes in one shot instead of per-iteration shifts.
+    # This is O(remaining) once per process() call vs O(n²) with repeated substr removals.
+    if ($self->{buf_pos} > 0) {
+        substr($$buf, 0, $self->{buf_pos}, '');
+        $self->{buf_pos} = 0;
     }
 
     my $ret = $self->{out_buffer};
