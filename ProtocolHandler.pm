@@ -1,5 +1,35 @@
 package Plugins::yandex::ProtocolHandler;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::ProtocolHandler - LMS protocol handler for yandexmusic:// URLs
+
+=head1 DESCRIPTION
+
+Handles streaming of Yandex Music tracks to LMS players. The full pipeline:
+
+  getNextTrack()          — resolves yandexmusic://{id} → CDN URL + AES key + codec
+       ↓
+  canEnhanceHTTP → 2      — forces buffered mode: LMS downloads the full encrypted
+                            file to a .buf temp file at max speed, avoiding Yandex CDN
+                            connection resets that happen with slow per-bitrate reads
+       ↓
+  new() / _sysread()      — intercepts every read to decrypt bytes via AES-CTR on the fly
+       ↓
+  [if codec is *-mp4]
+  MP4Demux->process()     — strips the MP4 container, outputs raw FLAC or ADTS-AAC
+       ↓
+  formatOverride()        — tells LMS what audio format the stream really is
+                            (flc/ymf for FLAC, aac/yma for AAC)
+
+AES-CTR keystream: 128-bit big-endian counter = 12 zero bytes + block_number (uint32 BE).
+Block number = byte_offset / 16. The same counter scheme is used by Yandex for all
+encraw streams regardless of codec.
+
+=cut
+
 use strict;
 use warnings;
 use Slim::Utils::Log;
@@ -34,32 +64,34 @@ sub new {
 
     $log->info("YANDEX: Handler new() called for streamUrl: $streamUrl");
 
-    # Local pre-decoded FLAC file (result of flac-mp4 decrypt+demux)
-    if ($streamUrl =~ m{^file://(.+)}) {
-        my $path = $1;
-        $path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-
-        require Symbol;
-        my $sock = Symbol::gensym();
-        open($sock, '<', $path) or do {
-            $log->error("YANDEX: Cannot open local file $path: $!");
-            return;
-        };
-        binmode($sock);
-        bless $sock, $class;
-        ${*$sock}{contentType}     = 'audio/flac';
-        ${*$sock}{yandex_temp_file} = $path;
-
-        if ($client) {
-            my $duration = $song->duration || 0;
-            $song->isLive(0);
-            $song->duration($duration) if $duration;
-            Slim::Music::Info::setDuration($song->currentTrack, $duration)
-                if $duration && $song->currentTrack;
-        }
-        $log->info("YANDEX: file handle ready, size=" . (-s $path) . " fileno=" . (fileno($sock) // 'undef'));
-        return $sock;
-    }
+    # DEAD CODE: file:// branch was for Tier-2 openssl fallback (_decrypt_flac_via_openssl in API.pm).
+    # That function was removed; no code in the plugin generates file:// URLs anymore.
+    # TODO: remove this entire block.
+    # if ($streamUrl =~ m{^file://(.+)}) {
+    #     my $path = $1;
+    #     $path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
+    #
+    #     require Symbol;
+    #     my $sock = Symbol::gensym();
+    #     open($sock, '<', $path) or do {
+    #         $log->error("YANDEX: Cannot open local file $path: $!");
+    #         return;
+    #     };
+    #     binmode($sock);
+    #     bless $sock, $class;
+    #     ${*$sock}{contentType}     = 'audio/flac';
+    #     ${*$sock}{yandex_temp_file} = $path;
+    #
+    #     if ($client) {
+    #         my $duration = $song->duration || 0;
+    #         $song->isLive(0);
+    #         $song->duration($duration) if $duration;
+    #         Slim::Music::Info::setDuration($song->currentTrack, $duration)
+    #             if $duration && $song->currentTrack;
+    #     }
+    #     $log->info("YANDEX: file handle ready, size=" . (-s $path) . " fileno=" . (fileno($sock) // 'undef'));
+    #     return $sock;
+    # }
 
     my $sock = $class->SUPER::new( {
         url     => $streamUrl,
@@ -99,9 +131,9 @@ sub new {
                 my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
                 if ($demux_backend eq 'internal') {
                     eval {
-                        require Plugins::yandex::MP4Demux;
+                        require Plugins::yandex::Decode::MP4Demux;
                         my $demux_codec = ($meta->{codec} =~ /aac/) ? 'aac' : 'flac';
-                        ${*$sock}{yandex_demux} = Plugins::yandex::MP4Demux->new(codec => $demux_codec);
+                        ${*$sock}{yandex_demux} = Plugins::yandex::Decode::MP4Demux->new(codec => $demux_codec);
                         if ($demux_codec eq 'aac') {
                             $content_type = 'audio/aac';
                         }
@@ -842,9 +874,20 @@ sub _sysread {
 
     my $cipher = ${*$self}{yandex_cipher};
     unless ($cipher) {
+        # DEAD CODE: yandex_temp_file branch was for the file:// Tier-2 fallback (removed).
+        # yandex_temp_file is never set now, so the ternary always takes SUPER::_sysread.
+        # TODO: simplify to: my $bytes = $self->SUPER::_sysread($_[1], $length, $offset);
         my $bytes = ${*$self}{yandex_temp_file}
             ? sysread($self, $_[1], $length, $offset)
             : $self->SUPER::_sysread($_[1], $length, $offset);
+        # DEAD CODE: block below never executes (yandex_temp_file always undef)
+        # if (${*$self}{yandex_temp_file}) {
+        #     my $cnt = ++${*$self}{_sysread_logged};
+        #     if ($cnt == 1 && defined $bytes && $bytes >= 4) {
+        #         my $magic = unpack('H8', substr($_[1], $offset, 4));
+        #         $log->info("YANDEX: _sysread file #1 got=$bytes magic=$magic (expect 664c6143=fLaC)");
+        #     }
+        # }
         if (${*$self}{yandex_temp_file}) {
             my $cnt = ++${*$self}{_sysread_logged};
             if ($cnt == 1 && defined $bytes && $bytes >= 4) {
@@ -852,7 +895,8 @@ sub _sysread {
                 $log->info("YANDEX: _sysread file #1 got=$bytes magic=$magic (expect 664c6143=fLaC)");
             }
         }
-        # Clean up temp file on EOF
+        # DEAD CODE: temp file cleanup — yandex_temp_file is never set, unlink never runs
+        # TODO: remove the entire yandex_temp_file ternary and both dead blocks above
         if (defined $bytes && $bytes == 0 && ${*$self}{yandex_temp_file}) {
             unlink(delete ${*$self}{yandex_temp_file});
         }
@@ -864,6 +908,9 @@ sub _sysread {
     my $demux = ${*$self}{yandex_demux};
     if ($demux) {
         # --- Internal streaming demux path (flac-mp4 → raw FLAC) ---
+
+        # Ensure buffer is defined before using as lvalue substr target
+        $_[1] //= '';
 
         # Return leftover FLAC bytes from a previous oversized demux output
         my $pending = ${*$self}{yandex_demux_pending} // '';

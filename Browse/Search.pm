@@ -1,5 +1,9 @@
 package Plugins::yandex::Browse::Search;
 
+# Search handlers: recent searches, per-type search results (tracks, albums,
+# artists, playlists, podcasts). The "recent searches" screen shows a keyboard
+# prompt; the actual search is dispatched to per-type handlers.
+
 use strict;
 use warnings;
 use utf8;

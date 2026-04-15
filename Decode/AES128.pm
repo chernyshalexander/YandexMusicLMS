@@ -1,14 +1,46 @@
-package Plugins::yandex::AES128;
+package Plugins::yandex::Decode::AES128;
 
-# Pure-Perl AES-128 block cipher, ECB mode, encrypt-only.
-# Drop-in fallback for Crypt::Rijndael->new($key, MODE_ECB)->encrypt($block).
-# Uses T-table optimisation: each of 9 rounds = 16 table lookups + XORs.
-# Performance: ~50k-150k blocks/sec on modern hardware — sufficient for FLAC streaming.
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Decode::AES128 - Pure-Perl AES-128 ECB block cipher
+
+=head1 DESCRIPTION
+
+Drop-in fallback for C<Crypt::Rijndael->new($key, MODE_ECB)->encrypt($block)>.
+Used by ProtocolHandler when Crypt::Rijndael is not installed.
+
+The algorithm is AES-128 in ECB mode (encrypt-only). Even though ECB is
+generally unsafe for data encryption, it is the correct building block for
+AES-CTR stream decryption: each counter block is individually encrypted in ECB
+mode, then XOR'd with the ciphertext. The security comes from the counter
+uniqueness, not from the block mode.
+
+Algorithm: FIPS PUB 197, "Advanced Encryption Standard (AES)"
+  https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf
+
+T-table optimisation (Daemen & Rijmen, "The Design of Rijndael", 2002):
+  One round = SubBytes + ShiftRows + MixColumns + AddRoundKey, merged into
+  four 256-entry lookup tables (Te0–Te3). Each table entry combines the S-box
+  substitution with one row of the MixColumns matrix multiplication in GF(2^8).
+  This reduces 9 inner rounds to 16 table lookups + 4 XORs each, versus the
+  naive loop over the 4×4 state matrix.
+
+Performance: ~50k–150k blocks/sec on modern hardware (more than enough for
+  FLAC streaming at ~900 kbps ≈ ~7k 16-byte blocks/sec).
+
+=cut
 
 use strict;
 use warnings;
 
-# --- AES forward S-box (256 bytes) ---
+use strict;
+use warnings;
+
+# AES forward S-box (256 bytes).
+# Computed from GF(2^8) multiplicative inverses plus affine transform over GF(2).
+# Ref: FIPS 197, §5.1.1, Figure 7.
 my @S = (
     0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
     0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
@@ -28,36 +60,45 @@ my @S = (
     0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
 );
 
-# Round constants for key schedule (10 rounds for AES-128)
+# Round constants for AES-128 key schedule (10 rounds).
+# Rcon[i] = x^(i-1) in GF(2^8) with polynomial x^8+x^4+x^3+x+1, stored in the
+# high byte of a 32-bit word. Ref: FIPS 197, §5.2, Table 2.
 my @Rcon = map { $_ << 24 } (0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36);
 
-# T-tables: Te0[a] = SubBytes(a) mixed with MixColumns coefficients for row 0.
-# Te1/Te2/Te3 are 8/16/24-bit right-rotations of Te0 (rows 1/2/3).
-# Built once at module load time.
+# T-tables Te0–Te3: combine SubBytes, ShiftRows, and MixColumns into one lookup.
+# Te0[a] encodes the contribution of byte 'a' in row 0 through MixColumns:
+#   [2·S(a), 1·S(a), 1·S(a), 3·S(a)] packed as a big-endian 32-bit word.
+# Te1/Te2/Te3 are right-rotations of Te0 by 8/16/24 bits — they encode the same
+# operation for bytes that start in rows 1/2/3 (after ShiftRows routing).
+# Built once at module load: 4 × 256 × 4 bytes = 4 KB total.
 my (@Te0, @Te1, @Te2, @Te3);
 {
     for my $i (0..255) {
         my $s  = $S[$i];
-        my $s2 = (($s << 1) ^ (($s & 0x80) ? 0x1b : 0)) & 0xff; # GF(2^8) * 2
-        my $s3 = $s2 ^ $s;                                        # GF(2^8) * 3
-        # Te0: row-0 byte contribution through MixColumns [2,1,1,3] (big-endian word)
+        my $s2 = (($s << 1) ^ (($s & 0x80) ? 0x1b : 0)) & 0xff; # GF(2^8) multiply by x (×2)
+        my $s3 = $s2 ^ $s;                                        # GF(2^8) multiply by (x+1) (×3)
+        # MixColumns row-0 coefficients [2,1,1,3] applied to S(i), packed big-endian
         $Te0[$i] = (($s2 << 24) | ($s << 16) | ($s << 8) | $s3) & 0xFFFFFFFF;
-        # Te1/Te2/Te3: rotate right by 8/16/24 bits
+        # Rows 1/2/3: rotate the row-0 word right by 8/16/24 bits
         $Te1[$i] = (($Te0[$i] >> 8)  | (($Te0[$i] & 0x000000ff) << 24)) & 0xFFFFFFFF;
         $Te2[$i] = (($Te0[$i] >> 16) | (($Te0[$i] & 0x0000ffff) << 16)) & 0xFFFFFFFF;
         $Te3[$i] = (($Te0[$i] >> 24) | (($Te0[$i] & 0x00ffffff) <<  8)) & 0xFFFFFFFF;
     }
 }
 
-# Expand 16-byte key into 44 round-key words (AES-128 key schedule).
+# Expand a 16-byte key into 44 round-key words (AES-128 key schedule).
+# Produces rk[0..43]: rk[0..3] = original key, rk[4*i..4*i+3] = round i key.
+# Every 4th word applies RotWord (rotate left by 8 bits), SubWord (S-box each byte),
+# and XOR with Rcon[i/4 - 1]. Ref: FIPS 197, §5.2, KeyExpansion algorithm.
 sub _key_expand {
     my ($key) = @_;
     my @w = unpack('N4', $key);            # 4 big-endian 32-bit words
     for my $i (4..43) {
         my $t = $w[$i - 1];
         if ($i % 4 == 0) {
-            # RotWord (rotate left 8) + SubWord + Rcon XOR
+            # RotWord: rotate left by 8 bits (move high byte to low position)
             $t = (($t << 8) | ($t >> 24)) & 0xFFFFFFFF;
+            # SubWord: apply S-box to each byte independently
             $t = ($S[($t >> 24) & 0xff] << 24)
                | ($S[($t >> 16) & 0xff] << 16)
                | ($S[($t >>  8) & 0xff] <<  8)

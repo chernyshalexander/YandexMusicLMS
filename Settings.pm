@@ -1,5 +1,21 @@
 package Plugins::yandex::Settings;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Settings - Web settings page for the Yandex Music plugin
+
+=head1 DESCRIPTION
+
+Handles GET/POST for the settings page (plugins/yandex/settings/basic.html).
+Account management (add/delete) is done here asynchronously: token validation
+requires a round-trip to the Yandex API before the page can be re-rendered,
+so C<handler()> returns early and calls C<$callback> from within the API init
+callback.
+
+=cut
+
 use strict;
 use base qw(Slim::Web::Settings);
 

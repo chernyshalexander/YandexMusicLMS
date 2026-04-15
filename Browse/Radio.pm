@@ -1,5 +1,10 @@
 package Plugins::yandex::Browse::Radio;
 
+# Browse handlers for Yandex Radio (rotor): station categories, station lists,
+# and the "My Wave" wizard. Selecting a station produces a
+# yandexmusic://rotor_session/{id}?... URL that explodePlaylist() in
+# ProtocolHandler turns into an infinite stream of track URLs.
+
 use strict;
 use warnings;
 use utf8;

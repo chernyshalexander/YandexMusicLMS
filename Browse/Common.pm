@@ -1,5 +1,28 @@
 package Plugins::yandex::Browse::Common;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse::Common - Shared rendering helpers and metadata cache
+
+=head1 DESCRIPTION
+
+Provides two kinds of functions used by all Browse:: submodules:
+
+=over 4
+
+=item * B<render*> functions — convert Yandex API objects into LMS OPML item lists
+and call the LMS callback with the result.
+
+=item * B<cache_track_metadata> — normalises a Yandex track object and stores it in
+the LMS cache under the C<yandex_meta_{id}> key (TTL 90 days). Always merges with
+any existing entry so that bitrate and AES key set by ProtocolHandler are not lost.
+
+=back
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
@@ -10,8 +33,11 @@ use Slim::Utils::Strings qw(cstring);
 
 my $log = logger('plugin.yandex');
 
-# Shared Rendering Functions
-
+# Build an LMS OPML item list from an array of Yandex track objects and call $cb.
+# Covers art is resolved from several possible API fields (coverUri, ogImage,
+# albums[0].coverUri) and normalised to a full https:// URL at 200×200px.
+# Also calls cache_track_metadata() for every track so that getMetadataFor()
+# returns instantly when LMS later asks for track info during playback.
 sub renderTrackList {
     my ($tracks, $cb, $title, $container_url, $params) = @_;
 

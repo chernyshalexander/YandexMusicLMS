@@ -1,5 +1,10 @@
 package Plugins::yandex::Browse::Favorites;
 
+# Browse handlers for the user's personal library:
+# liked tracks, albums, artists, playlists, and podcasts.
+# All handlers follow the same pattern: fetch a list of short objects from the
+# API, then fetch full metadata in chunks of 50 (the API's max per request).
+
 use strict;
 use warnings;
 use utf8;

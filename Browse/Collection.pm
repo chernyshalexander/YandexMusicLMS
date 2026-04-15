@@ -1,5 +1,9 @@
 package Plugins::yandex::Browse::Collection;
 
+# Browse handlers for discovery content: chart, new releases, new playlists,
+# "For You" personal mixes, smart playlists (Deja Vu, Never Heard, etc.),
+# themed mixes, and tag-based playlist collections.
+
 use strict;
 use warnings;
 use utf8;

@@ -1,22 +1,37 @@
 package Plugins::yandex::Plugin;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Plugin - Yandex Music integration plugin for LMS
+
+=head1 DESCRIPTION
+
+This module implements the Yandex Music plugin for the Lyrion Music Server
+(LMS). It manages account storage, creates and caches Yandex API clients,
+handles player event callbacks, and integrates with the LMS browsing and
+playback system.
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
 use base qw(Slim::Plugin::OPMLBased);
 
-use Data::Dumper;
-use Encode qw(encode decode);
+use Data::Dumper;             # TODO: unused (Dumper never called) — remove after testing
+use Encode qw(encode decode); # TODO: unused (encode/decode never called) — remove after testing
 use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::API;
 use Plugins::yandex::Browse;
-use Slim::Networking::SimpleAsyncHTTP;
+use Slim::Networking::SimpleAsyncHTTP; # TODO: unused (HTTP via API.pm) — remove after testing
 use Slim::Player::ProtocolHandlers;
-use Slim::Utils::Cache;
+use Slim::Utils::Cache;       # TODO: unused (no cache ops here) — remove after testing
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(string cstring);
-use URI::Escape qw(uri_escape_utf8);
+use URI::Escape qw(uri_escape_utf8); # TODO: unused (uri_escape_utf8 never called) — remove after testing
 
 my $log;
 $log = Slim::Utils::Log->addLogCategory({
@@ -27,12 +42,13 @@ $log = Slim::Utils::Log->addLogCategory({
 
 my $prefs = preferences('plugin.yandex');
 
-# Per-userId API client instances: { $userId => API object }
+# Cache of API client objects keyed by Yandex user ID.
 my %api_clients;
-# Per-player Ynison instances: { $clientId => Ynison object }
+# Active Ynison session objects keyed by LMS player ID.
 my %ynison_instances;
 
-
+# Main LMS plugin lifecycle hook. Sets up preferences, compatibility handling,
+# and integration with both the LMS menu system and Yandex API clients.
 sub initPlugin {
     my $class = shift;
 
@@ -53,13 +69,14 @@ sub initPlugin {
         wizard_cat_language  => 1,
     });
 
-    # Migrate old single-token setup to accounts hash
+    # Preserve compatibility with the old single-token preference by moving
+    # that token into the new accounts structure.
     _migrate_legacy_token();
 
-    # Handle enable_ynison preference changes
+    # Keep Ynison creation/cleanup in step with the enable_ynison preference.
     $prefs->setChange(\&_on_enable_ynison_change, 'enable_ynison');
 
-    # Register ffmpeg path with LMS so custom-convert.conf [ffmpeg] rule can be resolved.
+    # Locate ffmpeg and expose its path to LMS so mp4-based media handling works.
     _register_ffmpeg_path();
 
     my $deps = Plugins::yandex::API::check_dependencies();
@@ -98,7 +115,7 @@ sub initPlugin {
     }
 }
 
-# Migrate old single token pref to new accounts hash
+# Migrate legacy single-token storage into the current multi-account format.
 sub _migrate_legacy_token {
     my $token = $prefs->get('token');
     return unless $token;
@@ -111,7 +128,9 @@ sub _migrate_legacy_token {
     $prefs->set('accounts', $accounts);
 }
 
-# Initialize (or re-initialize) API client for a userId
+# Initialize or refresh the Yandex API client for a specific account.
+# The client object is cached in %api_clients and reused while the plugin
+# remains loaded.
 sub _init_api_client {
     my $userId = shift;
 
@@ -119,7 +138,7 @@ sub _init_api_client {
     my $account  = $accounts->{$userId} || return;
     my $token    = $account->{token}    || return;
 
-    return if exists $api_clients{$userId};  # Already initialized
+    return if exists $api_clients{$userId};  # already initialized
 
     my $api = Plugins::yandex::API->new($token);
     $api->init(
@@ -128,7 +147,8 @@ sub _init_api_client {
             my $me = $client_instance->get_me();
             my $realUserId = $me->{uid};
 
-            # Rename 'migrating' to real userId
+            # Replace the temporary migration placeholder with the real
+            # Yandex userId once the account metadata becomes available.
             if ($userId eq 'migrating' && $realUserId) {
                 my $accounts = $prefs->get('accounts') || {};
                 my $data = delete $accounts->{'migrating'};
@@ -183,7 +203,8 @@ sub _maybe_init_ynison {
     }
 }
 
-# Remove API client and associated Ynison instances for a userId
+# Remove an account's cached API client and shut down any Ynison sessions
+# that were attached to that account.
 sub _remove_api_client {
     my $userId = shift;
     delete $api_clients{$userId};
@@ -203,6 +224,9 @@ sub _remove_api_client {
 
 sub shutdownPlugin {
     my $class = shift;
+
+    # Unsubscribe from player events and clean up any active Ynison sessions
+    # before the plugin is unloaded.
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
 
     foreach my $id (keys %ynison_instances) {
@@ -214,6 +238,8 @@ sub shutdownPlugin {
 sub _on_enable_ynison_change {
     my ($pref, $new_value, $obj, $old_value) = @_;
 
+    # React to changes in the Ynison preference, either starting Ynison
+    # for existing players or tearing down active Ynison sessions.
     if ($new_value && !$old_value) {
         # Ynison enabled - initialize for all players
         require Plugins::yandex::Ynison;
@@ -242,6 +268,9 @@ sub playerEventCallback {
     my $request = shift;
     my $client  = $request->client() || return;
 
+    # Respond to LMS player events relevant to Yandex Music.
+    # This includes radio feedback, Ynison lifecycle management, and volume
+    # synchronization between the local player and Yandex.
     my $command = $request->getRequest(1);
 
     # Handle client connection/disconnection for Ynison
@@ -335,6 +364,9 @@ sub playerEventCallback {
 sub _handleRotorFeedback {
     my ($client, $action) = @_;
 
+    # Translate LMS playback events into Yandex rotor session feedback.
+    # This helps Yandex improve personalization and keeps radio sessions aligned
+    # with the actual user behavior.
     my $yandex_client = getAPIForClient($client);
     return unless $yandex_client;
 
@@ -415,6 +447,8 @@ sub getDisplayName { 'Yandex Music' }
 sub handleFeed {
     my ($client, $cb, $args) = @_;
 
+    # Build the root Yandex menu for the player, ensuring that an API client
+    # exists for the current account before delegating to the browse renderer.
     my $userId = _getUserIdForClient($client);
     unless ($userId) {
         $cb->([{
@@ -455,6 +489,8 @@ sub handleFeed {
 sub _renderRootMenu {
     my ($client, $cb, $client_instance) = @_;
 
+    # Compose the top-level plugin menu based on enabled features and
+    # user preferences for the current account.
     my @items;
 
     if ($prefs->get('show_chart')) {
@@ -538,6 +574,8 @@ sub _renderRootMenu {
 }
 
 # Menu: list accounts for switching (per player)
+# Shows a selectable list of configured Yandex accounts for the current
+# LMS player.
 sub selectAccount {
     my ($client, $cb, $args) = @_;
 
@@ -626,6 +664,7 @@ sub getClient {
 }
 
 sub _format_account_name {
+    # Generate a friendly account label from the Yandex profile data.
     my $me = shift;
     my $login   = $me->{login}       || '';
     my $display = $me->{displayName} || '';
@@ -642,6 +681,8 @@ sub _format_account_name {
 }
 
 sub _register_ffmpeg_path {
+    # Search common paths for ffmpeg and register the first valid location
+    # with LMS so audio transcoding and demuxing work correctly.
     my @search_dirs;
 
     if (main::ISWINDOWS) {
