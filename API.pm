@@ -231,6 +231,21 @@ sub get_me {
     return $self->{me};
 }
 
+sub like_track {
+    my ($self, $track_id, $callback, $error_callback) = @_;
+    my $uid = $self->get_me->{uid};
+    my $url = 'https://api.music.yandex.net/users/' . $uid . '/likes/tracks/add?track-id=' . uri_escape_utf8($track_id);
+    $self->post($url, {}, sub { $callback->() }, $error_callback);
+}
+
+sub dislike_track {
+    my ($self, $track_id, $callback, $error_callback) = @_;
+    my $uid = $self->get_me->{uid};
+    my $url = 'https://api.music.yandex.net/users/' . $uid . '/dislikes/tracks/add?track-id=' . uri_escape_utf8($track_id);
+    $self->post($url, {}, sub { $callback->() }, $error_callback);
+}
+
+
 sub users_likes_tracks {
     my ($self, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/likes/tracks/';
@@ -425,6 +440,46 @@ sub get_artist_albums {
                 $callback->($result->{result}->{albums});
             } else {
                 $error_callback->("Failed to get artist albums");
+            }
+        },
+        $error_callback,
+    );
+}
+
+sub get_similar_artists {
+    my ($self, $artist_id, $callback, $error_callback) = @_;
+    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/similar';
+
+    $self->get(
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{similarArtists}) {
+                $callback->($result->{result}->{similarArtists});
+            } else {
+                $error_callback->("Failed to get similar artists");
+            }
+        },
+        $error_callback,
+    );
+}
+
+
+sub get_artist_also_albums {
+    my ($self, $artist_id, $callback, $error_callback) = @_;
+    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/also-albums';
+    my $params = { 'page-size' => 100, 'sort-by' => 'year' };
+
+    $self->get(
+        $url,
+        $params,
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{albums}) {
+                $callback->($result->{result}->{albums});
+            } else {
+                $error_callback->("Failed to get artist also-albums");
             }
         },
         $error_callback,

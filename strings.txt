@@ -442,6 +442,30 @@ PLUGIN_YANDEX_WAVE_BY_ARTIST
 	EN	My Vibe by Artist
 	RU	Моя волна по исполнителю
 
+PLUGIN_YANDEX_ALSO_ALBUMS
+	EN	Also in Albums
+	RU	Также в альбомах
+
+PLUGIN_YANDEX_WAVE_BY_TRACK
+	EN	My Vibe by Track
+	RU	Моя волна по треку
+
+PLUGIN_YANDEX_LIKE_TRACK
+	EN	Like
+	RU	Нравится
+
+PLUGIN_YANDEX_DISLIKE_TRACK
+	EN	Dislike
+	RU	Не нравится
+
+PLUGIN_YANDEX_DONE
+	EN	Done
+	RU	Готово
+
+PLUGIN_YANDEX_SIMILAR_ARTISTS
+	EN	Similar Artists
+	RU	Похожие исполнители
+
 
 PLUGIN_YANDEX_MODE_DEFAULT
 	EN	Default

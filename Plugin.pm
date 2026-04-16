@@ -25,6 +25,7 @@ use Encode qw(encode decode); # TODO: unused (encode/decode never called) — re
 use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::API;
 use Plugins::yandex::Browse;
+use Plugins::yandex::Browse::InfoMenu;
 use Slim::Networking::SimpleAsyncHTTP; # TODO: unused (HTTP via API.pm) — remove after testing
 use Slim::Player::ProtocolHandlers;
 use Slim::Utils::Cache;       # TODO: unused (no cache ops here) — remove after testing
@@ -108,6 +109,11 @@ sub initPlugin {
     foreach my $userId (keys %$accounts) {
         _init_api_client($userId);
     }
+
+    Slim::Menu::TrackInfo->registerInfoProvider( yandex => (
+        before => 'top',
+        func   => \&Plugins::yandex::Browse::InfoMenu::trackInfoMenu,
+    ) );
 
     if (main::WEBUI) {
         require Plugins::yandex::Settings;

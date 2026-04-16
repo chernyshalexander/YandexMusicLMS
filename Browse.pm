@@ -111,12 +111,26 @@ sub _handleArtist {
             image => 'html/images/albums.png',
         },
         {
+            name  => cstring($client, 'PLUGIN_YANDEX_ALSO_ALBUMS'),
+            type  => 'link',
+            url   => \&_handleArtistAlsoAlbums,
+            passthrough => [$yandex_client, $artist_id],
+            image => 'html/images/albums.png',
+        },
+        {
             name     => cstring($client, 'PLUGIN_YANDEX_WAVE_BY_ARTIST'),
             type     => 'audio',
             url      => $base_url . 'artist:' . $artist_id,
             play     => $base_url . 'artist:' . $artist_id,
             on_select => 'play',
             image    => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name  => cstring($client, 'PLUGIN_YANDEX_SIMILAR_ARTISTS'),
+            type  => 'link',
+            url   => \&_handleSimilarArtists,
+            passthrough => [$yandex_client, $artist_id],
+            image => 'html/images/artists.png',
         },
     );
 
@@ -181,6 +195,91 @@ sub _handleArtistAlbums {
         sub {
              my $error = shift;
              $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleArtistAlsoAlbums {
+    my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+
+    $yandex_client->get_artist_also_albums(
+        $artist_id,
+        sub {
+            my $albums = shift;
+            my @items;
+
+            foreach my $album (@$albums) {
+                my $title  = $album->{title} // 'Unknown Album';
+                my $artist = ($album->{artists} && $album->{artists}[0]) ? ($album->{artists}[0]->{name} // '') : '';
+                my $year   = $album->{year} // '';
+                $title .= " ($year)" if $year;
+                $title .= " — $artist" if $artist;
+
+                my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
+                if ($album->{coverUri}) {
+                    $icon = $album->{coverUri};
+                    $icon =~ s/%%/200x200/;
+                    $icon = "https://$icon";
+                }
+
+                push @items, {
+                    name  => $title,
+                    type  => 'album',
+                    url   => \&_handleAlbum,
+                    passthrough => [$yandex_client, $album->{id}],
+                    image => $icon,
+                    play  => 'yandexmusic://album/' . $album->{id},
+                };
+            }
+
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_ALSO_ALBUMS'),
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        }
+    );
+}
+
+sub _handleSimilarArtists {
+    my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+
+    $yandex_client->get_similar_artists(
+        $artist_id,
+        sub {
+            my $artists = shift;
+            my @items;
+
+            foreach my $artist (@$artists) {
+                my $name = $artist->{name} // 'Unknown Artist';
+
+                my $icon = 'html/images/artists.png';
+                if ($artist->{cover} && $artist->{cover}->{uri}) {
+                    $icon = $artist->{cover}->{uri};
+                    $icon =~ s/%%/200x200/;
+                    $icon = "https://$icon";
+                }
+
+                push @items, {
+                    name  => $name,
+                    type  => 'link',
+                    url   => \&_handleArtist,
+                    passthrough => [$yandex_client, $artist->{id}],
+                    image => $icon,
+                };
+            }
+
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_SIMILAR_ARTISTS'),
+            });
+        },
+        sub {
+            my $error = shift;
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         }
     );
 }
