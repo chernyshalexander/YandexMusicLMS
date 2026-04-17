@@ -510,7 +510,8 @@ sub _apply_yandex_state {
 
     if ($same_queue && $remote_track eq $lms_track) {
         # Same track, same queue — only play/pause
-        $log->info("$pfx Same track, syncing play/pause (remote_paused=$remote_paused)");
+        $log->info(sprintf('%s Same track, syncing play/pause (remote_paused=%d, lms_playing=%d, lms_paused=%d)',
+            $pfx, $remote_paused, $client->isPlaying(), $client->isPaused()));
         $self->_sync_play_pause($remote_paused);
 
     } elsif ($same_queue) {
