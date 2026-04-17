@@ -457,9 +457,6 @@ sub _handle_state_message {
     $log->debug(sprintf('Ynison [%s]: External state, active=%s author=%s',
         $client->name(), $active_id || '(none)', $q_author));
 
-    # Cache full Yandex state (used when echoing back to preserve entity_id etc.)
-    $self->_cache_yandex_state($player_state);
-
     # Only act when we are the active device
     return unless $active_id eq $self->{device_id};
 
@@ -470,6 +467,10 @@ sub _handle_state_message {
     }
 
     $self->_apply_yandex_state($player_state);
+
+    # Cache full Yandex state AFTER applying, so _is_same_queue() compares against
+    # the OLD cached state (to distinguish Cast from NEXT/PREV), not the new one
+    $self->_cache_yandex_state($player_state);
 }
 
 # ---------------------------------------------------------------------------
