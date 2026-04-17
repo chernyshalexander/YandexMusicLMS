@@ -644,7 +644,15 @@ sub update_state {
     return if $self->{local_mode};
     return unless $client->isPlaying() || $client->isPaused();
 
-    my $state = $self->_build_player_state();
+    my $state;
+    eval {
+        $state = $self->_build_player_state();
+    };
+    if ($@) {
+        $log->error(sprintf('Ynison [%s]: Failed to build player state: %s',
+            $client->name(), $@));
+        return;
+    }
     return unless @{$state->{player_queue}{playable_list} // []};
 
     my $ts  = int(time() * 1000);
@@ -670,7 +678,15 @@ sub _build_player_state {
 
     my $paused  = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
     my $dur_ms  = $song ? int(($song->duration() || 0) * 1000) : 0;
-    my $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000);
+    my $prog_ms = 0;
+    eval {
+        $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000);
+    };
+    if ($@) {
+        $log->debug(sprintf('Ynison [%s]: songTime error (ignore): %s',
+            $client->name(), $@));
+        $prog_ms = 0;
+    }
 
     my $status = {
         duration_ms    => "$dur_ms",
@@ -736,7 +752,15 @@ sub _send_full_state_msg {
                   : 'INTERCEPT_IF_NO_ONE_ACTIVE';
     my $vol       = ($client->volume() || 0) / 100.0;
     my $ts_ms     = int(time() * 1000);
-    my $state     = $self->_build_player_state();
+    my $state;
+    eval {
+        $state = $self->_build_player_state();
+    };
+    if ($@) {
+        $log->error(sprintf('Ynison [%s]: Failed to build player state in full msg: %s',
+            $client->name(), $@));
+        return;
+    }
 
     $self->_send_message({
         update_full_state => {
