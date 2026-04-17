@@ -505,9 +505,12 @@ sub _apply_yandex_state {
     my $same_queue = $self->_is_same_queue($remote_list, $remote_entity);
     my $pfx        = sprintf('Ynison [%s]:', $client->name());
 
+    $log->debug(sprintf('%s _apply_yandex_state: same_queue=%d, remote_track=%s, lms_track=%s, entity=%s',
+        $pfx, $same_queue, $remote_track, $lms_track, $remote_entity || '(none)'));
+
     if ($same_queue && $remote_track eq $lms_track) {
         # Same track, same queue — only play/pause
-        $log->debug("$pfx Same track, syncing play/pause (remote_paused=$remote_paused)");
+        $log->info("$pfx Same track, syncing play/pause (remote_paused=$remote_paused)");
         $self->_sync_play_pause($remote_paused);
 
     } elsif ($same_queue) {
@@ -555,12 +558,22 @@ sub _rebuild_queue {
     my ($self, $list, $target_idx, $start_paused) = @_;
     my $client = $self->{client};
 
+    $log->info(sprintf('Ynison [%s]: _rebuild_queue: clearing playlist, adding %d tracks, target_idx=%d, paused=%d',
+        $client->name(), scalar(@$list), $target_idx, $start_paused));
+
     $self->_set_syncing_guard();
     $client->execute(['playlist', 'clear']);
-    for my $track (@$list) {
+
+    for my $i (0..$#$list) {
+        my $track = $list->[$i];
         next unless $track && $track->{playable_id};
-        $client->execute(['playlist', 'add', 'yandexmusic://' . $track->{playable_id}]);
+        my $url = 'yandexmusic://' . $track->{playable_id};
+        $log->debug(sprintf('Ynison [%s]: Adding track %d: %s', $client->name(), $i, $url));
+        $client->execute(['playlist', 'add', $url]);
     }
+
+    $log->info(sprintf('Ynison [%s]: Setting index to %d, playing=%d',
+        $client->name(), $target_idx, !$start_paused));
     $client->execute(['playlist', 'index', $target_idx]);
     $client->execute(['play']) unless $start_paused;
 }
