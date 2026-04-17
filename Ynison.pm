@@ -466,10 +466,9 @@ sub _handle_state_message {
         $self->{local_mode} = 0;
     }
 
+    # Apply with OLD cached state (to distinguish Cast from NEXT/PREV)
+    # THEN cache the new state for next iteration's comparison and for echo-back
     $self->_apply_yandex_state($player_state);
-
-    # Cache full Yandex state AFTER applying, so _is_same_queue() compares against
-    # the OLD cached state (to distinguish Cast from NEXT/PREV), not the new one
     $self->_cache_yandex_state($player_state);
 }
 
