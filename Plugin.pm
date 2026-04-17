@@ -337,8 +337,7 @@ sub playerEventCallback {
                 if (   $command eq 'jump'
                     || $command eq 'stop'
                     || $command eq 'clear'
-                    || $command eq 'volume'
-                    || ($command eq 'newsong' && $source ne '')
+                    || ($command eq 'newsong' && $source ne '' && !$ynison->is_ynison_track())
                     || ($command eq 'playlist'
                         && $sub =~ /^(?:play|load|playtracks|loadtracks|playalbum|loadalbum)$/i)
                 ) {
