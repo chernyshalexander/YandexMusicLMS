@@ -167,13 +167,7 @@ sub _connect_redirector {
 
     $log->info(sprintf('Ynison [%s]: Connecting to redirector...', $self->{client}->name()));
 
-    my $async = Plugins::yandex::Ynison::Async->new({
-        host     => 'ynison.music.yandex.ru',
-        port     => 443,
-        https    => 1,
-        onError  => sub { $self->_on_error('redirector', @_) },
-        onRead   => sub { $self->_on_redirector_data(@_) },
-    });
+    my $async = Plugins::yandex::Ynison::Async->new();
 
     unless ($async) {
         $log->error('Failed to create async connection');
@@ -198,7 +192,19 @@ sub _connect_redirector {
     $request .= "\r\n";
 
     $self->{socket} = $async;
-    $async->write($request);
+
+    # Start async connection with proper parameters
+    $async->start(
+        host         => 'ynison.music.yandex.ru',
+        port         => 443,
+        https        => 1,
+        onConnected  => sub {
+            # Send WebSocket upgrade request once connected
+            $self->{socket}->write($request);
+        },
+        onRead       => sub { $self->_on_redirector_data(@_) },
+        onError      => sub { $self->_on_error('redirector', @_) },
+    );
 }
 
 sub _on_redirector_data {
@@ -262,13 +268,7 @@ sub _connect_state_service {
     $log->info(sprintf('Ynison [%s]: Connecting to state service at %s...',
         $self->{client}->name(), $host));
 
-    my $async = Plugins::yandex::Ynison::Async->new({
-        host     => $host,
-        port     => 443,
-        https    => 1,
-        onError  => sub { $self->_on_error('state', @_) },
-        onRead   => sub { $self->_on_state_data(@_) },
-    });
+    my $async = Plugins::yandex::Ynison::Async->new();
 
     unless ($async) {
         $log->error('Failed to connect to state service');
@@ -292,7 +292,19 @@ sub _connect_state_service {
     $request .= "\r\n";
 
     $self->{socket} = $async;
-    $async->write($request);
+
+    # Start async connection with proper parameters
+    $async->start(
+        host         => $host,
+        port         => 443,
+        https        => 1,
+        onConnected  => sub {
+            # Send WebSocket upgrade request once connected
+            $self->{socket}->write($request);
+        },
+        onRead       => sub { $self->_on_state_data(@_) },
+        onError      => sub { $self->_on_error('state', @_) },
+    );
 }
 
 sub _on_state_data {
