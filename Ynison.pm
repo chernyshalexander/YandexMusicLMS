@@ -449,13 +449,25 @@ sub _handle_state_message {
 
     # Echo filter: if queue version.device_id == ours, we sent this state update
     my $q_author = ($queue->{version} // {})->{device_id} // '';
+
+    # DEBUG: show all incoming messages (to diagnose pause/play issue)
+    my $pfx = sprintf('Ynison [%s]', $client->name());
+
+    # Log full message for debugging (without playable_list which is huge)
+    my $msg_copy = {%$msg};
+    if ($msg_copy->{player_state} && $msg_copy->{player_state}->{player_queue}) {
+        delete $msg_copy->{player_state}->{player_queue}->{playable_list};
+    }
+    $log->debug(sprintf('%s Full message: %s', $pfx, encode_json($msg_copy)));
+
     if ($q_author eq $self->{device_id}) {
-        $log->debug(sprintf('Ynison [%s]: Skipping own echo', $client->name()));
+        my $version_json = encode_json($queue->{version} // {});
+        $log->debug(sprintf('%s Skipping own echo (queue.version=%s)', $pfx, $version_json));
         return;
     }
 
-    $log->debug(sprintf('Ynison [%s]: External state, active=%s author=%s',
-        $client->name(), $active_id || '(none)', $q_author));
+    $log->debug(sprintf('%s External state received: queue.version.device_id=%s, active=%s',
+        $pfx, $q_author, $active_id || '(none)'));
 
     # Only act when we are the active device
     return unless $active_id eq $self->{device_id};
@@ -483,11 +495,21 @@ sub _apply_yandex_state {
     my $status = $player_state->{status}       // {};
 
     my $remote_paused = $status->{paused} ? 1 : 0;
+    my $pfx            = sprintf('Ynison [%s]:', $client->name());
+
+    # Case 1: Partial state update (play/pause only) — no playable_list
+    # These are status-only updates from mobile when pausing/playing current queue
+    my $remote_list = $queue->{playable_list} // [];
+    if (!@$remote_list) {
+        $log->debug(sprintf('%s Status-only update (no playable_list): paused=%d', $pfx, $remote_paused));
+        $self->_sync_play_pause($remote_paused);
+        return;
+    }
+
+    # Case 2: Full state update with playable_list (Cast/NEXT/PREV)
     my $remote_idx    = $queue->{current_playable_index} // 0;
-    my $remote_list   = $queue->{playable_list}          // [];
     my $remote_entity = $queue->{entity_id}              // '';
 
-    return unless @$remote_list;
     return unless $remote_idx >= 0 && $remote_idx < @$remote_list;
 
     my $remote_track = $remote_list->[$remote_idx]{playable_id} // '';
@@ -503,7 +525,6 @@ sub _apply_yandex_state {
     }
 
     my $same_queue = $self->_is_same_queue($remote_list, $remote_entity);
-    my $pfx        = sprintf('Ynison [%s]:', $client->name());
 
     $log->debug(sprintf('%s _apply_yandex_state: same_queue=%d, remote_track=%s, lms_track=%s, entity=%s',
         $pfx, $same_queue, $remote_track, $lms_track, $remote_entity || '(none)'));
@@ -762,8 +783,6 @@ sub _send_full_state_msg {
     my $client    = $self->{client};
     my $is_active = $opts{force_inactive} ? \0
                   : ($client->isPlaying() || $client->isPaused()) ? \1 : \0;
-    my $intercept = $opts{force_inactive} ? 'DO_NOT_INTERCEPT_BY_DEFAULT'
-                  : 'INTERCEPT_IF_NO_ONE_ACTIVE';
     my $vol       = ($client->volume() || 0) / 100.0;
     my $ts_ms     = int(time() * 1000);
     my $state;
@@ -798,7 +817,7 @@ sub _send_full_state_msg {
         },
         rid                        => $self->_new_rid(),
         player_action_timestamp_ms => "$ts_ms",
-        activity_interception_type => $intercept,
+        activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
     });
 }
 
