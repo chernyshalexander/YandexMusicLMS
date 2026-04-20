@@ -779,6 +779,33 @@ sub _decode_ws_frame {
         }
         return $self->SUPER::new_socket(%args);
     }
+
+    sub write {
+        my ($self, $data) = @_;
+        if ($self->{socket}) {
+            $self->{socket}->write($data);
+        }
+    }
+
+    sub start {
+        my ($self, %args) = @_;
+        $self->SUPER::start(%args);
+    }
+
+    sub close {
+        my ($self) = @_;
+        if ($self->{socket}) {
+            $self->{socket}->close();
+        }
+    }
+
+    sub stop {
+        my ($self) = @_;
+        if ($self->{socket}) {
+            $self->{socket}->close();
+        }
+        $self->SUPER::stop() if $self->can('SUPER::stop');
+    }
 }
 
 1;
