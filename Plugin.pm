@@ -204,7 +204,18 @@ sub _maybe_init_ynison {
         my $playerUserId = _getUserIdForClient($player);
         next unless defined $playerUserId && $playerUserId eq $userId;
         next if exists $ynison_instances{$player->id()};
-        $ynison_instances{$player->id()} = Plugins::yandex::Ynison->new($player, $token, $uid);
+
+        my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
+        $ynison_instances{$player->id()} = $ynison;
+
+        # Register listener for incoming Yandex state updates
+        $ynison->on_state(sub {
+            _handle_yandex_state_update($player, @_);
+        });
+
+        # Start connection
+        $ynison->connect();
+
         $log->info("YANDEX: Ynison started for player " . $player->name() . " (userId=$userId)");
     }
 }
@@ -220,7 +231,7 @@ sub _remove_api_client {
         my $pUserId = $prefs->client($player)->get('userId') || '';
         if ($pUserId eq $userId) {
             if (exists $ynison_instances{$player->id()}) {
-                $ynison_instances{$player->id()}->_cleanup();
+                $ynison_instances{$player->id()}->disconnect();
                 delete $ynison_instances{$player->id()};
             }
             $prefs->client($player)->remove('userId');
@@ -236,9 +247,97 @@ sub shutdownPlugin {
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
 
     foreach my $id (keys %ynison_instances) {
-        $ynison_instances{$id}->_cleanup();
+        $ynison_instances{$id}->disconnect();
     }
     %ynison_instances = ();
+}
+
+# Handle incoming state updates from Yandex Ynison
+sub _handle_yandex_state_update {
+    my ($client, $state) = @_;
+
+    return unless $client && $state;
+
+    # Skip pings
+    return if $state->{ping};
+
+    # Get active device ID
+    my $active_device_id = $state->{active_device_id_optional};
+    my $ynison = $ynison_instances{$client->id()};
+    return unless $ynison && $active_device_id;
+
+    # Only process if we're the active device
+    return unless $active_device_id eq $ynison->device_id;
+
+    # Get the state update (either update_player_state or update_full_state)
+    my $update = $state->{update_player_state} || $state->{update_full_state};
+    return unless $update;
+
+    my $player_state = $update->{player_state};
+    return unless $player_state;
+
+    # Mark that we're syncing from Yandex so playerEventCallback doesn't interfere
+    $ynison->{syncing_from_yandex} = 1;
+
+    eval {
+        # Extract queue and status updates
+        my $queue = $player_state->{player_queue};
+        my $status = $player_state->{status};
+
+        # Step 1: Rebuild queue if tracks changed
+        if ($queue && ref($queue->{playable_list}) eq 'ARRAY') {
+            _rebuild_lms_queue_from_yandex($client, $queue);
+        }
+
+        # Step 2: Set playback status (pause/play)
+        if ($status && defined $status->{paused}) {
+            if ($status->{paused}) {
+                $client->execute(['pause']);
+            } else {
+                $client->execute(['play']);
+            }
+        }
+    };
+
+    if ($@) {
+        $log->error("YANDEX: Error handling Yandex state update: $@");
+    }
+
+    # Clear syncing flag
+    $ynison->{syncing_from_yandex} = 0;
+}
+
+# Rebuild LMS playlist from Yandex queue
+sub _rebuild_lms_queue_from_yandex {
+    my ($client, $queue) = @_;
+
+    return unless $queue && ref($queue->{playable_list}) eq 'ARRAY';
+
+    my @playable_list = @{$queue->{playable_list}};
+    my $current_index = $queue->{current_playable_index} // -1;
+
+    return unless @playable_list;
+
+    $log->info("YANDEX: Rebuilding queue with " . scalar(@playable_list) . " tracks, index=$current_index");
+
+    # Clear existing playlist
+    $client->execute(['playlist', 'clear']);
+
+    # Add each track from Yandex
+    foreach my $yandex_track (@playable_list) {
+        next unless $yandex_track->{id};
+
+        # Build track URL in yandexmusic:// format
+        my $track_url = 'yandexmusic://track/' . $yandex_track->{id};
+
+        # Add to playlist
+        $client->execute(['playlist', 'add', $track_url]);
+    }
+
+    # Set current position
+    if ($current_index >= 0 && $current_index < @playable_list) {
+        $client->execute(['playlist', 'index', $current_index]);
+    }
 }
 
 sub _on_enable_ynison_change {
@@ -256,13 +355,20 @@ sub _on_enable_ynison_change {
             my $accounts = $prefs->get('accounts') || {};
             my $token    = $accounts->{$userId}{token} || next;
             my $uid      = $api_clients{$userId}->get_me()->{uid} || next;
-            $ynison_instances{$player->id()} = Plugins::yandex::Ynison->new($player, $token, $uid);
+
+            my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
+            $ynison->on_state(sub {
+                _handle_yandex_state_update($player, @_);
+            });
+            $ynison->connect();
+            $ynison_instances{$player->id()} = $ynison;
+
             $log->info("YANDEX: Ynison enabled for " . $player->name());
         }
     } elsif (!$new_value && $old_value) {
         # Ynison disabled - cleanup all instances
         foreach my $id (keys %ynison_instances) {
-            $ynison_instances{$id}->_cleanup();
+            $ynison_instances{$id}->disconnect();
             delete $ynison_instances{$id};
         }
         $log->info("YANDEX: Ynison disabled");
@@ -291,14 +397,20 @@ sub playerEventCallback {
                         my $accounts = $prefs->get('accounts') || {};
                         my $token    = $accounts->{$userId}{token} || return;
                         my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
-                        $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client, $token, $uid);
+
+                        my $ynison = Plugins::yandex::Ynison->new($client, $token, $uid);
+                        $ynison->on_state(sub {
+                            _handle_yandex_state_update($client, @_);
+                        });
+                        $ynison->connect();
+                        $ynison_instances{$client->id()} = $ynison;
                     }
                 }
             }
         }
         elsif ($sub_command eq 'disconnect' || $sub_command eq 'forget') {
             if (exists $ynison_instances{$client->id()}) {
-                $ynison_instances{$client->id()}->_cleanup();
+                $ynison_instances{$client->id()}->disconnect();
                 delete $ynison_instances{$client->id()};
             }
         }
@@ -326,31 +438,11 @@ sub playerEventCallback {
         _handleRotorFeedback($client, 'manual_skip_or_stop');
     }
 
-    # Ynison state update and volume sync
+    # Ynison state sync
     if ($prefs->get('enable_ynison')) {
-        if ($ynison_instances{$client->id()}) {
-            my $ynison = $ynison_instances{$client->id()};
+        my $ynison = $ynison_instances{$client->id()};
 
-            if (!$ynison->{syncing_from_yandex}) {
-                my $source = $request->source() // '';
-                my $sub    = ($command eq 'playlist') ? ($request->getRequest(2) // '') : '';
-                if (   $command eq 'jump'
-                    || $command eq 'stop'
-                    || $command eq 'clear'
-                    || ($command eq 'newsong' && $source ne '' && !$ynison->is_ynison_track())
-                    || ($command eq 'playlist'
-                        && $sub =~ /^(?:play|load|playtracks|loadtracks|playalbum|loadalbum)$/i)
-                ) {
-                    $ynison->detach_from_yandex();
-                }
-            }
-
-            if ($command eq 'volume' && !$ynison->{syncing_from_yandex}) {
-                my $vol = $client->volume() || 0;
-                $ynison->_send_volume_update($vol / 100.0) if $vol > 0;
-            }
-            $ynison->update_state();
-        } else {
+        if (!$ynison) {
             # Try to initialize if not yet done
             my $userId = _getUserIdForClient($client);
             if ($userId && exists $api_clients{$userId}) {
@@ -359,8 +451,30 @@ sub playerEventCallback {
                 my $token    = $accounts->{$userId}{token};
                 my $uid      = $api_clients{$userId}->get_me()->{uid};
                 if ($token && $uid) {
-                    $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client, $token, $uid);
+                    $ynison = Plugins::yandex::Ynison->new($client, $token, $uid);
+                    $ynison->on_state(sub {
+                        _handle_yandex_state_update($client, @_);
+                    });
+                    $ynison->connect();
+                    $ynison_instances{$client->id()} = $ynison;
                 }
+            }
+        }
+
+        if ($ynison && !$ynison->{syncing_from_yandex}) {
+            # Send pause/play/next/prev commands back to Yandex
+            if ($command eq 'pause') {
+                my $paused = $client->isPaused();
+                my $cmd = $ynison->build_pause_cmd($paused);
+                $ynison->send_command($cmd) if $cmd;
+            }
+            elsif ($command eq 'play') {
+                my $cmd = $ynison->build_pause_cmd(0);  # 0 = playing
+                $ynison->send_command($cmd) if $cmd;
+            }
+            elsif ($command eq 'jump') {
+                my $cmd = $ynison->build_next_cmd();
+                $ynison->send_command($cmd) if $cmd;
             }
         }
     }
