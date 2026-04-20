@@ -801,7 +801,14 @@ sub _decode_ws_frame {
 
     sub start {
         my ($self, %args) = @_;
-        $self->SUPER::start(%args);
+        $self->SUPER::start(
+            $args{host},
+            $args{port},
+            $args{onConnected},
+            $args{onRead},
+            $args{onError},
+            $args{https},
+        );
     }
 
     sub close {
