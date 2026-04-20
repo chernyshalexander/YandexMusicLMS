@@ -30,7 +30,6 @@ use Slim::Utils::Prefs;
 use Slim::Utils::Timers;
 use Slim::Networking::Async;
 use Time::HiRes qw(time);
-use UUID::Tiny qw(create_uuid_as_string);
 
 my $log   = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
@@ -535,7 +534,17 @@ sub _generate_device_id {
 }
 
 sub _generate_request_id {
-    return lc(create_uuid_as_string());
+    # Generate UUID-like string (8-4-4-4-12 hex format)
+    my @hex = ('0'..'9', 'a'..'f');
+    my $uuid = '';
+    for (0..35) {
+        if ($_ == 8 || $_ == 13 || $_ == 18 || $_ == 23) {
+            $uuid .= '-';
+        } else {
+            $uuid .= $hex[int(rand(16))];
+        }
+    }
+    return $uuid;
 }
 
 sub _get_timestamp {
