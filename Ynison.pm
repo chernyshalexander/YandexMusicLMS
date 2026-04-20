@@ -336,8 +336,8 @@ sub _send_register_device {
         update_full_state => {
             device => {
                 capabilities => {
-                    can_be_player            => JSON::XS::VersionOneAndTwo::true,
-                    can_be_remote_controller => JSON::XS::VersionOneAndTwo::false,
+                    can_be_player            => JSON::XS::VersionOneAndTwo::true(),
+                    can_be_remote_controller => JSON::XS::VersionOneAndTwo::false(),
                     volume_granularity       => 16,
                 },
                 info => {
@@ -366,7 +366,7 @@ sub _send_register_device {
                     },
                 },
                 status => {
-                    paused          => JSON::XS::VersionOneAndTwo::true,
+                    paused          => JSON::XS::VersionOneAndTwo::true(),
                     progress_ms     => 0,
                     duration_ms     => 0,
                     playback_speed  => 1,
@@ -376,7 +376,7 @@ sub _send_register_device {
                     },
                 },
             },
-            is_currently_active => JSON::XS::VersionOneAndTwo::false,
+            is_currently_active => JSON::XS::VersionOneAndTwo::false(),
         },
     };
 
@@ -589,8 +589,8 @@ sub build_pause_request {
             playing_status => {
                 progress_ms    => $current_status->{progress_ms} // 0,
                 duration_ms    => $current_status->{duration_ms} // 0,
-                paused         => $paused ? JSON::XS::VersionOneAndTwo::true
-                                          : JSON::XS::VersionOneAndTwo::false,
+                paused         => $paused ? JSON::XS::VersionOneAndTwo::true()
+                                          : JSON::XS::VersionOneAndTwo::false(),
                 playback_speed => $current_status->{playback_speed} // 1.0,
                 version => {
                     device_id    => $device_id,
@@ -663,7 +663,7 @@ sub build_change_track_request {
                 status => {
                     progress_ms    => 0,
                     duration_ms    => 0,
-                    paused         => $status->{paused} // JSON::XS::VersionOneAndTwo::true,
+                    paused         => $status->{paused} // JSON::XS::VersionOneAndTwo::true(),
                     playback_speed => $status->{playback_speed} // 1.0,
                     version => {
                         device_id    => $device_id,
