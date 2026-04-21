@@ -271,11 +271,19 @@ sub _handle_yandex_state_update {
     my $player_state = $state->{player_state};
     return unless $player_state;
 
-    # Echo filter: skip our own state updates echoed back by server
+    # Echo filter: skip our own state updates echoed back by server.
+    # Only filter if paused status also matches what we last sent — otherwise
+    # it's a real play/pause command from another device (e.g. phone).
     my $q_author = ($player_state->{player_queue}{version} // {})->{device_id} // '';
     if ($q_author eq $ynison->device_id) {
-        $log->debug('YANDEX: Skipping own echo');
-        return;
+        my $remote_paused = (($player_state->{status} // {})->{paused} ? 1 : 0);
+        my $sent_paused   = $ynison->{sent_paused};
+        if (defined($sent_paused) && $sent_paused == $remote_paused) {
+            $log->debug('YANDEX: Skipping own echo');
+            return;
+        }
+        $log->info(sprintf('YANDEX: Version ours but status changed (sent=%s remote=%d) — processing',
+            defined($sent_paused) ? $sent_paused : 'undef', $remote_paused));
     }
 
     $ynison->{syncing_from_yandex} = 1;
@@ -338,19 +346,16 @@ sub _apply_yandex_state {
 
 sub _ynison_sync_play_pause {
     my ($client, $remote_paused) = @_;
-#    my $is_playing = $client->isPlaying();
-#    my $is_paused  = $client->isPaused();
-#    $log->info(sprintf('YANDEX: sync_play_pause remote_paused=%d isPlaying=%d isPaused=%d',
-#        $remote_paused, $is_playing ? 1 : 0, $is_paused ? 1 : 0));
-#    if ($remote_paused && $is_playing) {
-#        $client->execute(['pause', 1]);
-#    } elsif (!$remote_paused && $is_paused) {
-#        $client->execute(['pause', 0]);
-#    }
-    if ($remote_paused && $client->isPlaying()) {
+    my $is_playing = $client->isPlaying() ? 1 : 0;
+    my $is_paused  = $client->isPaused()  ? 1 : 0;
+    $log->info(sprintf('YANDEX: sync_play_pause: remote=%d lms_playing=%d lms_paused=%d',
+        $remote_paused, $is_playing, $is_paused));
+    if ($remote_paused && $is_playing) {
         $client->execute(['pause', 1]);
-    } elsif (!$remote_paused && $client->isPaused()) {
+    } elsif (!$remote_paused && $is_paused) {
         $client->execute(['pause', 0]);
+    } elsif (!$remote_paused && !$is_playing) {
+        $client->execute(['play']);
     }
 }
 
@@ -535,6 +540,7 @@ sub playerEventCallback {
         if ($ynison && !$ynison->{syncing_from_yandex}) {
             # Send state updates back to Yandex
             if ($command eq 'pause' || $command eq 'play' || $command eq 'newsong') {
+                $ynison->{sent_paused} = $client->isPaused() ? 1 : 0;
                 $ynison->update_state();
             }
             elsif ($command eq 'jump') {
