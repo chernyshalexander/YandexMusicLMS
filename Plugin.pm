@@ -257,86 +257,157 @@ sub _handle_yandex_state_update {
     my ($client, $state) = @_;
 
     return unless $client && $state;
-
-    # Skip pings
     return if $state->{ping};
 
-    # Get active device ID
-    my $active_device_id = $state->{active_device_id_optional};
     my $ynison = $ynison_instances{$client->id()};
-    return unless $ynison && $active_device_id;
+    return unless $ynison;
 
-    # Only process if we're the active device
+    # Volume sync is independent of everything else
+    _ynison_sync_volume($client, $ynison, $state->{devices}) if $state->{devices};
+
+    my $active_device_id = $state->{active_device_id_optional} // '';
     return unless $active_device_id eq $ynison->device_id;
 
-    # Get the state update (either update_player_state or update_full_state)
-    my $update = $state->{update_player_state} || $state->{update_full_state};
-    return unless $update;
-
-    my $player_state = $update->{player_state};
+    my $player_state = $state->{player_state};
     return unless $player_state;
 
-    # Mark that we're syncing from Yandex so playerEventCallback doesn't interfere
-    $ynison->{syncing_from_yandex} = 1;
-
-    eval {
-        # Extract queue and status updates
-        my $queue = $player_state->{player_queue};
-        my $status = $player_state->{status};
-
-        # Step 1: Rebuild queue if tracks changed
-        if ($queue && ref($queue->{playable_list}) eq 'ARRAY') {
-            _rebuild_lms_queue_from_yandex($client, $queue);
-        }
-
-        # Step 2: Set playback status (pause/play)
-        if ($status && defined $status->{paused}) {
-            if ($status->{paused}) {
-                $client->execute(['pause']);
-            } else {
-                $client->execute(['play']);
-            }
-        }
-    };
-
-    if ($@) {
-        $log->error("YANDEX: Error handling Yandex state update: $@");
+    # Echo filter: skip our own state updates echoed back by server
+    my $q_author = ($player_state->{player_queue}{version} // {})->{device_id} // '';
+    if ($q_author eq $ynison->device_id) {
+        $log->debug('YANDEX: Skipping own echo');
+        return;
     }
 
-    # Clear syncing flag
+    $ynison->{syncing_from_yandex} = 1;
+    eval { _apply_yandex_state($client, $ynison, $player_state) };
+    $log->error("YANDEX: Error applying state: $@") if $@;
     $ynison->{syncing_from_yandex} = 0;
 }
 
-# Rebuild LMS playlist from Yandex queue
-sub _rebuild_lms_queue_from_yandex {
-    my ($client, $queue) = @_;
+sub _apply_yandex_state {
+    my ($client, $ynison, $player_state) = @_;
 
-    return unless $queue && ref($queue->{playable_list}) eq 'ARRAY';
+    my $queue  = $player_state->{player_queue} // {};
+    my $status = $player_state->{status}       // {};
 
-    my @playable_list = @{$queue->{playable_list}};
-    my $current_index = $queue->{current_playable_index} // -1;
+    my $remote_paused = $status->{paused} ? 1 : 0;
+    my $remote_list   = $queue->{playable_list} // [];
 
-    return unless @playable_list;
-
-    $log->info("YANDEX: Rebuilding queue with " . scalar(@playable_list) . " tracks, index=$current_index");
-
-    # Clear existing playlist
-    $client->execute(['playlist', 'clear']);
-
-    # Add each track from Yandex
-    foreach my $yandex_track (@playable_list) {
-        next unless $yandex_track->{id};
-
-        # Build track URL in yandexmusic:// format
-        my $track_url = 'yandexmusic://track/' . $yandex_track->{id};
-
-        # Add to playlist
-        $client->execute(['playlist', 'add', $track_url]);
+    # Status-only update (play/pause with no track list)
+    if (!@$remote_list) {
+        _ynison_sync_play_pause($client, $remote_paused);
+        $ynison->cache_yandex_state($player_state);
+        return;
     }
 
-    # Set current position
+    my $remote_idx    = $queue->{current_playable_index} // 0;
+    my $remote_entity = $queue->{entity_id} // '';
+
+    return unless $remote_idx >= 0 && $remote_idx < @$remote_list;
+
+    my $remote_track = $remote_list->[$remote_idx]{playable_id} // '';
+    return unless $remote_track;
+
+    my $lms_track = '';
+    if (my $song = $client->playingSong()) {
+        if (my $track = $song->track()) {
+            ($lms_track) = $track->url() =~ /yandexmusic:\/\/(\d+)/;
+            $lms_track //= '';
+        }
+    }
+
+    my $same_queue = _ynison_is_same_queue($ynison, $remote_list, $remote_entity);
+
+    $log->info(sprintf('YANDEX: state: same_queue=%d remote_track=%s lms_track=%s paused=%d',
+        $same_queue, $remote_track, $lms_track, $remote_paused));
+
+    if ($same_queue && $remote_track eq $lms_track) {
+        _ynison_sync_play_pause($client, $remote_paused);
+    } elsif ($same_queue) {
+        $log->info("YANDEX: NEXT/PREV to index $remote_idx (track=$remote_track)");
+        $client->execute(['playlist', 'index', $remote_idx]);
+        _ynison_sync_play_pause($client, $remote_paused);
+    } else {
+        $log->info(sprintf('YANDEX: Cast: entity=%s tracks=%d idx=%d track=%s',
+            $remote_entity || '(none)', scalar(@$remote_list), $remote_idx, $remote_track));
+        _rebuild_lms_queue_from_yandex($client, $ynison, $queue, $remote_paused);
+    }
+
+    $ynison->cache_yandex_state($player_state);
+}
+
+sub _ynison_sync_play_pause {
+    my ($client, $remote_paused) = @_;
+#    my $is_playing = $client->isPlaying();
+#    my $is_paused  = $client->isPaused();
+#    $log->info(sprintf('YANDEX: sync_play_pause remote_paused=%d isPlaying=%d isPaused=%d',
+#        $remote_paused, $is_playing ? 1 : 0, $is_paused ? 1 : 0));
+#    if ($remote_paused && $is_playing) {
+#        $client->execute(['pause', 1]);
+#    } elsif (!$remote_paused && $is_paused) {
+#        $client->execute(['pause', 0]);
+#    }
+    if ($remote_paused && $client->isPlaying()) {
+        $client->execute(['pause', 1]);
+    } elsif (!$remote_paused && $client->isPaused()) {
+        $client->execute(['pause', 0]);
+    }
+}
+
+sub _ynison_is_same_queue {
+    my ($ynison, $remote_list, $remote_entity) = @_;
+    my $cached = $ynison->{yandex_queue};
+    return 0 unless $cached;
+    return 0 unless ($cached->{entity_id} // '') eq $remote_entity;
+    my $cached_list = $cached->{playable_list} // [];
+    return 0 unless @$cached_list == @$remote_list;
+    for my $i (0..$#$remote_list) {
+        return 0 unless ($remote_list->[$i]{playable_id} // '') eq
+                        ($cached_list->[$i]{playable_id}  // '');
+    }
+    return 1;
+}
+
+sub _ynison_sync_volume {
+    my ($client, $ynison, $devices) = @_;
+    return unless ref $devices eq 'ARRAY';
+    my $our_id = $ynison->device_id;
+    for my $dev (@$devices) {
+        next unless ($dev->{info}{device_id} // '') eq $our_id;
+        my $v = ($dev->{volume_info} // {})->{volume};
+        next unless defined $v;
+        my $new_vol = int($v * 100 + 0.5);
+        my $cur_vol = int($client->volume() || 0);
+        if (abs($new_vol - $cur_vol) >= 2) {
+            $ynison->{syncing_from_yandex} = 1;
+            $client->execute(['mixer', 'volume', $new_vol]);
+            $ynison->{syncing_from_yandex} = 0;
+        }
+        last;
+    }
+}
+
+sub _rebuild_lms_queue_from_yandex {
+    my ($client, $ynison, $queue, $start_paused) = @_;
+
+    my @playable_list = @{$queue->{playable_list} // []};
+    my $current_index = $queue->{current_playable_index} // 0;
+    return unless @playable_list;
+
+    $log->info(sprintf('YANDEX: Rebuilding queue: %d tracks idx=%d paused=%d',
+        scalar(@playable_list), $current_index, $start_paused ? 1 : 0));
+
+    $client->execute(['playlist', 'clear']);
+
+    for my $yandex_track (@playable_list) {
+        my $track_id = $yandex_track->{playable_id} or next;
+        next unless ($yandex_track->{playable_type} // '') eq 'TRACK';
+        $client->execute(['playlist', 'add', 'yandexmusic://' . $track_id]);
+    }
+
     if ($current_index >= 0 && $current_index < @playable_list) {
-        $client->execute(['playlist', 'index', $current_index]);
+        $client->execute(['playlist', 'index', $current_index, 'noplay', 1]) if $start_paused;
+        $client->execute(['playlist', 'index', $current_index]) unless $start_paused;
     }
 }
 
@@ -462,15 +533,9 @@ sub playerEventCallback {
         }
 
         if ($ynison && !$ynison->{syncing_from_yandex}) {
-            # Send pause/play/next/prev commands back to Yandex
-            if ($command eq 'pause') {
-                my $paused = $client->isPaused();
-                my $cmd = $ynison->build_pause_cmd($paused);
-                $ynison->send_command($cmd) if $cmd;
-            }
-            elsif ($command eq 'play') {
-                my $cmd = $ynison->build_pause_cmd(0);  # 0 = playing
-                $ynison->send_command($cmd) if $cmd;
+            # Send state updates back to Yandex
+            if ($command eq 'pause' || $command eq 'play' || $command eq 'newsong') {
+                $ynison->update_state();
             }
             elsif ($command eq 'jump') {
                 my $cmd = $ynison->build_next_cmd();

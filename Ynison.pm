@@ -25,11 +25,14 @@ use strict;
 use warnings;
 
 use JSON::XS::VersionOneAndTwo;
+use MIME::Base64;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Timers;
 use Slim::Networking::Async;
+use Slim::Networking::IO::Select;
 use Time::HiRes qw(time);
+use Errno qw(EAGAIN EWOULDBLOCK);
 
 my $log   = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
@@ -37,12 +40,39 @@ my $prefs = preferences('plugin.yandex');
 use constant {
     STATE_DISCONNECTED   => 0,
     STATE_REDIRECTOR     => 1,
-    STATE_CONNECTING     => 2,
+    STATE_STATE_SERVICE  => 2,
     STATE_ACTIVE         => 3,
-    KEEPALIVE_INTERVAL   => 20,     # seconds (ping interval)
+    STATE_RECONNECT_WAIT => 4,
     RECONNECT_MIN        => 5,      # seconds
     RECONNECT_MAX        => 60,     # seconds
+    KEEPALIVE_INTERVAL   => 20,     # seconds
 };
+
+# Inner class: Slim::Networking::Async with HTTPS support
+{
+    package Plugins::yandex::Ynison::Async;
+    use base qw(Slim::Networking::Async);
+
+    sub new_socket {
+        my ($self, %args) = @_;
+        # Use parent logger via Slim::Utils::Log
+        my $alog = Slim::Utils::Log::logger('plugin.yandex');
+        $alog->info(sprintf('Ynison::Async::new_socket() called, https=%s, Host=%s',
+            $args{https} // 'undef', $args{Host} // 'undef'));
+
+        if ($args{https}) {
+            $args{SSL_hostname} //= $args{Host};
+            $alog->info('Ynison::Async::new_socket: Creating HTTPS socket');
+            require Slim::Networking::Async::Socket::HTTPS;
+            my $socket = Slim::Networking::Async::Socket::HTTPS->new(%args);
+            $alog->info(sprintf('Ynison::Async::new_socket: HTTPS socket created, ref=%s',
+                ref($socket) // 'undef'));
+            return $socket;
+        }
+        $alog->info('Ynison::Async::new_socket: Creating HTTP socket via parent');
+        return $self->SUPER::new_socket(%args);
+    }
+}
 
 # ===========================================================================
 # Constructor
@@ -67,7 +97,7 @@ sub new {
         redirect_data   => undef,   # {host, redirect_ticket, session_id}
 
         # Timing
-        reconnect_delay => RECONNECT_MIN,
+        reconnect_delay => RECONNECT_MIN(),
         keepalive_time  => 0,
 
         # Listeners / callbacks
@@ -97,12 +127,110 @@ sub new {
 
 sub enabled {
     my ($self) = @_;
-    return $self->{state} == STATE_ACTIVE;
+    return $self->{state} == STATE_ACTIVE();
+}
+
+sub device_id {
+    my ($self) = @_;
+    return $self->{device_id};
 }
 
 sub latest_state {
     my ($self) = @_;
     return $self->{last_state};
+}
+
+sub cache_yandex_state {
+    my ($self, $player_state) = @_;
+    $self->{yandex_queue} = $player_state->{player_queue} if $player_state->{player_queue};
+}
+
+sub update_state {
+    my ($self) = @_;
+    my $client = $self->{client};
+    return unless $self->{state} == STATE_ACTIVE();
+    return if $self->{syncing_from_yandex};
+    return unless $client->isPlaying() || $client->isPaused();
+
+    my $state = eval { $self->_build_player_state() };
+    if ($@) {
+        $log->error(sprintf('Ynison [%s]: Failed to build player state: %s', $client->name(), $@));
+        return;
+    }
+    return unless @{$state->{player_queue}{playable_list} // []};
+
+    my $ts = int(time() * 1000);
+    $self->send_command({
+        update_player_state        => {player_state => $state},
+        rid                        => _generate_request_id(),
+        player_action_timestamp_ms => "$ts",
+        activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+    });
+}
+
+sub _build_player_state {
+    my ($self) = @_;
+    my $client = $self->{client};
+    my $song   = $client->playingSong();
+
+    my $ts_ns   = int(time() * 1_000_000_000);
+    my $version = {
+        device_id    => $self->{device_id},
+        version      => "$ts_ns",
+        timestamp_ms => '0',
+    };
+
+    my $paused  = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
+    my $dur_ms  = $song ? int(($song->duration() || 0) * 1000) : 0;
+    my $prog_ms = 0;
+    eval { $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000) };
+
+    my $status = {
+        duration_ms    => "$dur_ms",
+        paused         => $paused,
+        playback_speed => 1.0,
+        progress_ms    => "$prog_ms",
+        version        => $version,
+    };
+
+    my $player_queue;
+    if ($self->{yandex_queue} && @{$self->{yandex_queue}{playable_list} // []}) {
+        $player_queue = {%{$self->{yandex_queue}}};
+        $player_queue->{version} = $version;
+        if ($song && $song->track()) {
+            my ($tid) = $song->track()->url() =~ /yandexmusic:\/\/(\d+)/;
+            if ($tid) {
+                my $list = $self->{yandex_queue}{playable_list};
+                for my $i (0..$#$list) {
+                    if (($list->[$i]{playable_id} // '') eq $tid) {
+                        $player_queue->{current_playable_index} = $i;
+                        last;
+                    }
+                }
+            }
+        }
+    } else {
+        my $tid = '';
+        if ($song && $song->track()) {
+            ($tid) = $song->track()->url() =~ /yandexmusic:\/\/(\d+)/;
+        }
+        $player_queue = {
+            current_playable_index => $tid ? 0 : -1,
+            entity_id              => '',
+            entity_type            => 'VARIOUS',
+            playable_list          => $tid ? [{
+                playable_id   => $tid,
+                playable_type => 'TRACK',
+                from          => 'direct',
+            }] : [],
+            options        => {repeat_mode => 'NONE'},
+            entity_context => 'BASED_ON_ENTITY_BY_DEFAULT',
+            from_optional  => '',
+            version        => $version,
+        };
+    }
+
+    return {status => $status, player_queue => $player_queue};
 }
 
 sub build_pause_cmd {
@@ -135,13 +263,21 @@ sub connect {
 sub disconnect {
     my ($self) = @_;
     $self->{state} = STATE_DISCONNECTED;
-    if ($self->{socket}) {
-        $self->{socket}->close();
-        $self->{socket} = undef;
-    }
+    $self->_disconnect_socket();
+    $self->{async} = undef;  # Clean up async reference
     # Cancel any pending timers
     Slim::Utils::Timers::killTimers($self, 'keepalive');
     Slim::Utils::Timers::killTimers($self, 'reconnect');
+}
+
+sub _disconnect_socket {
+    my $self = shift;
+    if ($self->{socket}) {
+        Slim::Networking::IO::Select::removeRead($self->{socket});
+        Slim::Networking::IO::Select::removeWrite($self->{socket});
+        eval { $self->{socket}->close() };
+        $self->{socket} = undef;
+    }
 }
 
 sub on_state {
@@ -151,11 +287,22 @@ sub on_state {
 
 sub send_command {
     my ($self, $request_hash) = @_;
-    return unless $self->{state} == STATE_ACTIVE;
-    return unless $self->{socket};
+    unless ($self->{state} == STATE_ACTIVE()) {
+        $log->warn(sprintf('Ynison [%s]: send_command() called but state=%d (not STATE_ACTIVE=%d)',
+            $self->{client}->name(), $self->{state}, STATE_ACTIVE()));
+        return;
+    }
+    unless ($self->{socket}) {
+        $log->warn(sprintf('Ynison [%s]: send_command() called but no socket',
+            $self->{client}->name()));
+        return;
+    }
 
     my $json = JSON::XS::VersionOneAndTwo::encode_json($request_hash);
-    $self->_send_frame($json);
+    my $frame = _encode_ws_text_frame($json);
+    return unless $frame;
+    $log->debug(sprintf('Ynison [%s]: Sending frame (%d bytes)', $self->{client}->name(), length($frame)));
+    $self->_queue_frame($frame);
 }
 
 # ===========================================================================
@@ -165,99 +312,189 @@ sub send_command {
 sub _connect_redirector {
     my ($self) = @_;
 
+    $self->{state} = STATE_REDIRECTOR;
     $log->info(sprintf('Ynison [%s]: Connecting to redirector...', $self->{client}->name()));
 
-    my $async = Plugins::yandex::Ynison::Async->new();
+    $self->_open_ws('ynison.music.yandex.ru', '/redirector.YnisonRedirectService/GetRedirectToYnison');
+}
 
-    unless ($async) {
-        $log->error('Failed to create async connection');
+sub _open_ws {
+    my ($self, $host, $path, $extra) = @_;
+
+    $log->info(sprintf('Ynison [%s]: _open_ws() starting for %s',
+        $self->{client}->name(), $host));
+
+    # Build Sec-WebSocket-Protocol JSON blob (as per old module)
+    my $dev_info_raw = '{"app_name":"Chrome","type":1}';
+    (my $dev_info_esc = $dev_info_raw) =~ s/"/\\"/g;
+
+    my $proto = sprintf('{"Ynison-Device-Info":"%s","Ynison-Device-Id":"%s"',
+        $dev_info_esc, $self->{device_id});
+    $proto .= sprintf(',"Ynison-Redirect-Ticket":"%s"', $extra->{'Ynison-Redirect-Ticket'})
+        if $extra && $extra->{'Ynison-Redirect-Ticket'};
+    $proto .= sprintf(',"Ynison-Session-Id":"%s"', $extra->{'Ynison-Session-Id'})
+        if $extra && $extra->{'Ynison-Session-Id'};
+    $proto .= sprintf(',"authorization":"OAuth %s"', $self->{token});
+    $proto .= sprintf(',"X-Yandex-Music-Multi-Auth-User-Id":"%s"', $self->{user_id});
+    $proto .= '}';
+
+    # Generate WebSocket key
+    my @hex = (0..9, 'a'..'f');
+    my $ws_key = encode_base64(pack('H*', join('', map { $hex[rand @hex] } 1..32)), '');
+    $ws_key =~ s/\s+//g;
+
+    # Create Async handler and KEEP REFERENCE to prevent GC
+    my $async = Plugins::yandex::Ynison::Async->new();
+    $self->{async} = $async;  # Save reference!
+
+    $log->info(sprintf('Ynison [%s]: Creating async socket to %s', $self->{client}->name(), $host));
+
+    eval {
+        $async->open({
+        Host      => $host,
+        PeerPort  => 443,
+        https     => 1,
+        onConnect => sub {
+            $log->info(sprintf('Ynison [%s]: Connected to %s, sending WebSocket upgrade',
+                $self->{client}->name(), $host));
+
+            # Get socket from async object (callbacks receive passthrough, not socket!)
+            my $fh = $async->socket();
+            unless ($fh) {
+                $log->error(sprintf('Ynison [%s]: async->socket() returned undef!',
+                    $self->{client}->name()));
+                $self->_schedule_reconnect();
+                return;
+            }
+
+            $log->info(sprintf('Ynison [%s]: Socket obtained, type=%s',
+                $self->{client}->name(), ref($fh)));
+
+            $self->{socket} = $fh;
+            $self->{read_buffer} = '';
+            $self->{write_queue} = [];
+
+            my $req =
+                "GET $path HTTP/1.1\r\n"
+                . "Host: $host\r\n"
+                . "Upgrade: websocket\r\n"
+                . "Connection: Upgrade\r\n"
+                . "Sec-WebSocket-Key: $ws_key\r\n"
+                . "Sec-WebSocket-Version: 13\r\n"
+                . "Sec-WebSocket-Protocol: Bearer, v2, $proto\r\n"
+                . "Authorization: OAuth $self->{token}\r\n"
+                . "Origin: https://music.yandex.ru\r\n"
+                . "\r\n";
+
+            $log->info(sprintf('Ynison [%s]: Setting up read/write handlers via IO::Select',
+                $self->{client}->name()));
+
+            $fh->blocking(0);
+            $self->{write_queue} = [$req];
+
+            Slim::Networking::IO::Select::addWrite($fh, sub { $self->_on_writable(@_) });
+            Slim::Networking::IO::Select::addRead($fh,  sub { $self->_on_http_response(@_) });
+        },
+        onError => sub {
+            my ($async_obj, $error) = @_;
+            $log->error(sprintf('Ynison [%s]: Connection error to %s: %s',
+                $self->{client}->name(), $host, $error));
+            $self->_schedule_reconnect();
+        },
+        });
+    };
+    if ($@) {
+        $log->error(sprintf('Ynison [%s]: Exception during open(): %s',
+            $self->{client}->name(), $@));
+        $self->_schedule_reconnect();
+    } else {
+        $log->info(sprintf('Ynison [%s]: async->open() called successfully',
+            $self->{client}->name()));
+    }
+}
+
+sub _on_writable {
+    my ($self, $fh) = @_;
+
+    return unless $self->{write_queue} && @{$self->{write_queue}};
+
+    my $data = $self->{write_queue}[0];
+    my $written = syswrite($fh, $data);
+
+    if (!defined $written) {
+        return if $! == EAGAIN || $! == EWOULDBLOCK;
+        $log->error('Ynison: Write error: ' . $!);
         $self->_schedule_reconnect();
         return;
     }
 
-    # Build WebSocket headers
-    my $headers = $self->_build_headers();
-    my $subprotocols = $self->_build_subprotocols();
-
-    # WebSocket upgrade request to redirector
-    my $path = '/redirector.YnisonRedirectService/GetRedirectToYnison';
-    my $request = "GET $path HTTP/1.1\r\n";
-    $request .= "Host: ynison.music.yandex.ru\r\n";
-    $request .= "Connection: Upgrade\r\n";
-    $request .= "Upgrade: websocket\r\n";
-    $request .= "Sec-WebSocket-Key: " . _base64(pack('C*', map { int(rand(256)) } 1..16)) . "\r\n";
-    $request .= "Sec-WebSocket-Version: 13\r\n";
-    $request .= "Sec-WebSocket-Protocol: " . join(', ', @$subprotocols) . "\r\n";
-    $request .= $headers;
-    $request .= "\r\n";
-
-    $self->{socket} = $async;
-
-    # Start async connection with proper parameters
-    $async->start(
-        host         => 'ynison.music.yandex.ru',
-        port         => 443,
-        https        => 1,
-        onConnected  => sub {
-            # Send WebSocket upgrade request once connected
-            $self->{socket}->write($request);
-        },
-        onRead       => sub { $self->_on_redirector_data(@_) },
-        onError      => sub { $self->_on_error('redirector', @_) },
-    );
-}
-
-sub _on_redirector_data {
-    my ($self, $async, $data) = @_;
-
-    $self->{read_buffer} .= $$data;
-
-    # Simple WebSocket frame parsing
-    if ($self->{read_buffer} =~ /\r\n\r\n/s) {
-        # Got headers, look for WebSocket frame
-        my @lines = split /\r\n/, $self->{read_buffer};
-
-        # Check if it's an HTTP upgrade response
-        if ($lines[0] =~ /101 Switching Protocols/i) {
-            $log->info('Ynison: Got WebSocket upgrade from redirector');
-
-            # Extract the frame data (after headers)
-            my $frame_start = index($self->{read_buffer}, "\r\n\r\n") + 4;
-            my $frame_data = substr($self->{read_buffer}, $frame_start);
-
-            if ($frame_data) {
-                $self->_parse_redirector_frame($frame_data);
-            }
-
-            $self->{read_buffer} = '';
-            $self->{state} = STATE_CONNECTING;
-            $self->_connect_state_service();
-        }
+    if ($written == length($data)) {
+        shift @{$self->{write_queue}};
+        $log->debug('Ynison: Request sent');
+        Slim::Networking::IO::Select::removeWrite($fh);
+    } else {
+        $self->{write_queue}[0] = substr($data, $written);
     }
 }
 
-sub _parse_redirector_frame {
-    my ($self, $frame_data) = @_;
+sub _on_http_response {
+    my ($self, $fh) = @_;
+    my $bytes = $fh->sysread(my $buf, 4096);
 
-    # Decode WebSocket frame (simplified)
-    my $text = _decode_ws_frame($frame_data);
-    return unless $text;
+    if (!defined $bytes) {
+        return if $! == EAGAIN || $! == EWOULDBLOCK;
+        $log->error(sprintf('Ynison [%s]: Read error during upgrade: %s',
+            $self->{client}->name(), $!));
+        $self->_schedule_reconnect();
+        return;
+    }
+    if ($bytes == 0) {
+        $log->error(sprintf('Ynison [%s]: Server closed during upgrade',
+            $self->{client}->name()));
+        $self->_schedule_reconnect();
+        return;
+    }
 
-    my $json = JSON::XS::VersionOneAndTwo::decode_json($text);
+    $self->{read_buffer} .= $buf;
+    return unless $self->{read_buffer} =~ /(\r?\n\r?\n)/;
 
-    $self->{redirect_data} = {
-        host              => $json->{host},
-        redirect_ticket   => $json->{redirect_ticket},
-        session_id        => $json->{session_id},
-    };
+    my $sep_start = $-[0];
+    my $sep_len   = length($1);
+    my $headers   = substr($self->{read_buffer}, 0, $sep_start);
+    $self->{read_buffer} = substr($self->{read_buffer}, $sep_start + $sep_len);
 
-    $log->info(sprintf('Ynison [%s]: Got redirect: host=%s',
-        $self->{client}->name(), $self->{redirect_data}{host}));
+    if ($headers =~ m{HTTP/1\.1 101}) {
+        my $where = ($self->{state} == STATE_REDIRECTOR) ? 'redirector' : 'state service';
+        $log->info(sprintf('Ynison [%s]: WebSocket upgrade OK on %s (current_state=%d)',
+            $self->{client}->name(), $where, $self->{state}));
+
+        Slim::Networking::IO::Select::removeRead($fh);
+        Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
+
+        if ($self->{state} == STATE_STATE_SERVICE) {
+            $self->{state} = STATE_ACTIVE;
+            $self->{reconnect_delay} = RECONNECT_MIN();
+            $log->info(sprintf('Ynison [%s]: ACTIVE - ready to receive state updates',
+                $self->{client}->name()));
+            $self->_send_register_device();
+            $self->_schedule_keepalive();
+            $self->_process_state_frames() if length $self->{read_buffer};
+        } elsif ($self->{state} == STATE_REDIRECTOR) {
+            $log->info('Ynison: Got 101 from redirector, processing frames...');
+            $self->{state} = STATE_STATE_SERVICE;
+            Slim::Networking::IO::Select::removeRead($fh);
+            Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
+            # Process any frame data in buffer immediately
+            $self->_process_state_frames();
+        }
+    } else {
+        # Not 101 response
+        my @lines = split /\r\n/, $headers;
+        $log->error(sprintf('Ynison [%s]: Expected 101 Switching Protocols, got: %s',
+            $self->{client}->name(), $lines[0]));
+        $self->_schedule_reconnect();
+    }
 }
-
-# ===========================================================================
-# Connection: Phase 2 - State Service
-# ===========================================================================
 
 sub _connect_state_service {
     my ($self) = @_;
@@ -265,73 +502,15 @@ sub _connect_state_service {
     return unless $self->{redirect_data};
 
     my $host = $self->{redirect_data}{host};
+    my $extra = {
+        'Ynison-Redirect-Ticket' => $self->{redirect_data}{redirect_ticket},
+        'Ynison-Session-Id'      => $self->{redirect_data}{session_id},
+    };
+
     $log->info(sprintf('Ynison [%s]: Connecting to state service at %s...',
         $self->{client}->name(), $host));
 
-    my $async = Plugins::yandex::Ynison::Async->new();
-
-    unless ($async) {
-        $log->error('Failed to connect to state service');
-        $self->_schedule_reconnect();
-        return;
-    }
-
-    # WebSocket upgrade request
-    my $headers = $self->_build_headers();
-    my $subprotocols = $self->_build_subprotocols();
-
-    my $path = '/ynison_state.YnisonStateService/PutYnisonState';
-    my $request = "GET $path HTTP/1.1\r\n";
-    $request .= "Host: $host\r\n";
-    $request .= "Connection: Upgrade\r\n";
-    $request .= "Upgrade: websocket\r\n";
-    $request .= "Sec-WebSocket-Key: " . _base64(pack('C*', map { int(rand(256)) } 1..16)) . "\r\n";
-    $request .= "Sec-WebSocket-Version: 13\r\n";
-    $request .= "Sec-WebSocket-Protocol: " . join(', ', @$subprotocols) . "\r\n";
-    $request .= $headers;
-    $request .= "\r\n";
-
-    $self->{socket} = $async;
-
-    # Start async connection with proper parameters
-    $async->start(
-        host         => $host,
-        port         => 443,
-        https        => 1,
-        onConnected  => sub {
-            # Send WebSocket upgrade request once connected
-            $self->{socket}->write($request);
-        },
-        onRead       => sub { $self->_on_state_data(@_) },
-        onError      => sub { $self->_on_error('state', @_) },
-    );
-}
-
-sub _on_state_data {
-    my ($self, $async, $data) = @_;
-
-    $self->{read_buffer} .= $$data;
-
-    # Check for WebSocket upgrade response
-    if ($self->{state} == STATE_CONNECTING && $self->{read_buffer} =~ /\r\n\r\n/s) {
-        my @lines = split /\r\n/, $self->{read_buffer};
-
-        if ($lines[0] =~ /101 Switching Protocols/i) {
-            $log->info('Ynison: WebSocket connected to state service');
-            $self->{state} = STATE_ACTIVE;
-            $self->{read_buffer} = '';
-
-            # Send registration message
-            $self->_send_register_device();
-
-            # Start keep-alive
-            $self->_schedule_keepalive();
-        }
-    }
-    elsif ($self->{state} == STATE_ACTIVE) {
-        # Parse incoming frames
-        $self->_process_state_frames();
-    }
+    $self->_open_ws($host, '/ynison_state.YnisonStateService/PutYnisonState', $extra);
 }
 
 # ===========================================================================
@@ -341,26 +520,36 @@ sub _on_state_data {
 sub _send_register_device {
     my ($self) = @_;
 
+    my $ts_ns = int(time() * 1_000_000_000);
+    my $ts_ms = int(time() * 1000);
+
+    my $version = {
+        device_id    => $self->{device_id},
+        version      => "$ts_ns",
+        timestamp_ms => '0',
+    };
+
     my $msg = {
         rid                         => _generate_request_id(),
-        player_action_timestamp_ms  => _get_timestamp(),
+        player_action_timestamp_ms  => "$ts_ms",
         activity_interception_type  => 'DO_NOT_INTERCEPT_BY_DEFAULT',
         update_full_state => {
             device => {
                 capabilities => {
-                    can_be_player            => JSON::XS::VersionOneAndTwo::true(),
-                    can_be_remote_controller => JSON::XS::VersionOneAndTwo::false(),
+                    can_be_player            => \1,
+                    can_be_remote_controller => \0,
                     volume_granularity       => 16,
                 },
                 info => {
                     device_id => $self->{device_id},
-                    type      => 'OTHER',
-                    title     => $self->{client}->name(),
-                    app_name  => 'Yandex Music LMS Plugin',
+                    type      => 'WEB',
+                    title     => $self->{client}->name() . ' (LMS)',
+                    app_name  => 'Chrome',
                 },
                 volume_info => {
                     volume => 0.5,
                 },
+                is_shadow => \0,
             },
             player_state => {
                 player_queue => {
@@ -373,24 +562,23 @@ sub _send_register_device {
                     entity_type => 'VARIOUS',
                     entity_context => 'BASED_ON_ENTITY_BY_DEFAULT',
                     from_optional => '',
-                    version => {
-                        device_id => $self->{device_id},
-                    },
+                    version => $version,
                 },
                 status => {
-                    paused          => JSON::XS::VersionOneAndTwo::true(),
-                    progress_ms     => 0,
-                    duration_ms     => 0,
-                    playback_speed  => 1,
-                    version => {
-                        device_id => $self->{device_id},
-                        timestamp_ms => 0,
-                    },
+                    paused         => \1,
+                    progress_ms    => '0',
+                    duration_ms    => '0',
+                    playback_speed => 1.0,
+                    version => $version,
                 },
             },
-            is_currently_active => JSON::XS::VersionOneAndTwo::false(),
+            is_currently_active => \0,
         },
     };
+
+    my $json = JSON::XS::VersionOneAndTwo::encode_json($msg);
+    $log->info(sprintf('Ynison [%s]: Sending device registration: %s',
+        $self->{client}->name(), substr($json, 0, 200)));
 
     $self->send_command($msg);
 }
@@ -404,16 +592,33 @@ sub _process_state_frames {
 
     # Parse WebSocket frames from read_buffer
     while (length($self->{read_buffer}) >= 2) {
-        my ($frame_data, $remaining) = _extract_ws_frame($self->{read_buffer});
-        last unless $frame_data;
+        $log->debug(sprintf('Ynison: Buffer has %d bytes, first bytes: %s',
+            length($self->{read_buffer}), unpack('H*', substr($self->{read_buffer}, 0, 20))));
 
-        $self->{read_buffer} = $remaining;
+        my ($frame_data, $remaining) = _extract_ws_frame($self->{read_buffer});
+        if (!defined $frame_data && !defined $remaining) {
+            # Incomplete frame - wait for more data
+            last;
+        }
+        $self->{read_buffer} = $remaining // '';
+        next unless defined $frame_data;  # close frame already logged by _extract_ws_frame
 
         my $text = _decode_ws_frame($frame_data);
-        next unless $text;
+        unless (defined $text) {
+            $log->warn('Ynison: Decode returned undef (close or binary frame)');
+            next;
+        }
+
+        $log->info(sprintf('Ynison: Decoded text, length=%d: %s',
+            length($text), substr($text, 0, 500)));
 
         # Parse JSON state
-        my $state = JSON::XS::VersionOneAndTwo::decode_json($text);
+        my $state;
+        eval { $state = JSON::XS::VersionOneAndTwo::decode_json($text) };
+        if ($@) {
+            $log->error(sprintf('Ynison: JSON decode error: %s | raw: %s', $@, substr($text, 0, 200)));
+            next;
+        }
         $self->_handle_state_update($state);
     }
 }
@@ -421,20 +626,16 @@ sub _process_state_frames {
 sub _handle_state_update {
     my ($self, $state) = @_;
 
+    # Route based on connection state (like old module's _on_message)
+    if ($self->{state} == STATE_STATE_SERVICE) {
+        return $self->_handle_redirect($state);
+    }
+
+    # STATE_ACTIVE: handle normal state updates
     # Skip pings
     if ($state->{ping}) {
         $self->_send_pong();
         return;
-    }
-
-    # Echo detection: skip if this is our own update
-    if (my $queue = $state->{player_state}{player_queue} // $state->{update_player_state}{player_state}{player_queue}) {
-        if (my $version = $queue->{version}) {
-            if ($version->{device_id} && $version->{device_id} eq $self->{device_id}) {
-                $log->debug('Ynison: Skipping echo from own device');
-                return;
-            }
-        }
     }
 
     # Cache latest state
@@ -451,13 +652,62 @@ sub _handle_state_update {
     }
 }
 
+sub _handle_redirect {
+    my ($self, $msg) = @_;
+    unless ($msg->{host} && $msg->{redirect_ticket}) {
+        $log->error(sprintf('Ynison [%s]: Unexpected redirector message: %s',
+            $self->{client}->name(), JSON::XS::VersionOneAndTwo::encode_json($msg)));
+        $self->_schedule_reconnect();
+        return;
+    }
+
+    $self->{redirect_data} = {
+        host            => $msg->{host},
+        redirect_ticket => $msg->{redirect_ticket},
+        session_id      => $msg->{session_id},
+    };
+
+    $log->info(sprintf('Ynison [%s]: Got redirect to host=%s',
+        $self->{client}->name(), $msg->{host}));
+
+    $self->_disconnect_socket();
+    $self->{state} = STATE_STATE_SERVICE();
+    $self->_connect_state_service();
+}
+
+# ===========================================================================
+# WebSocket Frame Handling
+# ===========================================================================
+
+sub _on_readable {
+    my ($self, $fh) = @_;
+    my $bytes = $fh->sysread(my $buf, 4096);
+
+    if (!defined $bytes) {
+        return if $! == EAGAIN || $! == EWOULDBLOCK;
+        $log->error(sprintf('Ynison [%s]: Read error: %s',
+            $self->{client}->name(), $!));
+        $self->_schedule_reconnect();
+        return;
+    }
+    if ($bytes == 0) {
+        $log->warn(sprintf('Ynison [%s]: Server closed connection',
+            $self->{client}->name()));
+        $self->_schedule_reconnect();
+        return;
+    }
+
+    $self->{read_buffer} .= $buf;
+    $self->_process_state_frames();
+}
+
 # ===========================================================================
 # Keep-Alive & Reconnection
 # ===========================================================================
 
 sub _schedule_keepalive {
     my ($self) = @_;
-    Slim::Utils::Timers::setTimer($self, \&_send_ping, KEEPALIVE_INTERVAL, 'keepalive');
+    Slim::Utils::Timers::setTimer($self, \&_send_ping, KEEPALIVE_INTERVAL(), 'keepalive');
 }
 
 sub _send_ping {
@@ -477,7 +727,10 @@ sub _send_pong {
 sub _schedule_reconnect {
     my ($self) = @_;
 
-    if ($self->{reconnect_delay} < RECONNECT_MAX) {
+    $self->_disconnect_socket();
+    $self->{state} = STATE_RECONNECT_WAIT();
+
+    if ($self->{reconnect_delay} < RECONNECT_MAX()) {
         $self->{reconnect_delay} *= 2;
     }
 
@@ -510,10 +763,33 @@ sub _on_error {
 # Low-level I/O
 # ===========================================================================
 
+sub _encode_ws_text_frame {
+    my ($text) = @_;
+    my $len  = length($text);
+    my $mask = pack('N', int(rand(0xffffffff)));
+    my @m    = unpack('C4', $mask);
+    my @d    = unpack('C*', $text);
+    $d[$_] ^= $m[$_ % 4] for 0..$#d;
+
+    my $header;
+    if    ($len <= 125)   { $header = pack('CC',  0x81, 0x80 | $len); }
+    elsif ($len <= 65535) { $header = pack('CCn', 0x81, 0x80 | 126, $len); }
+    else                  { return undef; }
+
+    return $header . $mask . pack('C*', @d);
+}
+
+sub _queue_frame {
+    my ($self, $data) = @_;
+    return unless $self->{socket};
+    push @{$self->{write_queue}}, $data;
+    Slim::Networking::IO::Select::addWrite($self->{socket}, sub { $self->_on_writable(@_) });
+}
+
 sub _send_frame {
     my ($self, $data) = @_;
     return unless $self->{socket};
-    $self->{socket}->write($data);
+    syswrite($self->{socket}, $data);
 }
 
 # ===========================================================================
@@ -601,8 +877,7 @@ sub build_pause_request {
             playing_status => {
                 progress_ms    => $current_status->{progress_ms} // 0,
                 duration_ms    => $current_status->{duration_ms} // 0,
-                paused         => $paused ? JSON::XS::VersionOneAndTwo::true()
-                                          : JSON::XS::VersionOneAndTwo::false(),
+                paused         => $paused ? \1 : \0,
                 playback_speed => $current_status->{playback_speed} // 1.0,
                 version => {
                     device_id    => $device_id,
@@ -675,7 +950,7 @@ sub build_change_track_request {
                 status => {
                     progress_ms    => 0,
                     duration_ms    => 0,
-                    paused         => $status->{paused} // JSON::XS::VersionOneAndTwo::true(),
+                    paused         => $status->{paused} // \1,
                     playback_speed => $status->{playback_speed} // 1.0,
                     version => {
                         device_id    => $device_id,
@@ -737,94 +1012,62 @@ sub _encode_ws_pong {
 
 sub _extract_ws_frame {
     my ($buffer) = @_;
-    # Simplified: expects unmasked frames (server→client)
     return unless length($buffer) >= 2;
 
-    my $byte1 = unpack('C', substr($buffer, 0, 1));
-    my $byte2 = unpack('C', substr($buffer, 1, 1));
+    my ($b1, $b2) = unpack('CC', substr($buffer, 0, 2));
+    my $opcode     = $b1 & 0x0F;
+    my $masked     = $b2 & 0x80;
+    my $len        = $b2 & 0x7F;
+    my $header_len = 2;
 
-    my $opcode = $byte1 & 0x0f;
-    my $payload_len = $byte2 & 0x7f;
+    # Handle extended payload length
+    if ($len == 126) {
+        return unless length($buffer) >= 4;
+        $len = unpack('n', substr($buffer, 2, 2));
+        $header_len = 4;
+    } elsif ($len == 127) {
+        return unless length($buffer) >= 10;
+        $len = unpack('N', substr($buffer, 6, 4));
+        $header_len = 10;
+    }
 
-    # TODO: Handle extended payload length (127, 126)
-    # For MVP, assume short payloads
+    # Add mask key size if masked
+    $header_len += 4 if $masked;
 
-    my $frame_size = 2 + $payload_len;
-    return unless length($buffer) >= $frame_size;
+    # Check if we have full frame
+    return unless length($buffer) >= $header_len + $len;
 
-    my $frame = substr($buffer, 0, $frame_size);
-    my $remaining = substr($buffer, $frame_size);
+    my $payload = substr($buffer, $header_len, $len);
 
-    return ($frame, $remaining);
+    # Unmask if needed (client→server frames are masked)
+    if ($masked) {
+        my $mask = substr($buffer, $header_len - 4, 4);
+        my @m = unpack('C4', $mask);
+        my @d = unpack('C*', $payload);
+        $d[$_] ^= $m[$_ % 4] for 0..$#d;
+        $payload = pack('C*', @d);
+    }
+
+    my $remaining = substr($buffer, $header_len + $len);
+
+    # Handle close frame (opcode 8)
+    if ($opcode == 8) {
+        my $code   = length($payload) >= 2 ? unpack('n', substr($payload, 0, 2)) : 0;
+        my $reason = length($payload) >  2 ? substr($payload, 2) : '';
+        $log->warn(sprintf('Ynison: Server sent CLOSE frame: code=%d reason=%s', $code, $reason));
+        return (undef, $remaining);
+    }
+
+    # Only return text frames (opcode 1)
+    return ($payload, $remaining) if $opcode == 1;
+    return (undef, $remaining);
 }
 
 sub _decode_ws_frame {
-    my ($frame) = @_;
-    # Simplified: extract text payload (opcode 1)
-    return unless length($frame) >= 2;
-
-    my $byte1 = unpack('C', substr($frame, 0, 1));
-    my $opcode = $byte1 & 0x0f;
-
-    # Skip non-text frames
-    return if $opcode != 1;  # 1 = text frame
-
-    my $byte2 = unpack('C', substr($frame, 1, 1));
-    my $payload_len = $byte2 & 0x7f;
-
-    return substr($frame, 2, $payload_len);
-}
-
-# ===========================================================================
-# Inner Class: SSL-capable async socket
-# ===========================================================================
-{
-    package Plugins::yandex::Ynison::Async;
-    use base qw(Slim::Networking::Async);
-
-    sub new_socket {
-        my ($self, %args) = @_;
-        if ($args{https}) {
-            $args{SSL_hostname} //= $args{Host};
-            require Slim::Networking::Async::Socket::HTTPS;
-            return Slim::Networking::Async::Socket::HTTPS->new(%args);
-        }
-        return $self->SUPER::new_socket(%args);
-    }
-
-    sub write {
-        my ($self, $data) = @_;
-        if ($self->{socket}) {
-            $self->{socket}->write($data);
-        }
-    }
-
-    sub start {
-        my ($self, %args) = @_;
-        $self->SUPER::start(
-            $args{host},
-            $args{port},
-            $args{onConnected},
-            $args{onRead},
-            $args{onError},
-            $args{https},
-        );
-    }
-
-    sub close {
-        my ($self) = @_;
-        if ($self->{socket}) {
-            $self->{socket}->close();
-        }
-    }
-
-    sub stop {
-        my ($self) = @_;
-        if ($self->{socket}) {
-            $self->{socket}->close();
-        }
-        $self->SUPER::stop() if $self->can('SUPER::stop');
-    }
+    my ($payload) = @_;
+    # Payload is already extracted and unmasked by _extract_ws_frame
+    return $payload if defined $payload && length($payload) > 0;
+    return;
 }
 
 1;
