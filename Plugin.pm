@@ -115,6 +115,41 @@ sub initPlugin {
         func   => \&Plugins::yandex::Browse::InfoMenu::trackInfoMenu,
     ) );
 
+    Slim::Menu::AlbumInfo->registerInfoProvider( yandex => (
+        after => 'top',
+        func  => \&Plugins::yandex::Browse::InfoMenu::albumInfoMenu,
+    ) );
+
+    Slim::Menu::ArtistInfo->registerInfoProvider( yandex => (
+        after => 'top',
+        func  => \&Plugins::yandex::Browse::InfoMenu::artistInfoMenu,
+    ) );
+
+    if (Slim::Utils::PluginManager->isEnabled('Slim::Plugin::OnlineLibrary::Plugin')) {
+        require Slim::Plugin::OnlineLibrary::BrowseArtist;
+        Slim::Plugin::OnlineLibrary::BrowseArtist->registerBrowseArtistItem( yandex => sub {
+            my ($client) = @_;
+            return {
+                name => cstring($client, 'PLUGIN_YANDEX_ON_YANDEX'),
+                type => 'link',
+                icon => $class->_pluginDataFor('icon'),
+                url  => \&Plugins::yandex::Browse::InfoMenu::browseArtistMenu,
+            };
+        });
+    }
+
+    Slim::Menu::GlobalSearch->registerInfoProvider( yandex => (
+        func => sub {
+            my ($client, $tags) = @_;
+            my $api = Plugins::yandex::Plugin::getAPIForClient($client);
+            return unless $api;
+            return {
+                name  => 'Yandex Music',
+                items => _globalSearchItems($client, $api, $tags->{search}),
+            };
+        },
+    ) );
+
     if (main::WEBUI) {
         require Plugins::yandex::Settings;
         Plugins::yandex::Settings->new();
@@ -897,5 +932,26 @@ sub _register_ffmpeg_path {
     $log->warn("YANDEX: ffmpeg not found - FLAC-in-MP4 (ymf) transcoding will not work");
 }
 
+sub _globalSearchItems {
+    my ($client, $api, $query) = @_;
+    return [] unless $query;
+    return [
+        {
+            name        => cstring($client, 'ARTISTS'),
+            url         => \&Plugins::yandex::Browse::Search::handleSearchArtists,
+            passthrough => [$api, $query],
+        },
+        {
+            name        => cstring($client, 'ALBUMS'),
+            url         => \&Plugins::yandex::Browse::Search::handleSearchAlbums,
+            passthrough => [$api, $query],
+        },
+        {
+            name        => cstring($client, 'SONGS'),
+            url         => \&Plugins::yandex::Browse::Search::handleSearchTracks,
+            passthrough => [$api, $query],
+        },
+    ];
+}
 
 1;

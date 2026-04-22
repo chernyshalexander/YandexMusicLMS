@@ -462,6 +462,10 @@ PLUGIN_YANDEX_DONE
 	EN	Done
 	RU	Готово
 
+PLUGIN_YANDEX_ON_YANDEX
+	EN	On Yandex Music
+	RU	На Яндекс Музыке
+
 PLUGIN_YANDEX_SIMILAR_ARTISTS
 	EN	Similar Artists
 	RU	Похожие исполнители
