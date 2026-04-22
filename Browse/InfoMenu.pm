@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use utf8;
 
+use Slim::Schema;
 use Slim::Utils::Log;
 use Slim::Utils::Strings qw(cstring);
 
