@@ -464,7 +464,7 @@ PLUGIN_YANDEX_DONE
 
 PLUGIN_YANDEX_ON_YANDEX
 	EN	On Yandex Music
-	RU	На Яндекс Музыке
+	RU	В Яндекс Музыке
 
 PLUGIN_YANDEX_SIMILAR_ARTISTS
 	EN	Similar Artists

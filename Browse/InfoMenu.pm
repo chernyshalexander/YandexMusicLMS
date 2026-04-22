@@ -90,14 +90,14 @@ sub trackInfoMenu {
     if (@search_items) {
         push @items, {
             type  => 'outline',
-            name  => cstring($client, 'PLUGIN_YANDEX_ON_YANDEX'),
+            name  => cstring($client, 'SEARCH'),
             items => \@search_items,
         };
     }
 
     return unless @items;
     return {
-        name  => 'Yandex Music',
+        name  => cstring($client, 'PLUGIN_YANDEX_ON_YANDEX'),
         items => \@items,
     };
 }
