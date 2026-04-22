@@ -249,7 +249,7 @@ sub handleSearchTracks {
             if ($result->{tracks} && $result->{tracks}->{results}) {
                 $tracks = $result->{tracks}->{results};
                 $total = $result->{tracks}->{total} || 0;
-                $total = 300 if $total > 300;
+                $total = 200 if $total > 200;
             }
             Plugins::yandex::Browse::Common::renderTrackList($tracks, $cb, "Tracks: $query", undef, {
                 offset => $page * $quantity,
@@ -290,7 +290,7 @@ sub handleSearchAlbums {
 
             if ($result->{albums} && $result->{albums}->{results}) {
                 $total = $result->{albums}->{total} || 0;
-                $total = 300 if $total > 300;
+                $total = 200 if $total > 200;
                 foreach my $album (@{$result->{albums}->{results}}) {
                     my $title = $album->{title} // 'Unknown Album';
                     my $artist = $album->{artists} && @{$album->{artists}} ? $album->{artists}[0]->{name} : 'Unknown Artist';
@@ -354,7 +354,7 @@ sub handleSearchArtists {
 
             if ($result->{artists} && $result->{artists}->{results}) {
                 $total = $result->{artists}->{total} || 0;
-                $total = 300 if $total > 300;
+                $total = 200 if $total > 200;
                 foreach my $artist (@{$result->{artists}->{results}}) {
                     my $name = $artist->{name} // 'Unknown Artist';
                     
@@ -416,7 +416,7 @@ sub handleSearchPlaylists {
 
             if ($result->{playlists} && $result->{playlists}->{results}) {
                 $total = $result->{playlists}->{total} || 0;
-                $total = 300 if $total > 300;
+                $total = 200 if $total > 200;
                 foreach my $playlist (@{$result->{playlists}->{results}}) {
                     my $title = $playlist->{title} // 'Unknown Playlist';
                     my $owner = $playlist->{owner} && $playlist->{owner}->{name} ? $playlist->{owner}->{name} : 'Unknown User';
@@ -484,7 +484,7 @@ sub handleSearchPodcasts {
 
             if ($result->{podcasts} && $result->{podcasts}->{results}) {
                 $total = $result->{podcasts}->{total} || 0;
-                $total = 300 if $total > 300;
+                $total = 200 if $total > 200;
                 foreach my $album (@{$result->{podcasts}->{results}}) {
                     my $title = $album->{title} // 'Unknown Podcast/Audiobook';
                     my $artist = $album->{artists} && @{$album->{artists}} ? $album->{artists}[0]->{name} : 'Unknown Artist';

@@ -42,13 +42,15 @@ sub renderTrackList {
     my ($tracks, $cb, $title, $container_url, $params) = @_;
 
     my @items;
-    
+
     foreach my $track_object (@$tracks) {
          my $track_title = $track_object->{title} // 'Unknown';
          my $artist_name = 'Unknown';
          if ($track_object->{artists} && ref $track_object->{artists} eq 'ARRAY' && @{$track_object->{artists}}) {
              $artist_name = $track_object->{artists}[0]->{name};
          }
+
+         next if !$track_object->{id} || ($track_title eq 'Unknown' && $artist_name eq 'Unknown');
 
          my $track_id = $track_object->{id};
          my $track_url = 'yandexmusic://' . $track_id;
