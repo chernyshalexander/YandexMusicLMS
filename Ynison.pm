@@ -592,8 +592,8 @@ sub _process_state_frames {
 
     # Parse WebSocket frames from read_buffer
     while (length($self->{read_buffer}) >= 2) {
-        $log->debug(sprintf('Ynison: Buffer has %d bytes, first bytes: %s',
-            length($self->{read_buffer}), unpack('H*', substr($self->{read_buffer}, 0, 20))));
+        #$log->debug(sprintf('Ynison: Buffer has %d bytes, first bytes: %s',
+        #    length($self->{read_buffer}), unpack('H*', substr($self->{read_buffer}, 0, 20))));
 
         my ($frame_data, $remaining) = _extract_ws_frame($self->{read_buffer});
         if (!defined $frame_data && !defined $remaining) {
@@ -610,7 +610,7 @@ sub _process_state_frames {
         }
 
         $log->info(sprintf('Ynison: Decoded text, length=%d: %s',
-            length($text), substr($text, 0, 500)));
+            length($text), substr($text, 0, 10000)));
 
         # Parse JSON state
         my $state;
