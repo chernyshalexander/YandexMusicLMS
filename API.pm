@@ -622,9 +622,9 @@ sub search {
     my $url = 'https://api.music.yandex.net/search';
     my $params = {
         'text' => $query,
-        'type' => $type, 
+        'type' => $type,
         'page' => $page || 0,
-        'nocorrect' => 'false'
+        'nocorrect' => 'true'
     };
 
     $params->{'page-size'} = $page_size if defined $page_size;
