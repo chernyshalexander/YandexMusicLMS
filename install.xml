@@ -4,7 +4,7 @@
     <module>Plugins::yandex::Plugin</module>
     <importmodule>Plugins::yandex::Importer</importmodule>
     <onlineLibrary>true</onlineLibrary>
-    <version>0.77</version>
+    <version>0.80</version>
     <description>PLUGIN_YANDEX_DESC</description>
     <defaultState>enabled</defaultState>
     <targetApplication>
