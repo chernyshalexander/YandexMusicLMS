@@ -61,7 +61,7 @@ A plugin to play Yandex Music on Lyrion Music Server (LMS).
 - Interactive feedback to improve personal recommendations.
 - Multiple account support.
 - Deeper integration with local library.
-- 
+
 ##### Configuration & Token
 An OAuth token is required. Ways to obtain it:
 1. **Built-in 1:** Drag the "Capture token" button to your browser’s bookmark bar, click "Login to yandex", authenticate in the opened window, then click "Capture token" on the bookmark bar.
