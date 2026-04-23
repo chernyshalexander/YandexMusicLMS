@@ -23,7 +23,7 @@ use base qw(Slim::Plugin::OPMLBased);
 use Data::Dumper;             # TODO: unused (Dumper never called) — remove after testing
 use Encode qw(encode decode); # TODO: unused (encode/decode never called) — remove after testing
 use Plugins::yandex::ProtocolHandler;
-use Plugins::yandex::API;
+use Plugins::yandex::API::Async;
 use Plugins::yandex::Browse;
 use Plugins::yandex::Browse::InfoMenu;
 use Slim::Networking::SimpleAsyncHTTP; # TODO: unused (HTTP via API.pm) — remove after testing
@@ -32,7 +32,10 @@ use Slim::Utils::Cache;       # TODO: unused (no cache ops here) — remove afte
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(string cstring);
+use Slim::Utils::Versions;
 use URI::Escape qw(uri_escape_utf8); # TODO: unused (uri_escape_utf8 never called) — remove after testing
+
+use constant CAN_IMPORTER => (Slim::Utils::Versions->compareVersions($::VERSION, '8.0.0') >= 0);
 
 my $log;
 $log = Slim::Utils::Log->addLogCategory({
@@ -53,8 +56,11 @@ my %ynison_instances;
 sub initPlugin {
     my $class = shift;
 
+    $log->info("YANDEX: initPlugin START");
+
     $prefs->init({
         accounts => {},
+        dontImportAccounts => {},
         max_bitrate => 320,
         remove_duplicates => 1,
         show_chart => 0,
@@ -80,11 +86,23 @@ sub initPlugin {
     # Locate ffmpeg and expose its path to LMS so mp4-based media handling works.
     _register_ffmpeg_path();
 
-    my $deps = Plugins::yandex::API::check_dependencies();
+    my $deps = Plugins::yandex::API::Async::check_dependencies();
     if (!$deps->{rijndael} || !$deps->{ffmpeg}) {
         $log->error("YANDEX: Missing critical dependencies! FLAC/AAC(MP4) playback may fail. Missing: " .
             (!$deps->{rijndael} ? 'Crypt::Rijndael ' : '') .
             (!$deps->{ffmpeg} ? 'ffmpeg' : ''));
+    }
+
+    # Register Importer for OnlineLibrary
+    $log->info("YANDEX: Registering Importer... (CAN_IMPORTER=" . CAN_IMPORTER . ")");
+    Slim::Music::Import->addImporter('Plugins::yandex::Importer', { use => 1, onlineLibraryOnly => 1 });
+
+    # Register service icon for OnlineLibrary (shows Yandex logo on album covers)
+    if (Slim::Utils::PluginManager->isEnabled('Slim::Plugin::OnlineLibrary::Plugin')) {
+        Slim::Plugin::OnlineLibrary::Plugin->addLibraryIconProvider(
+            'yandex',
+            'plugins/yandex/html/images/yandex_svg.png'
+        );
     }
 
     # Protocol registration
@@ -181,7 +199,7 @@ sub _init_api_client {
 
     return if exists $api_clients{$userId};  # already initialized
 
-    my $api = Plugins::yandex::API->new($token);
+    my $api = Plugins::yandex::API::Async->new($token);
     $api->init(
         sub {
             my $client_instance = shift;
@@ -195,6 +213,7 @@ sub _init_api_client {
                 my $data = delete $accounts->{'migrating'};
                 $data->{login} = $me->{login} || '';
                 $data->{name}  = _format_account_name($me);
+                $data->{uid}   = $realUserId;  # Store uid for scanner access
                 $accounts->{$realUserId} = $data;
                 $prefs->set('accounts', $accounts);
                 $prefs->remove('token');  # Clean up legacy pref
@@ -212,6 +231,11 @@ sub _init_api_client {
 
                 _maybe_init_ynison($realUserId);
             } else {
+                my $accounts = $prefs->get('accounts') || {};
+                if ($accounts->{$userId}) {
+                    $accounts->{$userId}{uid} = $realUserId;  # Store uid for scanner access
+                    $prefs->set('accounts', $accounts);
+                }
                 $api_clients{$userId} = $client_instance;
                 $log->info("YANDEX: API client ready for userId=$userId (" . ($me->{login} || '') . ")");
                 _maybe_init_ynison($userId);
@@ -697,7 +721,7 @@ sub handleFeed {
         return;
     }
 
-    my $api = Plugins::yandex::API->new($account->{token});
+    my $api = Plugins::yandex::API::Async->new($account->{token});
     $api->init(
         sub {
             $api_clients{$userId} = shift;
@@ -952,6 +976,17 @@ sub _globalSearchItems {
             passthrough => [$api, $query],
         },
     ];
+}
+
+sub onlineLibraryNeedsUpdate {
+	if (CAN_IMPORTER) {
+		my $class = shift;
+		require Plugins::yandex::Importer;
+		return Plugins::yandex::Importer->needsUpdate(@_);
+	}
+	else {
+		$log->warn('YANDEX: The library importer feature requires at least Lyrion Music Server 8.0.0');
+	}
 }
 
 1;

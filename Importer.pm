@@ -198,10 +198,19 @@ sub scanArtists { if (main::SCANNER) {
             $progress->update($name);
             main::SCANNER && Slim::Schema->forceCommit;
 
-            Slim::Schema::Contributor->add({
+            my $artist_data = {
                 'artist' => $class->normalizeContributorName($name),
                 'extid'  => 'yandex:artist:' . $artistId,
-            });
+            };
+
+            # Add artist cover/image if available
+            if ($artist->{cover} && $artist->{cover}{uri}) {
+                my $cover = $artist->{cover}{uri};
+                $cover =~ s/%%/200x200/;
+                $artist_data->{cover} = "https://$cover" if $cover && $cover !~ /^https?:/;
+            }
+
+            Slim::Schema::Contributor->add($artist_data);
 
             _cacheArtistPicture($artistId, $userId, '3M');
         }
