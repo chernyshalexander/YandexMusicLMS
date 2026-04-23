@@ -269,12 +269,6 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 <hr>
 
-[% WRAPPER setting title="PLUGIN_YANDEX_ENABLE_YNISON" desc="PLUGIN_YANDEX_ENABLE_YNISON_DESC" %]
-<div class="prefDesc">
-    <input type="checkbox" name="pref_enable_ynison" id="pref_enable_ynison" [% IF prefs.enable_ynison %]checked[% END
-        %]>
-</div>
-[% END %]
 <script type="text/javascript">
 (function () {
     var toggle  = document.getElementById('pref_show_wave_wizard');

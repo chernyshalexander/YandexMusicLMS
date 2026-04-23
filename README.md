@@ -22,7 +22,6 @@
 3. **Вручную:** используйте [yandex-music-token](https://github.com/MarshalX/yandex-music-token) и вставьте токен в поле настроек.
 
 ##### В планах (TODO)
-- Поддержка протокола Ynison.
 - Работа с несколькими учётными записями.
 - Более глубокая интеграция с Lyrion Music Server.
 
@@ -67,7 +66,6 @@ An OAuth token is required. Ways to obtain it:
 3. **Manual:** Use [yandex-music-token](https://github.com/MarshalX/yandex-music-token) and paste the token manually.
 
 ##### Roadmap (TODO)
-- Ynison protocol support.
 - Multiple account support.
 - Deeper integration with Lyrion Music Server.
 
