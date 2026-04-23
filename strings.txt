@@ -2,6 +2,10 @@ PLUGIN_YANDEX
 	EN	Yandex Music
 	RU	Яндекс Музыка
 
+yandex
+	EN	Yandex Music
+	RU	Яндекс Музыка
+
 PLUGIN_YANDEX_DESC
 	EN	Play channels from Yandex Music
 	RU	Воспроизведение каналов Яндекс Музыки
@@ -766,3 +770,26 @@ PLUGIN_YANDEX_WAVE_FAVORITES
 	EN	My Vibe (Favorites)
 	RU	Моя волна (Любимое)
 
+PLUGIN_YANDEX_PROGRESS_READ_ALBUMS
+	EN	Reading albums for %s
+	RU	Чтение альбомов для %s
+
+PLUGIN_YANDEX_PROGRESS_READ_ARTISTS
+	EN	Reading artists for %s
+	RU	Чтение исполнителей для %s
+
+PLUGIN_YANDEX_PROGRESS_READ_PLAYLISTS
+	EN	Reading playlists for %s
+	RU	Чтение плейлистов для %s
+
+PLUGIN_YANDEX_ALBUMS_PROGRESS
+	EN	Yandex Music Albums
+	RU	Альбомы Яндекс Музыки
+
+PLUGIN_YANDEX_ARTISTS_PROGRESS
+	EN	Yandex Music Artists
+	RU	Исполнители Яндекс Музыки
+
+PLUGIN_YANDEX_PLAYLISTS_PROGRESS
+	EN	Yandex Music Playlists
+	RU	Плейлисты Яндекс Музыки
