@@ -101,7 +101,7 @@ sub initPlugin {
     if (Slim::Utils::PluginManager->isEnabled('Slim::Plugin::OnlineLibrary::Plugin')) {
         Slim::Plugin::OnlineLibrary::Plugin->addLibraryIconProvider(
             'yandex',
-            'plugins/yandex/html/images/yandex_svg.png'
+            'plugins/yandex/html/images/yandex.png'
         );
     }
 
