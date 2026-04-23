@@ -1,10 +1,10 @@
-package Plugins::yandex::API;
+package Plugins::yandex::API::Async;
 
 =encoding utf8
 
 =head1 NAME
 
-Plugins::yandex::API - Async Yandex Music API client
+Plugins::yandex::API::Async - Async Yandex Music API client
 
 =head1 DESCRIPTION
 

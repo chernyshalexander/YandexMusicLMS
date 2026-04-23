@@ -118,9 +118,9 @@ sub new {
 
             if ($meta->{aes_key}) {
                 eval {
-                    require Plugins::yandex::API;
+                    require Plugins::yandex::API::Async;
                     my $key_bytes = pack('H*', $meta->{aes_key});
-                    ${*$sock}{yandex_cipher} = Plugins::yandex::API::make_aes_cipher($key_bytes);
+                    ${*$sock}{yandex_cipher} = Plugins::yandex::API::Async::make_aes_cipher($key_bytes);
                     ${*$sock}{yandex_offset} = 0;
                     $log->info("YANDEX: AES-CTR cipher ready for track $track_id");
                 };

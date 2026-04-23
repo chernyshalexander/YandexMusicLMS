@@ -61,8 +61,8 @@ sub handler {
 		if ($token) {
 			$log->info("Yandex Settings: Token received via OAuth callback, validating...");
 
-			require Plugins::yandex::API;
-			my $yandex_client = Plugins::yandex::API->new($token);
+			require Plugins::yandex::API::Async;
+			my $yandex_client = Plugins::yandex::API::Async->new($token);
 			$yandex_client->init(
 				sub {
 					my $client_instance = shift;
@@ -117,8 +117,8 @@ sub handler {
 		if ($newToken && $newToken !~ /^\s*$/) {
 			$log->info("Yandex Settings: Adding new account, validating token...");
 
-			require Plugins::yandex::API;
-			my $yandex_client = Plugins::yandex::API->new($newToken);
+			require Plugins::yandex::API::Async;
+			my $yandex_client = Plugins::yandex::API::Async->new($newToken);
 
 			$yandex_client->init(
 				sub {
@@ -177,7 +177,7 @@ sub beforeRender {
 	}
 	$params->{accounts} = \@accounts_list;
 
-	my $deps = Plugins::yandex::API::check_dependencies();
+	my $deps = Plugins::yandex::API::Async::check_dependencies();
 	$params->{rijndael_available} = $deps->{rijndael};
 	$params->{rijndael_missing}   = !$deps->{rijndael};
 	$params->{ffmpeg_available}   = $deps->{ffmpeg};
