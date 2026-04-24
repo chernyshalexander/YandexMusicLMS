@@ -159,11 +159,9 @@ sub initPlugin {
     Slim::Menu::GlobalSearch->registerInfoProvider( yandex => (
         func => sub {
             my ($client, $tags) = @_;
-            my $api = Plugins::yandex::Plugin::getAPIForClient($client);
-            return unless $api;
             return {
                 name  => 'Yandex Music',
-                items => _globalSearchItems($client, $api, $tags->{search}),
+                items => _globalSearchItems($client, $tags->{search}),
             };
         },
     ) );
@@ -957,23 +955,23 @@ sub _register_ffmpeg_path {
 }
 
 sub _globalSearchItems {
-    my ($client, $api, $query) = @_;
+    my ($client, $query) = @_;
     return [] unless $query;
     return [
         {
             name        => cstring($client, 'ARTISTS'),
             url         => \&Plugins::yandex::Browse::Search::handleSearchArtists,
-            passthrough => [$api, $query],
+            passthrough => [{ query => $query }],
         },
         {
             name        => cstring($client, 'ALBUMS'),
             url         => \&Plugins::yandex::Browse::Search::handleSearchAlbums,
-            passthrough => [$api, $query],
+            passthrough => [{ query => $query }],
         },
         {
             name        => cstring($client, 'SONGS'),
             url         => \&Plugins::yandex::Browse::Search::handleSearchTracks,
-            passthrough => [$api, $query],
+            passthrough => [{ query => $query }],
         },
     ];
 }

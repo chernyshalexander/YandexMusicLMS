@@ -621,13 +621,12 @@ sub search {
     my ($self, $query, $type, $callback, $error_callback, $page, $page_size) = @_;
     my $url = 'https://api.music.yandex.net/search';
     my $params = {
-        'text' => $query,
-        'type' => $type,
-        'page' => $page || 0,
-        'nocorrect' => 'true'
+        'text'             => $query,
+        'type'             => $type,
+        'page'             => $page || 0,
+        'nocorrect'        => 'False',
+        'playlist-in-best' => 'True',
     };
-
-    $params->{'page-size'} = $page_size if defined $page_size;
 
     $self->get(
         $url,
