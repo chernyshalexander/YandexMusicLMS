@@ -12,8 +12,10 @@
 - Умные плейлисты и миксы. Поиск по трекам, альбомам, исполнителям, подкастам и аудиокнигам.
 - Отображение «Горячих треков» и «Новых релизов» в главном меню (при желании).
 - Поддержка высококачественного аудио: **FLAC** (включая FLAC-in-MP4) и **AAC** (включая AAC-MP4 и HE-AAC).
-- Поддержка потоков MP3 (до 320 кбит/с) с серверной буферизацией.
+- Поддержка потоков MP3 (до 320 кбит/с).
 - Передача обратной связи (feedback) для улучшения персональных рекомендаций.
+- Работа с несколькими учётными записями.
+- Интеграция онлайн билиотеки Яндекс Музыки с локальной билиотекой.
 
 ##### Настройка и получение токена
 Требуется OAuth-токен. Способы получения:
@@ -22,8 +24,7 @@
 3. **Вручную:** используйте [yandex-music-token](https://github.com/MarshalX/yandex-music-token) и вставьте токен в поле настроек.
 
 ##### В планах (TODO)
-- Работа с несколькими учётными записями.
-- Более глубокая интеграция с Lyrion Music Server.
+ - Интеграция с протоколом Ynison
 
 ##### Благодарности
 За идеи и вдохновение: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
@@ -56,8 +57,10 @@ A plugin to play Yandex Music on Lyrion Music Server (LMS).
 - Smart playlists and mixes. Search for tracks, albums, artists, podcasts, and audiobooks.
 - Optional "Hot Tracks" and "New Releases" in the main menu.
 - High-quality audio support: **FLAC** (including FLAC-in-MP4) and **AAC** (including AAC-MP4 & HE-AAC).
-- MP3 streaming up to 320 kbps with server-side buffering.
+- MP3 streaming up to 320 kbps.
 - Interactive feedback to improve personal recommendations.
+- Multiple account support.
+- Deeper integration with local library.
 
 ##### Configuration & Token
 An OAuth token is required. Ways to obtain it:
@@ -66,8 +69,7 @@ An OAuth token is required. Ways to obtain it:
 3. **Manual:** Use [yandex-music-token](https://github.com/MarshalX/yandex-music-token) and paste the token manually.
 
 ##### Roadmap (TODO)
-- Multiple account support.
-- Deeper integration with Lyrion Music Server.
+ - Ynison protocol integration
 
 ##### Credits
 For ideas and inspiration: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
