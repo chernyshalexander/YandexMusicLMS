@@ -931,6 +931,15 @@ sub _sysread {
             return undef unless defined $n;
             last if $n == 0;  # true EOF — FLAC frames need no flush
 
+            # Prevent decrypting Yandex HTML/XML error pages when stream URLs expire during long pauses
+            if ((${*$self}{yandex_offset} // 0) == 0 && $n >= 4) {
+                my $magic = substr($raw, 0, 4);
+                if ($magic =~ /^(?:<\?xm|<err|<!do|<htm)/i) {
+                    $log->error("YANDEX: Stream URL expired or denied. Received error page. Returning EOF.");
+                    return 0;
+                }
+            }
+
             my $sp    = ${*$self}{yandex_offset} // 0;
             my $plain = _aes_ctr_xor($cipher, $raw, $sp);
             ${*$self}{yandex_offset} = $sp + $n;
@@ -967,6 +976,17 @@ sub _sysread {
     return $bytes_read unless defined $bytes_read && $bytes_read > 0;
 
     my $stream_pos = ${*$self}{yandex_offset} // 0;
+
+    # Prevent decrypting Yandex HTML/XML error pages when stream URLs expire during long pauses
+    if ($stream_pos == 0 && $bytes_read >= 4) {
+        my $magic = substr($_[1], $offset, 4);
+        if ($magic =~ /^(?:<\?xm|<err|<!do|<htm)/i) {
+            $log->error("YANDEX: Stream URL expired or denied. Received plaintext error page. Returning EOF.");
+            substr($_[1], $offset, $bytes_read) = '';
+            return 0;
+        }
+    }
+
     my $plain      = _aes_ctr_xor($cipher, substr($_[1], $offset, $bytes_read), $stream_pos);
     substr($_[1], $offset, $bytes_read) = $plain;
     ${*$self}{yandex_offset} = $stream_pos + $bytes_read;

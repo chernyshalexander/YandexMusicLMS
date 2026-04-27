@@ -27,6 +27,7 @@ my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
 
 my ($ct, $splitChar);
+my $previousArtistId;  # Used to avoid duplicate caching of the same artist (like TIDAL does)
 
 sub initPlugin {
     my $class = shift;
@@ -198,21 +199,24 @@ sub scanArtists { if (main::SCANNER) {
             $progress->update($name);
             main::SCANNER && Slim::Schema->forceCommit;
 
-            my $artist_data = {
+            # Add artist to database (without picture, like Deezer does)
+            Slim::Schema::Contributor->add({
                 'artist' => $class->normalizeContributorName($name),
                 'extid'  => 'yandex:artist:' . $artistId,
-            };
+            });
 
-            # Add artist cover/image if available
+            # Cache artist picture separately (like Deezer does)
+            # Extract and cache artist cover/image if available
+            # Note: API /artists/$id/brief-info does NOT return cover_uri, so we extract it here
             if ($artist->{cover} && $artist->{cover}{uri}) {
                 my $cover = $artist->{cover}{uri};
                 $cover =~ s/%%/200x200/;
-                $artist_data->{cover} = "https://$cover" if $cover && $cover !~ /^https?:/;
+                $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
+                _cacheArtistPicture($artist, '3M');
+                main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Adding artist '$name' (id=$artistId) with cover: $cover");
+            } else {
+                main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Adding artist '$name' (id=$artistId) - no cover available");
             }
-
-            Slim::Schema::Contributor->add($artist_data);
-
-            _cacheArtistPicture($artistId, $userId, '3M');
         }
     }
 
@@ -296,19 +300,31 @@ sub scanPlaylists { if (main::SCANNER) {
     Slim::Schema->forceCommit;
 } }
 
-# Check if library needs update (runs in main LMS process, not scanner)
-sub getArtistPicture { if (main::SCANNER) {
+# Get artist picture (called by LMS UI when displaying artist information)
+# Note: Called from main LMS process, NOT from scanner
+sub getArtistPicture {
     my ($class, $id) = @_;
 
-    my $url = $cache->get('yandex_artist_image_' . $id);
-    return $url if $url;
+    main::INFOLOG && $log->is_info && $log->info("YANDEX: getArtistPicture() called for $id");
+
+    my $cache_key = 'yandex_artist_image_' . $id;
+    my $url = $cache->get($cache_key);
+    if ($url) {
+        main::INFOLOG && $log->is_info && $log->info("YANDEX: Found cached artist picture for $id -> $url");
+        return $url;
+    }
+
+    main::INFOLOG && $log->is_info && $log->info("YANDEX: No cached picture for $id, attempting API fetch");
 
     $id =~ s/yandex:artist://;
 
-    # Get any available uid (scanner doesn't have access to specific user context)
+    # Get any available uid
     my $accounts = _enabledAccounts();
     my ($anyUserId) = keys %$accounts;
-    return unless $anyUserId;
+    unless ($anyUserId) {
+        main::INFOLOG && $log->is_info && $log->info("YANDEX: No enabled accounts found for getArtistPicture($id)");
+        return;
+    }
 
     require Plugins::yandex::API::Sync;
     my $artist = Plugins::yandex::API::Sync->get_artist($id, $anyUserId) || {};
@@ -317,12 +333,15 @@ sub getArtistPicture { if (main::SCANNER) {
         my $cover = $artist->{cover_uri};
         $cover =~ s/%%/200x200/;
         $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-        $cache->set('yandex_artist_image_' . 'yandex:artist:' . $id, $cover, '3M');
+        my $save_key = 'yandex_artist_image_' . 'yandex:artist:' . $id;
+        $cache->set($save_key, $cover, '3M');
+        main::INFOLOG && $log->is_info && $log->info("YANDEX: Fetched and cached artist picture for $id -> $cover");
         return $cover;
     }
 
+    main::INFOLOG && $log->is_info && $log->info("YANDEX: No cover_uri in getArtistPicture($id) API response");
     return;
-} }
+}
 
 sub trackUriPrefix { 'yandexmusic://' }
 
@@ -457,18 +476,43 @@ sub _prepareTrack {
     return $trackData;
 }
 
-# Cache artist picture with TTL
+# Cache artist picture with TTL (like TIDAL/Deezer do)
+# Receives full artist object, extracts and caches the cover
+# Avoids duplicate caching of the same artist (like TIDAL does with $previousArtistId)
 sub _cacheArtistPicture {
-    my ($artistId, $userId, $ttl) = @_;
+    my ($artist, $ttl) = @_;
 
-    my $artist = Plugins::yandex::API::Sync->get_artist($artistId, $userId) || {};
+    my $artistId = $artist->{id};
+    my $cover;
 
-    if ($artist->{cover_uri}) {
-        my $cover = $artist->{cover_uri};
+    # Skip if we just cached this artist (avoid duplication)
+    if ($artistId eq $previousArtistId) {
+        return;
+    }
+
+    # Extract cover URL from artist object (may be nested or direct)
+    if ($artist->{cover}) {
+        if (ref $artist->{cover} eq 'HASH' && $artist->{cover}{uri}) {
+            # Nested structure: cover.uri
+            $cover = $artist->{cover}{uri};
+        } elsif (!ref $artist->{cover}) {
+            # Direct string
+            $cover = $artist->{cover};
+        }
+    }
+
+    if ($cover) {
+        # Normalize URL
         $cover =~ s/%%/200x200/;
         $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-        $cache->set('yandex_artist_image_yandex:artist:' . $artistId, $cover, $ttl || '3M');
+
+        my $cache_key = 'yandex_artist_image_yandex:artist:' . $artistId;
+        $cache->set($cache_key, $cover, $ttl || '3M');
+        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Cached artist picture for yandex:artist:$artistId -> $cover");
+        $previousArtistId = $artistId;  # Remember this artist to avoid duplicate caching
     }
 }
+
+$previousArtistId = '';  # Initialize to avoid "used only once" warning
 
 1;

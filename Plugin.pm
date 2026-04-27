@@ -99,10 +99,20 @@ sub initPlugin {
 
     # Register service icon for OnlineLibrary (shows Yandex logo on album covers)
     if (Slim::Utils::PluginManager->isEnabled('Slim::Plugin::OnlineLibrary::Plugin')) {
-        Slim::Plugin::OnlineLibrary::Plugin->addLibraryIconProvider(
-            'yandex',
-            'plugins/yandex/html/images/yandex.png'
-        );
+        my $icon_path = 'plugins/yandex/html/images/yandex.png';
+        my $ret = eval {
+            Slim::Plugin::OnlineLibrary::Plugin->addLibraryIconProvider(
+                'yandex',
+                $icon_path
+            );
+        };
+        if ($@) {
+            $log->warn("YANDEX: Failed to register library icon: $@");
+        } else {
+            $log->info("YANDEX: Registered library icon at $icon_path");
+        }
+    } else {
+        $log->debug("YANDEX: OnlineLibrary plugin not enabled, skipping library icon registration");
     }
 
     # Protocol registration
