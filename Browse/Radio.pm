@@ -120,15 +120,16 @@ sub handleVibeWheel {
 
             foreach my $item (@{ $wheel->{items} }) {
                 next unless $item->{type} && $item->{type} eq 'WAVE';
+
+                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
+                next if $is_reshuffle;
+
                 my $wave  = $item->{data}{wave}  // {};
                 my $agent = $item->{data}{agent} // {};
                 my $seeds = $wave->{seeds} // [];
                 next unless @$seeds;
 
-                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
-                my $name = $is_reshuffle
-                    ? cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE')
-                    : ($wave->{name} || $item->{id});
+                my $name = $wave->{name} || $item->{id};
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
@@ -150,29 +151,11 @@ sub handleVibeWheel {
                     image     => $cover || 'plugins/yandex/html/images/radio.png',
                 };
 
-                if ($is_reshuffle) {
-                    push @reshuffles, $entry;
-                } else {
-                    push @waves, $entry;
-                }
+                push @waves, $entry;
             }
 
-            # Build final menu: Default first, then waves, then reshuffles
-            my @items = (
-                {
-                    name      => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
-                    type      => 'audio',
-                    url       => 'yandexmusic://rotor_session/user:onyourwave',
-                    play      => 'yandexmusic://rotor_session/user:onyourwave',
-                    on_select => 'play',
-                    image     => 'plugins/yandex/html/images/radio.png',
-                },
-                @waves,
-                @reshuffles,
-            );
-
             $cb->({
-                items => \@items,
+                items => \@waves,
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
             });
         },
@@ -234,6 +217,14 @@ sub handleWaveModes {
             type => 'audio',
             url  => $base_url . 'user:onyourwave',
             play => $base_url . 'user:onyourwave',
+            on_select => 'play',
+            image => 'plugins/yandex/html/images/radio.png',
+        },
+        {
+            name => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
+            type => 'audio',
+            url  => $base_url . 'user:onyourwave?diversity=reshuffle',
+            play => $base_url . 'user:onyourwave?diversity=reshuffle',
             on_select => 'play',
             image => 'plugins/yandex/html/images/radio.png',
         },
