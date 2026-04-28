@@ -932,7 +932,7 @@ sub _sysread {
             last if $n == 0;  # true EOF — FLAC frames need no flush
 
             # Prevent decrypting Yandex HTML/XML error pages when stream URLs expire during long pauses
-            if ((${*$self}{yandex_offset} // 0) == 0 && $n >= 4) {
+            if ($n >= 4) {
                 my $magic = substr($raw, 0, 4);
                 if ($magic =~ /^(?:<\?xm|<err|<!do|<htm)/i) {
                     $log->error("YANDEX: Stream URL expired or denied. Received error page. Returning EOF.");
@@ -978,7 +978,7 @@ sub _sysread {
     my $stream_pos = ${*$self}{yandex_offset} // 0;
 
     # Prevent decrypting Yandex HTML/XML error pages when stream URLs expire during long pauses
-    if ($stream_pos == 0 && $bytes_read >= 4) {
+    if ($bytes_read >= 4) {
         my $magic = substr($_[1], $offset, 4);
         if ($magic =~ /^(?:<\?xm|<err|<!do|<htm)/i) {
             $log->error("YANDEX: Stream URL expired or denied. Received plaintext error page. Returning EOF.");
