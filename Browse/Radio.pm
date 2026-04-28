@@ -121,15 +121,15 @@ sub handleVibeWheel {
             foreach my $item (@{ $wheel->{items} }) {
                 next unless $item->{type} && $item->{type} eq 'WAVE';
 
-                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
-                next if $is_reshuffle;
-
                 my $wave  = $item->{data}{wave}  // {};
                 my $agent = $item->{data}{agent} // {};
                 my $seeds = $wave->{seeds} // [];
                 next unless @$seeds;
 
-                my $name = $wave->{name} || $item->{id};
+                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
+                my $name = $is_reshuffle
+                    ? cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE')
+                    : ($wave->{name} || $item->{id});
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
@@ -151,7 +151,11 @@ sub handleVibeWheel {
                     image     => $cover || 'plugins/yandex/html/images/radio.png',
                 };
 
-                push @waves, $entry;
+                if ($is_reshuffle) {
+                    push @reshuffles, $entry;
+                } else {
+                    push @waves, $entry;
+                }
             }
 
             $cb->({
@@ -211,109 +215,236 @@ sub handleWaveModes {
 
     my $base_url = 'yandexmusic://rotor_session/';
 
-    my @items = (
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave',
-            play => $base_url . 'user:onyourwave',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?diversity=reshuffle',
-            play => $base_url . 'user:onyourwave?diversity=reshuffle',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_DISCOVER'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?diversity=discover',
-            play => $base_url . 'user:onyourwave?diversity=discover',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_FAVORITE'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?diversity=favorite',
-            play => $base_url . 'user:onyourwave?diversity=favorite',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_POPULAR'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?diversity=popular',
-            play => $base_url . 'user:onyourwave?diversity=popular',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_CALM'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?moodEnergy=calm',
-            play => $base_url . 'user:onyourwave?moodEnergy=calm',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_ACTIVE'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?moodEnergy=active',
-            play => $base_url . 'user:onyourwave?moodEnergy=active',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_FUN'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?moodEnergy=fun',
-            play => $base_url . 'user:onyourwave?moodEnergy=fun',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_SAD'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?moodEnergy=sad',
-            play => $base_url . 'user:onyourwave?moodEnergy=sad',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_RUSSIAN'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?language=russian',
-            play => $base_url . 'user:onyourwave?language=russian',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_NOT_RUSSIAN'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?language=not-russian',
-            play => $base_url . 'user:onyourwave?language=not-russian',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_WITHOUT_WORDS'),
-            type => 'audio',
-            url  => $base_url . 'user:onyourwave?language=without-words',
-            play => $base_url . 'user:onyourwave?language=without-words',
-            on_select => 'play',
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-    );
+    $yandex_client->wheel_new(
+        sub {
+            my $wheel = shift;
+            my $reshuffle_url;
 
-    $cb->({
-        items => \@items,
-        title => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
-    });
+            foreach my $item (@{ $wheel->{items} }) {
+                next unless $item->{type} && $item->{type} eq 'WAVE';
+                if (($item->{style} // '') eq 'CONTROL_ACCENT') {
+                    my $seeds = $item->{data}{wave}{seeds} // [];
+                    if (@$seeds) {
+                        my $seeds_param = uri_escape_utf8(join(',', @$seeds));
+                        $reshuffle_url = "yandexmusic://rotor_session/_vibe_?seeds=$seeds_param";
+                        last;
+                    }
+                }
+            }
+
+            $reshuffle_url //= $base_url . 'user:onyourwave?diversity=reshuffle';
+
+            my @items = (
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave',
+                    play => $base_url . 'user:onyourwave',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
+                    type => 'audio',
+                    url  => $reshuffle_url,
+                    play => $reshuffle_url,
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_DISCOVER'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=discover',
+                    play => $base_url . 'user:onyourwave?diversity=discover',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_FAVORITE'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=favorite',
+                    play => $base_url . 'user:onyourwave?diversity=favorite',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_POPULAR'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=popular',
+                    play => $base_url . 'user:onyourwave?diversity=popular',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_CALM'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=calm',
+                    play => $base_url . 'user:onyourwave?moodEnergy=calm',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_ACTIVE'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=active',
+                    play => $base_url . 'user:onyourwave?moodEnergy=active',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_FUN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=fun',
+                    play => $base_url . 'user:onyourwave?moodEnergy=fun',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_SAD'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=sad',
+                    play => $base_url . 'user:onyourwave?moodEnergy=sad',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_RUSSIAN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=russian',
+                    play => $base_url . 'user:onyourwave?language=russian',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_NOT_RUSSIAN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=not-russian',
+                    play => $base_url . 'user:onyourwave?language=not-russian',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_WITHOUT_WORDS'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=without-words',
+                    play => $base_url . 'user:onyourwave?language=without-words',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+            );
+
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
+            });
+        },
+        sub {
+            my $error = shift;
+            $log->error("Failed to fetch Vibe Wheel for reshuffle: $error");
+            my @items = (
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave',
+                    play => $base_url . 'user:onyourwave',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=reshuffle',
+                    play => $base_url . 'user:onyourwave?diversity=reshuffle',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_DISCOVER'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=discover',
+                    play => $base_url . 'user:onyourwave?diversity=discover',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_FAVORITE'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=favorite',
+                    play => $base_url . 'user:onyourwave?diversity=favorite',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_POPULAR'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?diversity=popular',
+                    play => $base_url . 'user:onyourwave?diversity=popular',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_CALM'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=calm',
+                    play => $base_url . 'user:onyourwave?moodEnergy=calm',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_ACTIVE'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=active',
+                    play => $base_url . 'user:onyourwave?moodEnergy=active',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_FUN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=fun',
+                    play => $base_url . 'user:onyourwave?moodEnergy=fun',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_SAD'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?moodEnergy=sad',
+                    play => $base_url . 'user:onyourwave?moodEnergy=sad',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_RUSSIAN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=russian',
+                    play => $base_url . 'user:onyourwave?language=russian',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_NOT_RUSSIAN'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=not-russian',
+                    play => $base_url . 'user:onyourwave?language=not-russian',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+                {
+                    name => cstring($client, 'PLUGIN_YANDEX_MODE_LANG_WITHOUT_WORDS'),
+                    type => 'audio',
+                    url  => $base_url . 'user:onyourwave?language=without-words',
+                    play => $base_url . 'user:onyourwave?language=without-words',
+                    on_select => 'play',
+                    image => 'plugins/yandex/html/images/radio.png',
+                },
+            );
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
+            });
+        }
+    );
 }
 
 # ---------------------------------------------------------------------------
