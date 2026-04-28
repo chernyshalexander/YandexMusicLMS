@@ -12,7 +12,7 @@ use utf8;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
-use URI::Escape;
+use URI::Escape qw(uri_escape_utf8);
 
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
