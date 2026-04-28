@@ -36,15 +36,6 @@ sub handleRadioCategories {
 
     my @items;
 
-    # My Vibe Wheel — personalized AI-picked waves from wheel/new API
-    push @items, {
-        name => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
-        type => 'link',
-        url  => \&handleVibeWheel,
-        passthrough => [$yandex_client],
-        image => 'plugins/yandex/html/images/radio.png',
-    };
-
     # Wave Wizard — shown only if enabled in settings
     my $show_wizard = $prefs->get('show_wave_wizard') // 1;
     if ($show_wizard) {
@@ -56,6 +47,15 @@ sub handleRadioCategories {
             image => 'plugins/yandex/html/images/settings.png',
         };
     }
+
+    # My Vibe Wheel — personalized AI-picked waves from wheel/new API
+    push @items, {
+        name => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
+        type => 'link',
+        url  => \&handleVibeWheel,
+        passthrough => [$yandex_client],
+        image => 'plugins/yandex/html/images/radio.png',
+    };
 
     # My Presets — always shown if any presets saved (regardless of show_wizard)
     my $presets = $prefs->get('yandex_wave_presets') || [];
@@ -132,7 +132,8 @@ sub handleVibeWheel {
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
-                    ($cover = $agent->{cover}{uri}) =~ s/%%$/300x300/;
+                    my $uri = $agent->{cover}{uri};
+                    $cover = $uri if $uri =~ s/%%$/300x300/;
                 }
 
                 my $seeds_param = uri_escape_utf8(join(',', @$seeds));
@@ -154,7 +155,7 @@ sub handleVibeWheel {
             }
 
             $cb->({
-                items => [@reshuffles, @waves],
+                items => [@waves, @reshuffles],
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
             });
         },
