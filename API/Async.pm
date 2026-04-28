@@ -524,15 +524,40 @@ sub rotor_station_info {
     );
 }
 
+sub wheel_new {
+    my ($self, $callback, $error_callback) = @_;
+    my $url = 'https://api.music.yandex.net/wheel/new';
+
+    $self->post(
+        $url,
+        { context => { type => 'WAVE' } },
+        sub {
+            my $result = shift;
+            if (exists $result->{result} && exists $result->{result}->{items}) {
+                $callback->($result->{result});
+            } else {
+                $error_callback->("Failed to fetch Vibe Wheel");
+            }
+        },
+        $error_callback,
+    );
+}
+
 sub rotor_session_new {
     my ($self, $station_id, $settings, $queue, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/rotor/session/new';
 
-    my @seeds = ($station_id);
-    push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
-    push @seeds, 'settingMoodEnergy:' . $settings->{moodEnergy} if $settings && $settings->{moodEnergy};
-    push @seeds, 'settingLanguage:'   . $settings->{language}   if $settings && $settings->{language};
+    my @seeds;
+    if (ref $station_id eq 'ARRAY') {
+        @seeds = @$station_id;
+    } else {
+        @seeds = ($station_id);
+        push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
+        push @seeds, 'settingMoodEnergy:' . $settings->{moodEnergy} if $settings && $settings->{moodEnergy};
+        push @seeds, 'settingLanguage:'   . $settings->{language}   if $settings && $settings->{language};
+    }
 
+    my $station_label = ref $station_id eq 'ARRAY' ? join(',', @$station_id) : $station_id;
     my $data = {
         'seeds'                   => \@seeds,
         'queue'                   => $queue || [],
@@ -547,9 +572,9 @@ sub rotor_session_new {
         sub {
             my $result = shift;
             if (exists $result->{result} && exists $result->{result}->{radioSessionId}) {
-                $callback->($result->{result}); 
+                $callback->($result->{result});
             } else {
-                $error_callback->("Failed to create new rotor session for station $station_id");
+                $error_callback->("Failed to create new rotor session for station $station_label");
             }
         },
         $error_callback,

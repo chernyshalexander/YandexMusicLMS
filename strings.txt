@@ -679,6 +679,14 @@ PLUGIN_YANDEX_RADIO_ERAS
 	EN	Eras
 	RU	Эпохи
 
+PLUGIN_YANDEX_MY_VIBE_WHEEL
+	EN	My Vibe Wheel
+	RU	Колесо настроения
+
+PLUGIN_YANDEX_VIBE_RESHUFFLE
+	EN	Shake My Wave
+	RU	Встряхнуть мою волну
+
 PLUGIN_YANDEX_TAG_IN_THE_MOOD
 	EN	In the mood
 	RU	В настроении

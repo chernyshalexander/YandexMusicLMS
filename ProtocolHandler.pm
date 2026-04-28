@@ -641,11 +641,20 @@ sub explodePlaylist {
 		my $seen_tracks_prev = $prefs->client($client)->get('yandex_seen_tracks') || [];
 		$prefs->client($client)->set('yandex_seen_tracks', []) if $client;
 
-		$log->info("YANDEX NEW ROTOR: Exploding session for station $station_id, settings: " .
-			join(', ', map { "$_=$settings{$_}" } keys %settings) . ", queue: " . scalar(@$seen_tracks_prev) . " tracks");
+		# For Vibe Wheel: station_id is '_vibe_', seeds come from ?seeds= param
+		my $station_or_seeds = ($station_id eq '_vibe_')
+			? [split /,/, ($settings{seeds} // '')]
+			: $station_id;
+
+		if ($station_id eq '_vibe_') {
+			$log->info("YANDEX VIBE: Exploding session for seeds: " . join(', ', @$station_or_seeds));
+		} else {
+			$log->info("YANDEX NEW ROTOR: Exploding session for station $station_id, settings: " .
+				join(', ', map { "$_=$settings{$_}" } keys %settings) . ", queue: " . scalar(@$seen_tracks_prev) . " tracks");
+		}
 
 		# 1. Create session
-		$yandex_client->rotor_session_new($station_id, \%settings, $seen_tracks_prev, sub {
+		$yandex_client->rotor_session_new($station_or_seeds, \%settings, $seen_tracks_prev, sub {
 			my $session_result = shift;
 			my $radio_session_id = $session_result->{radioSessionId};
 			my $batch_id = $session_result->{batchId};

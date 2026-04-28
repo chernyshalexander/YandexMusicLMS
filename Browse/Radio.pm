@@ -12,6 +12,7 @@ use utf8;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
+use URI::Escape;
 
 my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
@@ -34,6 +35,15 @@ sub handleRadioCategories {
     my ($client, $cb, $args, $yandex_client) = @_;
 
     my @items;
+
+    # My Vibe Wheel — personalized AI-picked waves from wheel/new API
+    push @items, {
+        name => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
+        type => 'link',
+        url  => \&handleVibeWheel,
+        passthrough => [$yandex_client],
+        image => 'plugins/yandex/html/images/radio.png',
+    };
 
     # Wave Wizard — shown only if enabled in settings
     my $show_wizard = $prefs->get('show_wave_wizard') // 1;
@@ -98,6 +108,59 @@ sub handleRadioCategories {
     );
 
     $cb->(\@items);
+}
+
+sub handleVibeWheel {
+    my ($client, $cb, $args, $yandex_client) = @_;
+
+    $yandex_client->wheel_new(
+        sub {
+            my $wheel = shift;
+            my (@reshuffles, @waves);
+
+            foreach my $item (@{ $wheel->{items} }) {
+                next unless $item->{type} && $item->{type} eq 'WAVE';
+                my $wave  = $item->{data}{wave}  // {};
+                my $agent = $item->{data}{agent} // {};
+                my $seeds = $wave->{seeds} // [];
+                next unless @$seeds;
+
+                my $name = $wave->{name} || $item->{id};
+
+                my $cover = '';
+                if ($agent->{cover} && $agent->{cover}{uri}) {
+                    ($cover = $agent->{cover}{uri}) =~ s/%%$/300x300/;
+                }
+
+                my $seeds_param = uri_escape_utf8(join(',', @$seeds));
+                my $url = "yandexmusic://rotor_session/_vibe_?seeds=$seeds_param";
+                my $entry = {
+                    name      => $name,
+                    type      => 'audio',
+                    url       => $url,
+                    play      => $url,
+                    on_select => 'play',
+                    image     => $cover || 'plugins/yandex/html/images/radio.png',
+                };
+
+                if (($item->{style} // '') eq 'CONTROL_ACCENT') {
+                    push @reshuffles, $entry;
+                } else {
+                    push @waves, $entry;
+                }
+            }
+
+            $cb->({
+                items => [@reshuffles, @waves],
+                title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
+            });
+        },
+        sub {
+            my $error = shift;
+            $log->error("Vibe Wheel: Failed to fetch: $error");
+            $cb->([{ name => "Error: $error", type => 'text' }]);
+        }
+    );
 }
 
 sub handleRadioCategoryList {
