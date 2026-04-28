@@ -533,6 +533,10 @@ sub wheel_new {
         { context => { type => 'WAVE' } },
         sub {
             my $result = shift;
+            $log->error("YANDEX WHEEL: response keys: " . join(', ', keys %$result));
+            if (exists $result->{result}) {
+                $log->error("YANDEX WHEEL: result keys: " . join(', ', keys %{$result->{result}}));
+            }
             if (exists $result->{result} && exists $result->{result}->{items}) {
                 $callback->($result->{result});
             } else {
