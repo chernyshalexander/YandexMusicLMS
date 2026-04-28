@@ -133,7 +133,10 @@ sub handleVibeWheel {
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
                     my $uri = $agent->{cover}{uri};
-                    $cover = $uri if $uri =~ s/%%$/300x300/;
+                    if ($uri =~ s/%%$/300x300/) {
+                        $uri = 'https:' . $uri if $uri =~ /^\/\//;
+                        $cover = $uri;
+                    }
                 }
 
                 my $seeds_param = uri_escape_utf8(join(',', @$seeds));
@@ -154,8 +157,22 @@ sub handleVibeWheel {
                 }
             }
 
+            # Build final menu: Default first, then waves, then reshuffles
+            my @items = (
+                {
+                    name      => cstring($client, 'PLUGIN_YANDEX_MODE_DEFAULT'),
+                    type      => 'audio',
+                    url       => 'yandexmusic://rotor_session/user:onyourwave',
+                    play      => 'yandexmusic://rotor_session/user:onyourwave',
+                    on_select => 'play',
+                    image     => 'plugins/yandex/html/images/radio.png',
+                },
+                @waves,
+                @reshuffles,
+            );
+
             $cb->({
-                items => [@waves, @reshuffles],
+                items => \@items,
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
             });
         },
