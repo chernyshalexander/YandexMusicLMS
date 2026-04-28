@@ -684,7 +684,7 @@ PLUGIN_YANDEX_MY_VIBE_WHEEL
 	RU	Колесо настроения
 
 PLUGIN_YANDEX_VIBE_RESHUFFLE
-	EN	Shake My Wave
+	EN	Reshuffle My Vibe
 	RU	Встряхнуть мою волну
 
 PLUGIN_YANDEX_TAG_IN_THE_MOOD
