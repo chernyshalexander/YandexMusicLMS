@@ -125,7 +125,10 @@ sub handleVibeWheel {
                 my $seeds = $wave->{seeds} // [];
                 next unless @$seeds;
 
-                my $name = $wave->{name} || $item->{id};
+                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
+                my $name = $is_reshuffle
+                    ? cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE')
+                    : ($wave->{name} || $item->{id});
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
@@ -143,7 +146,7 @@ sub handleVibeWheel {
                     image     => $cover || 'plugins/yandex/html/images/radio.png',
                 };
 
-                if (($item->{style} // '') eq 'CONTROL_ACCENT') {
+                if ($is_reshuffle) {
                     push @reshuffles, $entry;
                 } else {
                     push @waves, $entry;
