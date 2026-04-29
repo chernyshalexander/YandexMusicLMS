@@ -125,7 +125,7 @@ sub new {
 # Public API
 # ===========================================================================
 
-sub enabled {
+sub is_active {
     my ($self) = @_;
     return $self->{state} == STATE_ACTIVE();
 }
@@ -135,12 +135,12 @@ sub device_id {
     return $self->{device_id};
 }
 
-sub latest_state {
+sub get_last_state {
     my ($self) = @_;
     return $self->{last_state};
 }
 
-sub cache_yandex_state {
+sub update_cached_queue {
     my ($self, $player_state) = @_;
     $self->{yandex_queue} = $player_state->{player_queue} if $player_state->{player_queue};
 }
@@ -173,13 +173,7 @@ sub _build_player_state {
     my $client = $self->{client};
     my $song   = $client->playingSong();
 
-    my $ts_ns   = int(time() * 1_000_000_000);
-    my $version = {
-        device_id    => $self->{device_id},
-        version      => "$ts_ns",
-        timestamp_ms => '0',
-    };
-
+    my $version = $self->_new_version();
     my $paused  = ($client->isPaused() || !$client->isPlaying()) ? \1 : \0;
     my $dur_ms  = $song ? int(($song->duration() || 0) * 1000) : 0;
     my $prog_ms = 0;
@@ -210,23 +204,16 @@ sub _build_player_state {
             }
         }
     } else {
-        my $tid = '';
-        if ($song && $song->track()) {
-            ($tid) = $song->track()->url() =~ /yandexmusic:\/\/(\d+)/;
-        }
+        # Minimal queue - do not invent tracks
         $player_queue = {
-            current_playable_index => $tid ? 0 : -1,
+            current_playable_index => -1,
+            playable_list          => [],
+            options                => {repeat_mode => 'NONE'},
             entity_id              => '',
             entity_type            => 'VARIOUS',
-            playable_list          => $tid ? [{
-                playable_id   => $tid,
-                playable_type => 'TRACK',
-                from          => 'direct',
-            }] : [],
-            options        => {repeat_mode => 'NONE'},
-            entity_context => 'BASED_ON_ENTITY_BY_DEFAULT',
-            from_optional  => '',
-            version        => $version,
+            entity_context         => 'BASED_ON_ENTITY_BY_DEFAULT',
+            from_optional          => '',
+            version                => $version,
         };
     }
 
@@ -235,23 +222,23 @@ sub _build_player_state {
 
 sub build_pause_cmd {
     my ($self, $paused) = @_;
-    my $state = $self->latest_state();
+    my $state = $self->get_last_state();
     return unless $state;
-    return build_pause_request($self->{device_id}, $state->{player_state}{status}, $paused);
+    return $self->build_pause_request($state->{player_state}{status}, $paused);
 }
 
 sub build_next_cmd {
     my ($self) = @_;
-    my $state = $self->latest_state();
+    my $state = $self->get_last_state();
     return unless $state;
-    return build_next_track_request($self->{device_id}, $state->{player_state});
+    return $self->build_next_track_request($state->{player_state});
 }
 
 sub build_prev_cmd {
     my ($self) = @_;
-    my $state = $self->latest_state();
+    my $state = $self->get_last_state();
     return unless $state;
-    return build_prev_track_request($self->{device_id}, $state->{player_state});
+    return $self->build_prev_track_request($state->{player_state});
 }
 
 sub connect {
@@ -464,36 +451,45 @@ sub _on_http_response {
     $self->{read_buffer} = substr($self->{read_buffer}, $sep_start + $sep_len);
 
     if ($headers =~ m{HTTP/1\.1 101}) {
-        my $where = ($self->{state} == STATE_REDIRECTOR) ? 'redirector' : 'state service';
-        $log->info(sprintf('Ynison [%s]: WebSocket upgrade OK on %s (current_state=%d)',
-            $self->{client}->name(), $where, $self->{state}));
-
-        Slim::Networking::IO::Select::removeRead($fh);
-        Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
-
-        if ($self->{state} == STATE_STATE_SERVICE) {
-            $self->{state} = STATE_ACTIVE;
-            $self->{reconnect_delay} = RECONNECT_MIN();
-            $log->info(sprintf('Ynison [%s]: ACTIVE - ready to receive state updates',
-                $self->{client}->name()));
-            $self->_send_register_device();
-            $self->_schedule_keepalive();
-            $self->_process_state_frames() if length $self->{read_buffer};
-        } elsif ($self->{state} == STATE_REDIRECTOR) {
-            $log->info('Ynison: Got 101 from redirector, processing frames...');
-            $self->{state} = STATE_STATE_SERVICE;
-            Slim::Networking::IO::Select::removeRead($fh);
-            Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
-            # Process any frame data in buffer immediately
-            $self->_process_state_frames();
+        if ($self->{state} == STATE_REDIRECTOR) {
+            $self->_handle_redirector_upgrade($fh);
+        } elsif ($self->{state} == STATE_STATE_SERVICE) {
+            $self->_handle_state_service_upgrade($fh);
         }
     } else {
-        # Not 101 response
         my @lines = split /\r\n/, $headers;
         $log->error(sprintf('Ynison [%s]: Expected 101 Switching Protocols, got: %s',
             $self->{client}->name(), $lines[0]));
         $self->_schedule_reconnect();
     }
+}
+
+sub _handle_redirector_upgrade {
+    my ($self, $fh) = @_;
+
+    $log->info(sprintf('Ynison [%s]: Redirector upgrade OK', $self->{client}->name()));
+    $self->{state} = STATE_STATE_SERVICE;
+
+    Slim::Networking::IO::Select::removeRead($fh);
+    Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
+
+    $self->_process_state_frames();
+}
+
+sub _handle_state_service_upgrade {
+    my ($self, $fh) = @_;
+
+    $log->info(sprintf('Ynison [%s]: State service upgrade OK - ACTIVE', $self->{client}->name()));
+    $self->{state} = STATE_ACTIVE;
+    $self->{reconnect_delay} = RECONNECT_MIN();
+
+    Slim::Networking::IO::Select::removeRead($fh);
+    Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
+
+    $self->_send_register_device();
+    $self->_schedule_keepalive();
+
+    $self->_process_state_frames() if length $self->{read_buffer};
 }
 
 sub _connect_state_service {
@@ -520,34 +516,26 @@ sub _connect_state_service {
 sub _send_register_device {
     my ($self) = @_;
 
-    my $ts_ns = int(time() * 1_000_000_000);
-    my $ts_ms = int(time() * 1000);
-
-    my $version = {
-        device_id    => $self->{device_id},
-        version      => "$ts_ns",
-        timestamp_ms => '0',
-    };
-
+    my $version = $self->_new_version();
     my $msg = {
         rid                         => _generate_request_id(),
-        player_action_timestamp_ms  => "$ts_ms",
+        player_action_timestamp_ms  => _get_timestamp(),
         activity_interception_type  => 'DO_NOT_INTERCEPT_BY_DEFAULT',
         update_full_state => {
             device => {
                 capabilities => {
                     can_be_player            => \1,
-                    can_be_remote_controller => \0,
-                    volume_granularity       => 16,
+                    can_be_remote_controller => \1,
+                    volume_granularity       => 100,
                 },
                 info => {
                     device_id => $self->{device_id},
                     type      => 'WEB',
                     title     => $self->{client}->name() . ' (LMS)',
-                    app_name  => 'Chrome',
+                    app_name  => 'yandex-music-lms',
                 },
                 volume_info => {
-                    volume => 0.5,
+                    volume => ($self->{client}->volume() || 0) / 100,
                 },
                 is_shadow => \0,
             },
@@ -558,28 +546,25 @@ sub _send_register_device {
                     options => {
                         repeat_mode => 'NONE',
                     },
-                    entity_id   => '',
-                    entity_type => 'VARIOUS',
+                    entity_id      => '',
+                    entity_type    => 'VARIOUS',
                     entity_context => 'BASED_ON_ENTITY_BY_DEFAULT',
-                    from_optional => '',
-                    version => $version,
+                    from_optional  => '',
+                    version        => $version,
                 },
                 status => {
                     paused         => \1,
                     progress_ms    => '0',
                     duration_ms    => '0',
                     playback_speed => 1.0,
-                    version => $version,
+                    version        => $version,
                 },
             },
             is_currently_active => \0,
         },
     };
 
-    my $json = JSON::XS::VersionOneAndTwo::encode_json($msg);
-    $log->info(sprintf('Ynison [%s]: Sending device registration: %s',
-        $self->{client}->name(), substr($json, 0, 200)));
-
+    $log->info(sprintf('Ynison [%s]: Sending device registration', $self->{client}->name()));
     $self->send_command($msg);
 }
 
@@ -590,67 +575,48 @@ sub _send_register_device {
 sub _process_state_frames {
     my ($self) = @_;
 
-    # Parse WebSocket frames from read_buffer
     while (length($self->{read_buffer}) >= 2) {
-        #$log->debug(sprintf('Ynison: Buffer has %d bytes, first bytes: %s',
-        #    length($self->{read_buffer}), unpack('H*', substr($self->{read_buffer}, 0, 20))));
-
         my ($frame_data, $remaining) = _extract_ws_frame($self->{read_buffer});
         if (!defined $frame_data && !defined $remaining) {
-            # Incomplete frame - wait for more data
             last;
         }
         $self->{read_buffer} = $remaining // '';
-        next unless defined $frame_data;  # close frame already logged by _extract_ws_frame
+        next unless defined $frame_data;
 
         my $text = _decode_ws_frame($frame_data);
-        unless (defined $text) {
-            $log->warn('Ynison: Decode returned undef (close or binary frame)');
-            next;
-        }
+        next unless defined $text;
 
-        $log->info(sprintf('Ynison: Decoded text, length=%d: %s',
-            length($text), substr($text, 0, 10000)));
-
-        # Parse JSON state
         my $state;
         eval { $state = JSON::XS::VersionOneAndTwo::decode_json($text) };
         if ($@) {
-            $log->error(sprintf('Ynison: JSON decode error: %s | raw: %s', $@, substr($text, 0, 200)));
+            $log->error(sprintf('Ynison: JSON decode error: %s', $@));
             next;
         }
-        $self->_handle_state_update($state);
+        $self->_on_message_received($state);
     }
 }
 
-sub _handle_state_update {
-    my ($self, $state) = @_;
+sub _on_message_received {
+    my ($self, $msg) = @_;
 
-    # Route based on connection state (like old module's _on_message)
     if ($self->{state} == STATE_STATE_SERVICE) {
-        return $self->_handle_redirect($state);
+        return $self->_handle_redirect($msg);
     }
 
-    # STATE_ACTIVE: handle normal state updates
-    # Skip pings
-    if ($state->{ping}) {
+    if ($msg->{ping}) {
         $self->_send_pong();
         return;
     }
 
-    # Cache latest state
-    $self->{last_state} = $state;
+    # Data update
+    $self->{last_state} = $msg;
 
-    # Call registered listeners
     foreach my $listener (@{$self->{listeners}}) {
-        eval {
-            $listener->($state);
-        };
-        if ($@) {
-            $log->error("Ynison listener error: $@");
-        }
+        eval { $listener->($msg) };
+        $log->error("Ynison listener error: $@") if $@;
     }
 }
+
 
 sub _handle_redirect {
     my ($self, $msg) = @_;
@@ -741,23 +707,8 @@ sub _schedule_reconnect {
 }
 
 # ===========================================================================
-# Error Handling
+# Low-level I/O
 # ===========================================================================
-
-sub _on_error {
-    my ($self, $phase, $async, $error) = @_;
-
-    $log->warn(sprintf('Ynison [%s]: Error during %s: %s',
-        $self->{client}->name(), $phase, $error));
-
-    $self->{state} = STATE_DISCONNECTED;
-    if ($self->{socket}) {
-        $self->{socket}->close();
-        $self->{socket} = undef;
-    }
-
-    $self->_schedule_reconnect();
-}
 
 # ===========================================================================
 # Low-level I/O
@@ -796,25 +747,13 @@ sub _send_frame {
 # Helper Functions
 # ===========================================================================
 
-sub _build_headers {
+sub _new_version {
     my ($self) = @_;
-    return "Authorization: OAuth " . $self->{token} . "\r\n"
-         . "Origin: https://music.yandex.ru\r\n";
-}
-
-sub _build_subprotocols {
-    my ($self) = @_;
-
-    my $device_info = {
-        app_name => 'Yandex Music LMS Plugin',
-        type     => '1',
+    return {
+        device_id    => $self->{device_id},
+        version      => int(rand(10**18)),
+        timestamp_ms => _get_timestamp(),
     };
-
-    return [
-        'Bearer',
-        'v2',
-        JSON::XS::VersionOneAndTwo::encode_json($device_info),
-    ];
 }
 
 sub _generate_device_id {
@@ -867,7 +806,7 @@ Returns:
 =cut
 
 sub build_pause_request {
-    my ($device_id, $current_status, $paused) = @_;
+    my ($self, $current_status, $paused) = @_;
 
     return {
         rid                         => _generate_request_id(),
@@ -879,11 +818,7 @@ sub build_pause_request {
                 duration_ms    => $current_status->{duration_ms} // 0,
                 paused         => $paused ? \1 : \0,
                 playback_speed => $current_status->{playback_speed} // 1.0,
-                version => {
-                    device_id    => $device_id,
-                    version      => int(rand(10**18)),
-                    timestamp_ms => _get_timestamp(),
-                },
+                version        => $self->_new_version(),
             },
         },
     };
@@ -907,23 +842,19 @@ Returns:
 =cut
 
 sub build_change_track_request {
-    my ($device_id, $current_state, $delta) = @_;
+    my ($self, $current_state, $delta) = @_;
 
     my $queue = $current_state->{player_queue} // {};
     my $status = $current_state->{status} // {};
 
-    my $current_idx = $queue->{current_playable_index} // -1;
-    my $playable_count = scalar(@{$queue->{playable_list} // []});
+    my $total = scalar(@{$queue->{playable_list} // []});
+    my $new_idx = $total > 0
+        ? ($queue->{current_playable_index} // 0) + $delta
+        : -1;
 
-    # Calculate new index, clamped to valid range
-    my $new_idx;
-    if ($playable_count > 0) {
-        $new_idx = $current_idx + $delta;
-        $new_idx = 0 if $new_idx < 0;
-        $new_idx = $playable_count - 1 if $new_idx >= $playable_count;
-    } else {
-        $new_idx = -1;
-    }
+    # Basic range protection only
+    $new_idx = 0 if $new_idx < 0 && $total > 0;
+    $new_idx = $total - 1 if $new_idx >= $total && $total > 0;
 
     return {
         rid                         => _generate_request_id(),
@@ -934,29 +865,19 @@ sub build_change_track_request {
                 player_queue => {
                     current_playable_index => $new_idx,
                     playable_list          => $queue->{playable_list} // [],
-                    options => {
-                        repeat_mode => $queue->{options}{repeat_mode} // 'NONE',
-                    },
-                    entity_id      => $queue->{entity_id} // '',
-                    entity_type    => $queue->{entity_type} // 'VARIOUS',
-                    entity_context => $queue->{entity_context} // 'BASED_ON_ENTITY_BY_DEFAULT',
-                    from_optional  => $queue->{from_optional} // '',
-                    version => {
-                        device_id    => $device_id,
-                        version      => int(rand(10**18)),
-                        timestamp_ms => _get_timestamp(),
-                    },
+                    options                => $queue->{options} // {repeat_mode => 'NONE'},
+                    entity_id              => $queue->{entity_id} // '',
+                    entity_type            => $queue->{entity_type} // 'VARIOUS',
+                    entity_context         => $queue->{entity_context} // 'BASED_ON_ENTITY_BY_DEFAULT',
+                    from_optional          => $queue->{from_optional} // '',
+                    version                => $self->_new_version(),
                 },
                 status => {
                     progress_ms    => 0,
                     duration_ms    => 0,
                     paused         => $status->{paused} // \1,
                     playback_speed => $status->{playback_speed} // 1.0,
-                    version => {
-                        device_id    => $device_id,
-                        version      => int(rand(10**18)),
-                        timestamp_ms => _get_timestamp(),
-                    },
+                    version        => $self->_new_version(),
                 },
             },
         },
@@ -977,8 +898,8 @@ Returns:
 =cut
 
 sub build_next_track_request {
-    my ($device_id, $current_state) = @_;
-    return build_change_track_request($device_id, $current_state, 1);
+    my ($self, $current_state) = @_;
+    return $self->build_change_track_request($current_state, 1);
 }
 
 =head2 build_prev_track_request($device_id, $current_state)
@@ -995,8 +916,8 @@ Returns:
 =cut
 
 sub build_prev_track_request {
-    my ($device_id, $current_state) = @_;
-    return build_change_track_request($device_id, $current_state, -1);
+    my ($self, $current_state) = @_;
+    return $self->build_change_track_request($current_state, -1);
 }
 
 # WebSocket frame helpers (simplified)

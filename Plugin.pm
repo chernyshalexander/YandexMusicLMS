@@ -371,7 +371,7 @@ sub _apply_yandex_state {
     # Status-only update (play/pause with no track list)
     if (!@$remote_list) {
         _ynison_sync_play_pause($client, $remote_paused);
-        $ynison->cache_yandex_state($player_state);
+        $ynison->update_cached_queue($player_state);
         return;
     }
 
@@ -408,7 +408,7 @@ sub _apply_yandex_state {
         _rebuild_lms_queue_from_yandex($client, $ynison, $queue, $remote_paused);
     }
 
-    $ynison->cache_yandex_state($player_state);
+    $ynison->update_cached_queue($player_state);
 }
 
 sub _ynison_sync_play_pause {
