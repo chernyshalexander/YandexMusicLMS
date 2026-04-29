@@ -134,13 +134,13 @@ sub handleVibeWheel {
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
                     my $uri = $agent->{cover}{uri};
-                    $log->info("VIBE_WHEEL: Original cover URI: $uri");
                     if ($uri =~ s/%%$/300x300/) {
-                        $uri = 'https:' . $uri if $uri =~ /^\/\//;
+                        if ($uri =~ /^\/\//) {
+                            $uri = 'https:' . $uri;
+                        } elsif ($uri !~ /^https?:\/\//) {
+                            $uri = 'https://' . $uri;
+                        }
                         $cover = $uri;
-                        $log->info("VIBE_WHEEL: After processing: $cover");
-                    } else {
-                        $log->info("VIBE_WHEEL: No %% placeholder, skipping");
                     }
                 }
 
