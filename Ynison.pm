@@ -204,7 +204,11 @@ sub _build_player_state {
             }
         }
     } else {
-        # Minimal queue - do not invent tracks
+        # Minimal queue - do not invent tracks.
+        # This acts as an "empty state" which tells Yandex that this device
+        # is currently inactive or playing local (non-Yandex) content.
+        # Sending this state forces the Yandex mobile app to drop the Cast session
+        # and prevents the device from being randomly hijacked.
         $player_queue = {
             current_playable_index => -1,
             playable_list          => [],
@@ -525,7 +529,7 @@ sub _send_register_device {
             device => {
                 capabilities => {
                     can_be_player            => \1,
-                    can_be_remote_controller => \1,
+                    can_be_remote_controller => \0,  # LMS is a player, not a remote controller
                     volume_granularity       => 100,
                 },
                 info => {

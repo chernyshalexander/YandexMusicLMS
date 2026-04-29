@@ -605,14 +605,37 @@ sub playerEventCallback {
         }
 
         if ($ynison && !$ynison->{syncing_from_yandex}) {
-            # Send state updates back to Yandex
-            if ($command eq 'pause' || $command eq 'play' || $command eq 'newsong') {
-                $ynison->{sent_paused} = $client->isPaused() ? 1 : 0;
-                $ynison->update_state();
+            # Check if current content is Yandex Music
+            my $song = $client->playingSong();
+            my $is_yandex = 0;
+            if ($song && $song->track()) {
+                $is_yandex = 1 if $song->track()->url() =~ /^yandexmusic:\/\//;
             }
-            elsif ($command eq 'jump') {
-                my $cmd = $ynison->build_next_cmd();
-                $ynison->send_command($cmd) if $cmd;
+
+            if ($is_yandex) {
+                # Scenario 4: Local Control (LMS -> Yandex)
+                # We are playing Yandex Music, so we reflect local playback events to the Yandex app.
+                if ($command eq 'pause' || $command eq 'play' || $command eq 'newsong') {
+                    $ynison->{sent_paused} = $client->isPaused() ? 1 : 0;
+                    $ynison->update_state();
+                }
+                elsif ($command eq 'jump') {
+                    my $cmd = $ynison->build_next_cmd();
+                    $ynison->send_command($cmd) if $cmd;
+                }
+                # Remember that we have an active Yandex session
+                $client->pluginData('ynison_had_yandex_session', 1);
+            } else {
+                # Scenario 1 & 5: Local Content Isolation & Local Override
+                # If the user switched to local content (FLAC, Spotify, etc.) and we previously 
+                # had an active Yandex session, we must send an "empty" state to disconnect the app.
+                if ($client->pluginData('ynison_had_yandex_session')) {
+                    $log->info("YANDEX: Local override detected. Sending empty state to clear Ynison session.");
+                    $ynison->{yandex_queue} = undef;  # Clear local queue cache
+                    $ynison->update_state();          # Sends the empty queue to disconnect the phone
+                    $client->pluginData('ynison_had_yandex_session', 0);
+                }
+                # If we are just playing local content normally, we do NOT send any updates to Yandex.
             }
         }
     }
