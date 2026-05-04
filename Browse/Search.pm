@@ -275,8 +275,8 @@ sub handleSearchAlbums {
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 50;
-    my $page = int($index / $quantity);
+    my $api_page_size = 10;
+    my $page = int($index / $api_page_size);
 
     my $encoded_query = encode('utf8', $query);
 
@@ -322,7 +322,7 @@ sub handleSearchAlbums {
             $cb->({
                 items => \@items,
                 title => "Albums: $query",
-                offset => $page * $quantity,
+                offset => $page * $api_page_size,
                 total => $total,
             });
         },
@@ -331,7 +331,7 @@ sub handleSearchAlbums {
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
-        $quantity
+        $api_page_size
     );
 }
 
@@ -342,8 +342,8 @@ sub handleSearchArtists {
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 50;
-    my $page = int($index / $quantity);
+    my $api_page_size = 10;
+    my $page = int($index / $api_page_size);
 
     my $encoded_query = encode('utf8', $query);
 
@@ -387,7 +387,7 @@ sub handleSearchArtists {
             $cb->({
                 items => \@items,
                 title => "Artists: $query",
-                offset => $page * $quantity,
+                offset => $page * $api_page_size,
                 total => $total,
             });
         },
@@ -396,7 +396,7 @@ sub handleSearchArtists {
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
-        $quantity
+        $api_page_size
     );
 }
 
@@ -407,8 +407,8 @@ sub handleSearchPlaylists {
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 50;
-    my $page = int($index / $quantity);
+    my $api_page_size = 10;
+    my $page = int($index / $api_page_size);
 
     my $encoded_query = encode('utf8', $query);
 
@@ -458,7 +458,7 @@ sub handleSearchPlaylists {
             $cb->({
                 items => \@items,
                 title => "Playlists: $query",
-                offset => $page * $quantity,
+                offset => $page * $api_page_size,
                 total => $total,
             });
         },
@@ -467,7 +467,7 @@ sub handleSearchPlaylists {
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
-        $quantity
+        $api_page_size
     );
 }
 
@@ -478,8 +478,8 @@ sub handleSearchPodcasts {
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
-    my $quantity = $args->{quantity} || 50;
-    my $page = int($index / $quantity);
+    my $api_page_size = 10;
+    my $page = int($index / $api_page_size);
 
     my $encoded_query = encode('utf8', $query);
 
@@ -525,7 +525,7 @@ sub handleSearchPodcasts {
             $cb->({
                 items => \@items,
                 title => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS') . ": $query",
-                offset => $page * $quantity,
+                offset => $page * $api_page_size,
                 total => $total,
             });
         },
@@ -534,7 +534,7 @@ sub handleSearchPodcasts {
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
-        $quantity
+        $api_page_size
     );
 }
 

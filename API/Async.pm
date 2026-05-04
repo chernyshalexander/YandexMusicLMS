@@ -649,6 +649,7 @@ sub search {
         'text'             => $query,
         'type'             => $type,
         'page'             => $page || 0,
+        'page-size'        => $page_size || 10,
         'nocorrect'        => 'False',
         'playlist-in-best' => 'True',
     };
