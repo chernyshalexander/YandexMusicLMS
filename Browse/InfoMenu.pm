@@ -61,7 +61,7 @@ sub trackInfoMenu {
             type        => 'link',
             url         => \&Plugins::yandex::Browse::Search::handleSearchArtists,
             image       => 'html/images/artists.png',
-            passthrough => [$api, $artist],
+            passthrough => [{ query => $artist }],
         };
     }
 
@@ -72,7 +72,7 @@ sub trackInfoMenu {
             type        => 'link',
             url         => \&Plugins::yandex::Browse::Search::handleSearchAlbums,
             image       => 'html/images/albums.png',
-            passthrough => [$api, $album],
+            passthrough => [{ query => $album }],
         };
     }
 
@@ -83,7 +83,7 @@ sub trackInfoMenu {
             type        => 'link',
             url         => \&Plugins::yandex::Browse::Search::handleSearchTracks,
             image       => 'html/images/musicfolder.png',
-            passthrough => [$api, $title],
+            passthrough => [{ query => $title }],
         };
     }
 
@@ -116,7 +116,7 @@ sub albumInfoMenu {
         type        => 'link',
         name        => cstring($client, 'PLUGIN_YANDEX_ON_YANDEX'),
         url         => \&Plugins::yandex::Browse::Search::handleSearchAlbums,
-        passthrough => [$api, $albumName],
+        passthrough => [{ query => $albumName }],
     };
 }
 
@@ -134,7 +134,7 @@ sub artistInfoMenu {
         type        => 'link',
         name        => cstring($client, 'PLUGIN_YANDEX_ON_YANDEX'),
         url         => \&Plugins::yandex::Browse::Search::handleSearchArtists,
-        passthrough => [$api, $artistName],
+        passthrough => [{ query => $artistName }],
     };
 }
 
@@ -154,7 +154,7 @@ sub browseArtistMenu {
             $client, sub {
                 my $result = shift;
                 $cb->($result->{items} || $empty);
-            }, $args, $api, $artistObj->name
+            }, $args, { query => $artistObj->name }
         );
     } else {
         $cb->($empty);
