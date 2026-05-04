@@ -139,7 +139,7 @@ sub handleSearch {
                         name => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS'),
                         type => 'link',
                         url  => \&handleSearchPodcasts,
-                        passthrough => [{ query => $query }],
+                        passthrough => [$yandex_client, { query => $query }],
                         image => 'plugins/yandex/html/images/podcast.png',
                     };
                 }
@@ -168,7 +168,7 @@ sub handleSearch {
                     name => cstring($client, 'PLUGIN_YANDEX_TRACKS'),
                     type => 'link',
                     url  => \&handleSearchTracks,
-                    passthrough => [{ query => $query }],
+                    passthrough => [$yandex_client, { query => $query }],
                     image => 'html/images/musicfolder.png',
                 };
             }
@@ -178,7 +178,7 @@ sub handleSearch {
                     name => cstring($client, 'PLUGIN_YANDEX_ALBUMS'),
                     type => 'link',
                     url  => \&handleSearchAlbums,
-                    passthrough => [{ query => $query }],
+                    passthrough => [$yandex_client, { query => $query }],
                     image => 'html/images/albums.png',
                 };
             }
@@ -188,7 +188,7 @@ sub handleSearch {
                     name => cstring($client, 'PLUGIN_YANDEX_ARTISTS'),
                     type => 'link',
                     url  => \&handleSearchArtists,
-                    passthrough => [{ query => $query }],
+                    passthrough => [$yandex_client, { query => $query }],
                     image => 'html/images/artists.png',
                 };
             }
@@ -198,7 +198,7 @@ sub handleSearch {
                     name => cstring($client, 'PLUGIN_YANDEX_PLAYLISTS'),
                     type => 'link',
                     url  => \&handleSearchPlaylists,
-                    passthrough => [{ query => $query }],
+                    passthrough => [$yandex_client, { query => $query }],
                     image => 'html/images/playlists.png',
                 };
             }
@@ -209,7 +209,7 @@ sub handleSearch {
                     name => cstring($client, 'PLUGIN_YANDEX_AUDIOBOOKS_PODCASTS'),
                     type => 'link',
                     url  => \&handleSearchPodcasts,
-                    passthrough => [{ query => $query }],
+                    passthrough => [$yandex_client, { query => $query }],
                     image => 'plugins/yandex/html/images/podcast.png',
                 };
             }
@@ -224,10 +224,15 @@ sub handleSearch {
 }
 
 sub handleSearchTracks {
-    my ($client, $cb, $args, $params) = @_;
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH' && !defined $params) {
+        $params = $yandex_client;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    my $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -270,10 +275,15 @@ sub handleSearchTracks {
 }
 
 sub handleSearchAlbums {
-    my ($client, $cb, $args, $params) = @_;
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH' && !defined $params) {
+        $params = $yandex_client;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    my $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -338,10 +348,15 @@ sub handleSearchAlbums {
 }
 
 sub handleSearchArtists {
-    my ($client, $cb, $args, $params) = @_;
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH' && !defined $params) {
+        $params = $yandex_client;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    my $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -404,10 +419,15 @@ sub handleSearchArtists {
 }
 
 sub handleSearchPlaylists {
-    my ($client, $cb, $args, $params) = @_;
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH' && !defined $params) {
+        $params = $yandex_client;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    my $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -476,10 +496,15 @@ sub handleSearchPlaylists {
 }
 
 sub handleSearchPodcasts {
-    my ($client, $cb, $args, $params) = @_;
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH' && !defined $params) {
+        $params = $yandex_client;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    my $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
