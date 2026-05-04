@@ -74,6 +74,10 @@ sub _handleTagPlaylists   { Plugins::yandex::Browse::Collection::handleTagPlayli
 # Individual Items
 sub _handleAlbum {
     my ($client, $cb, $args, $yandex_client, $album_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $album_id = $yandex_client->{id};
+        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+    }
 
     $yandex_client->get_album_with_tracks(
         $album_id,
@@ -91,6 +95,10 @@ sub _handleAlbum {
 
 sub _handleArtist {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $artist_id = $yandex_client->{id};
+        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+    }
 
     my $base_url = 'yandexmusic://rotor_session/';
 
@@ -286,6 +294,11 @@ sub _handleSimilarArtists {
 
 sub _handlePlaylist {
     my ($client, $cb, $args, $yandex_client, $user_id, $kind) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $user_id = $yandex_client->{uid};
+        $kind = $yandex_client->{kind};
+        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+    }
 
     $yandex_client->get_playlist(
         $user_id,

@@ -314,7 +314,7 @@ sub handleSearchAlbums {
                         name => $title . ' (' . $artist . ')',
                         type => 'album',
                         url => \&Plugins::yandex::Browse::_handleAlbum,
-                        passthrough => [$yandex_client, $album->{id}],
+                        passthrough => [{ id => $album->{id} }],
                         image => $icon,
                         play => 'yandexmusic://album/' . $album->{id},
                     };
@@ -381,7 +381,7 @@ sub handleSearchArtists {
                         name => $name,
                         type => 'link',
                         url => \&Plugins::yandex::Browse::_handleArtist,
-                        passthrough => [$yandex_client, $artist->{id}],
+                        passthrough => [{ id => $artist->{id} }],
                         image => $icon,
                     };
                 }
@@ -452,7 +452,7 @@ sub handleSearchPlaylists {
                         name => $title . ' (' . $owner . ')',
                         type => 'link',
                         url => \&Plugins::yandex::Browse::_handlePlaylist,
-                        passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
+                        passthrough => [{ uid => $playlist->{owner}->{uid}, kind => $playlist->{kind} }],
                         image => $icon,
                         play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
                     };
@@ -520,7 +520,7 @@ sub handleSearchPodcasts {
                         name => $title . ' (' . $artist . ')',
                         type => 'album',
                         url => \&Plugins::yandex::Browse::_handleAlbum,
-                        passthrough => [$yandex_client, $album->{id}],
+                        passthrough => [{ id => $album->{id} }],
                         image => $icon,
                         play => 'yandexmusic://album/' . $album->{id},
                     };
