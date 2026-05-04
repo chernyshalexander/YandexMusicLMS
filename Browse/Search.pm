@@ -127,6 +127,7 @@ sub handleSearch {
             'podcast',
             sub {
                 my $result = shift;
+                $log->info("handleSearchTracks: got results count=[" . ($result->{tracks} ? $result->{tracks}->{total} : 0) . "]");
 
                 if (!$result || ref $result ne 'HASH') {
                     $finish->();
@@ -233,6 +234,8 @@ sub handleSearchTracks {
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
+    $log->info("handleSearchTracks: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
+    
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -284,6 +287,8 @@ sub handleSearchAlbums {
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
+    $log->info("handleSearchAlbums: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
+
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
@@ -357,6 +362,8 @@ sub handleSearchArtists {
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
+    $log->info("handleSearchArtists: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
+
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
