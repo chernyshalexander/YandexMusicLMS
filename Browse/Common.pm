@@ -165,7 +165,7 @@ sub cache_track_metadata {
         _complete => 1,                                                     # mark as complete (full metadata)
     };
 
-    $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days like Deezer
+    $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days 
     
     return $meta;
 }
