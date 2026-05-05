@@ -28,9 +28,13 @@ use JSON::XS::VersionOneAndTwo;
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;
-
+use Slim::Utils::Cache;
+use Digest::MD5 qw(md5_hex);
 
 my $log = logger('plugin.yandex');
+my $cache = Slim::Utils::Cache->new();
+
+use constant SEARCH_TTL => 3600;
 
 # Cached result of Crypt::Rijndael availability check (undef = not yet tested).
 my $HAS_RIJNDAEL;
@@ -623,6 +627,15 @@ sub rotor_session_tracks {
 
 sub search {
     my ($self, $query, $type, $callback, $error_callback, $page, $page_size) = @_;
+
+    my $cacheKey = 'yandex_search_' . lc($type || 'all') . '_' . md5_hex(lc($query)) . '_p' . ($page || 0);
+
+    if (my $cached = $cache->get($cacheKey)) {
+        main::DEBUGLOG && $log->is_debug && $log->debug("Search cache hit: $cacheKey");
+        $callback->($cached);
+        return;
+    }
+
     my $url = 'https://api.music.yandex.net/search';
     my $params = {
         'text' => $query,
@@ -639,7 +652,9 @@ sub search {
         sub {
             my $result = shift;
             if (ref $result eq 'HASH' && exists $result->{result}) {
-                $callback->($result->{result});
+                my $data = $result->{result};
+                $cache->set($cacheKey, $data, SEARCH_TTL);
+                $callback->($data);
             } else {
                 my $err_msg = ref $result eq '' ? $result : "Search query failed";
                 $error_callback->($err_msg);
