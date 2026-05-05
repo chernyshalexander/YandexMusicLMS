@@ -342,6 +342,8 @@ sub users_likes_playlists {
         }
         $callback->(\@playlists);
     }, $error_callback);
+}
+
 sub users_playlists_list {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/playlists/list';
@@ -396,7 +398,14 @@ sub get_artist_tracks {
     my $params = { 'page-size' => 100 };
     my $cacheKey = 'yandex_artist_tracks_' . $artist_id;
 
-    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        if (ref $result eq 'HASH' && exists $result->{tracks}) {
+            $callback->($result->{tracks});
+        } else {
+            $callback->($result);
+        }
+    }, $error_callback);
 }
 
 sub get_artist_albums {
@@ -405,8 +414,16 @@ sub get_artist_albums {
     my $params = { 'page-size' => 100, 'sort-by' => 'year' };
     my $cacheKey = 'yandex_artist_albums_' . $artist_id;
 
-    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        if (ref $result eq 'HASH' && exists $result->{albums}) {
+            $callback->($result->{albums});
+        } else {
+            $callback->($result);
+        }
+    }, $error_callback);
 }
+
 
 sub get_similar_artists {
    my ($self, $artist_id, $callback, $error_callback) = @_;
