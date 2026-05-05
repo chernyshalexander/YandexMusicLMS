@@ -36,6 +36,7 @@ my $log = logger('plugin.yandex');
 my $cache = Slim::Utils::Cache->new();
 
 use constant SEARCH_TTL => 3600;
+use constant LONG_TTL   => 86400;
 
 # Cached result of Crypt::Rijndael availability check (undef = not yet tested).
 my $HAS_RIJNDAEL;
@@ -115,6 +116,33 @@ sub get {
 
     $log->info("Yandex API: Requesting GET " . $uri->as_string);
     $http->get($uri, %{$self->{default_headers}});
+}
+
+sub _cached_get {
+    my ($self, $cache_key, $ttl, $url, $params, $callback, $error_callback) = @_;
+
+    if (my $cached = $cache->get($cache_key)) {
+        main::DEBUGLOG && $log->is_debug && $log->debug("Cache hit: $cache_key");
+        $callback->($cached);
+        return;
+    }
+
+    $self->get(
+        $url,
+        $params,
+        sub {
+            my $result = shift;
+            if (ref $result eq 'HASH' && exists $result->{result}) {
+                my $data = $result->{result};
+                $cache->set($cache_key, $data, $ttl);
+                $callback->($data);
+            } else {
+                my $err_msg = ref $result eq '' ? $result : "API request failed";
+                $error_callback->($err_msg);
+            }
+        },
+        $error_callback,
+    );
 }
 
 sub post {
@@ -248,114 +276,78 @@ sub dislike_track {
     $self->post($url, {}, sub { $callback->() }, $error_callback);
 }
 
-
 sub users_likes_tracks {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/tracks/';
+    my $cacheKey = 'yandex_likes_tracks_' . $self->get_me->{uid};
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            my @track_short_objects;
-            if (exists $result->{result} && exists $result->{result}->{library} && exists $result->{result}->{library}->{tracks}) {
-                foreach my $item (@{$result->{result}->{library}->{tracks}}) {
-                    push @track_short_objects, {
-                        id => $item->{id},
-                        track_id => $item->{id},
-                        album_id => $item->{albumId},
-                        timestamp => $item->{timestamp},
-                    };
-                }
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        my @track_short_objects;
+        if (exists $result->{library} && exists $result->{library}->{tracks}) {
+            foreach my $item (@{$result->{library}->{tracks}}) {
+                push @track_short_objects, {
+                    id => $item->{id},
+                    track_id => $item->{id},
+                    album_id => $item->{albumId},
+                    timestamp => $item->{timestamp},
+                };
             }
-            $callback->(\@track_short_objects);
-        },
-        $error_callback,
-    );
+        }
+        $callback->(\@track_short_objects);
+    }, $error_callback);
 }
 
 sub users_likes_albums {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/albums';
     my $params = { rich => 'true' };
+    my $cacheKey = 'yandex_likes_albums_' . $self->get_me->{uid};
 
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-            my @albums;
-            if (exists $result->{result}) {
-               foreach my $item (@{$result->{result}}) {
-                   if ($item->{album}) { push @albums, $item->{album}; }
-               }
-            }
-            $callback->(\@albums);
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        my @albums;
+        foreach my $item (@$result) {
+            if ($item->{album}) { push @albums, $item->{album}; }
+        }
+        $callback->(\@albums);
+    }, $error_callback);
 }
 
 sub users_likes_artists {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/artists';
+    my $cacheKey = 'yandex_likes_artists_' . $self->get_me->{uid};
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            my @artists;
-             if (exists $result->{result}) {
-               foreach my $item (@{$result->{result}}) {
-                   push @artists, $item;
-               }
-            }
-            $callback->(\@artists);
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        my @artists;
+        foreach my $item (@$result) {
+            push @artists, $item;
+        }
+        $callback->(\@artists);
+    }, $error_callback);
 }
 
 sub users_likes_playlists {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/playlists';
+    my $cacheKey = 'yandex_likes_playlists_' . $self->get_me->{uid};
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            my @playlists;
-             if (exists $result->{result}) {
-               foreach my $item (@{$result->{result}}) {
-                   if ($item->{playlist}) { push @playlists, $item->{playlist}; }
-               }
-            }
-            $callback->(\@playlists);
-        },
-        $error_callback,
-    );
-}
-
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        my @playlists;
+        foreach my $item (@$result) {
+            if ($item->{playlist}) { push @playlists, $item->{playlist}; }
+        }
+        $callback->(\@playlists);
+    }, $error_callback);
 sub users_playlists_list {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/playlists/list';
+    my $cacheKey = 'yandex_my_playlists_' . $self->get_me->{uid};
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            my @playlists;
-            if (exists $result->{result}) {
-                @playlists = @{$result->{result}};
-            }
-            $callback->(\@playlists);
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, $callback, $error_callback);
 }
 
 sub tracks {
@@ -393,138 +385,88 @@ sub tracks {
 sub get_album_with_tracks {
     my ($self, $album_id, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/albums/' . $album_id . '/with-tracks';
+    my $cacheKey = 'yandex_album_tracks_' . $album_id;
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result}) {
-                $callback->($result->{result});
-            } else {
-                $error_callback->("Failed to get album with tracks");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, $callback, $error_callback);
 }
 
 sub get_artist_tracks {
     my ($self, $artist_id, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/tracks';
     my $params = { 'page-size' => 100 };
+    my $cacheKey = 'yandex_artist_tracks_' . $artist_id;
 
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-             if (exists $result->{result} && exists $result->{result}->{tracks}) {
-                $callback->($result->{result}->{tracks});
-            } else {
-                $error_callback->("Failed to get artist tracks");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
 }
 
 sub get_artist_albums {
     my ($self, $artist_id, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/direct-albums';
     my $params = { 'page-size' => 100, 'sort-by' => 'year' };
+    my $cacheKey = 'yandex_artist_albums_' . $artist_id;
 
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-             if (exists $result->{result} && exists $result->{result}->{albums}) {
-                $callback->($result->{result}->{albums});
-            } else {
-                $error_callback->("Failed to get artist albums");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
 }
 
 sub get_similar_artists {
-    my ($self, $artist_id, $callback, $error_callback) = @_;
+   my ($self, $artist_id, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/similar';
+    my $cacheKey = 'yandex_artist_similar_' . $artist_id;
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{similarArtists}) {
-                $callback->($result->{result}->{similarArtists});
-            } else {
-                $error_callback->("Failed to get similar artists");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{similarArtists}) {
+            $callback->($result->{similarArtists});
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
-
 
 sub get_artist_also_albums {
     my ($self, $artist_id, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/also-albums';
     my $params = { 'page-size' => 100, 'sort-by' => 'year' };
+    my $cacheKey = 'yandex_artist_also_' . $artist_id;
 
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{albums}) {
-                $callback->($result->{result}->{albums});
-            } else {
-                $error_callback->("Failed to get artist also-albums");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        if (exists $result->{albums}) {
+            $callback->($result->{albums});
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
 
 sub get_playlist {
     my ($self, $user_id, $kind, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $user_id . '/playlists/' . $kind;
+    my $cacheKey = "yandex_playlist_${user_id}_${kind}";
     
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result}) {
-                $callback->($result->{result});
-            } else {
-                $error_callback->("Failed to get playlist");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{result}) {
+            $callback->($result->{result});
+        } else {
+            $error_callback->("Failed to get playlist");
+        }
+    }, $error_callback);
 }
 
 sub rotor_station_info {
     my ($self, $station, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/station/' . $station . '/info';
+    my $cacheKey = 'yandex_station_info_' . $station;
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result}) {
-                $callback->($result->{result});
-            } else {
-                $error_callback->("Failed to get station info");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{result}) {
+            $callback->($result->{result});
+        } else {
+            $error_callback->("Failed to get station info");
+        }
+    }, $error_callback);
 }
 
 sub rotor_session_new {
@@ -624,13 +566,6 @@ sub search {
     my ($self, $query, $type, $callback, $error_callback, $page, $page_size) = @_;
 
     my $cacheKey = 'yandex_search_' . lc($type || 'all') . '_' . md5_hex(lc($query)) . '_p' . ($page || 0);
-
-    if (my $cached = $cache->get($cacheKey)) {
-        main::DEBUGLOG && $log->is_debug && $log->debug("Search cache hit: $cacheKey");
-        $callback->($cached);
-        return;
-    }
-
     my $url = Plugins::yandex::API::Common::BASE_URL . '/search';
     my $params = {
         'text' => $query,
@@ -641,76 +576,47 @@ sub search {
 
     $params->{'page-size'} = $page_size if defined $page_size;
 
-    $self->get(
-        $url,
-        $params,
-        sub {
-            my $result = shift;
-            if (ref $result eq 'HASH' && exists $result->{result}) {
-                my $data = $result->{result};
-                $cache->set($cacheKey, $data, SEARCH_TTL);
-                $callback->($data);
-            } else {
-                my $err_msg = ref $result eq '' ? $result : "Search query failed";
-                $error_callback->($err_msg);
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
 }
 
 sub rotor_stations_list {
     my ($self, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/stations/list';
+    my $cacheKey = 'yandex_rotor_stations';
 
-    $self->get(
-        Plugins::yandex::API::Common::BASE_URL . '/rotor/stations/list',
-        { language => 'any' },
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && ref $result->{result} eq 'ARRAY') {
-                $callback->($result->{result});
-            } else {
-                $error_callback->("Failed to get stations list");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, LONG_TTL, $url, { language => 'any' }, $callback, $error_callback);
 }
 
 sub landing_mixes {
     my ($self, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3';
+    my $params = { 'blocks' => 'mixes' };
+    my $cacheKey = 'yandex_landing_mixes';
 
-    $self->get(
-        'https://api.music.yandex.net/landing3',
-        { 'blocks' => 'mixes' },
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{blocks}) {
-                $callback->($result->{result}->{blocks});
-            } else {
-                $error_callback->("Failed to get landing mixes");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        if (exists $result->{result} && exists $result->{result}->{blocks}) {
+            $callback->($result->{result}->{blocks});
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
 
 sub landing_personal_playlists {
     my ($self, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3';
+    my $params = { 'blocks' => 'personal-playlists' };
+    my $cacheKey = 'yandex_landing_personal';
 
-    $self->get(
-        Plugins::yandex::API::Common::BASE_URL . '/landing3',
-        { 'blocks' => 'personal-playlists' },
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{blocks}) {
-                $callback->($result->{result}->{blocks});
-            } else {
-                $error_callback->("Failed to get personal playlists");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+        if (exists $result->{blocks}) {
+            $callback->($result->{blocks});
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
 
 sub get_chart {
@@ -720,67 +626,52 @@ sub get_chart {
     if ($chart_option) {
         $url .= '/' . $chart_option;
     }
+    my $cacheKey = 'yandex_chart_' . ($chart_option || 'all');
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{chart}) {
-                my $chart = $result->{result}->{chart};
-                my $tracks = $chart->{tracks} // [];
-                $callback->($tracks);
-            } else {
-                $error_callback->("Failed to get chart");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, LONG_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{chart}) {
+            my $chart = $result->{chart};
+            my $tracks = $chart->{tracks} // [];
+            $callback->($tracks);
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
 
 sub get_new_releases {
     my ($self, $callback, $error_callback) = @_;
 
     my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3/new-releases';
+    my $cacheKey = 'yandex_new_releases';
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{newReleases}) {
-                my $releases = $result->{result}->{newReleases};
-                $callback->($releases);
-            } else {
-                $error_callback->("Failed to get new releases");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, LONG_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{newReleases}) {
+            $callback->($result->{newReleases});
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
 
 sub get_new_playlists {
     my ($self, $callback, $error_callback) = @_;
-
     my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3/new-playlists';
+    my $cacheKey = 'yandex_new_playlists';
 
-    $self->get(
-        $url,
-        undef,
-        sub {
-            my $result = shift;
-            if (exists $result->{result} && exists $result->{result}->{newPlaylists}) {
-                my $playlists = $result->{result}->{newPlaylists};
-                my @playlist_data = map { { uid => $_->{uid}, kind => $_->{kind} } } @$playlists;
-                $callback->(\@playlist_data);
-            } else {
-                $error_callback->("Failed to get new playlists");
-            }
-        },
-        $error_callback,
-    );
+    $self->_cached_get($cacheKey, LONG_TTL, $url, undef, sub {
+        my $result = shift;
+        if (exists $result->{newPlaylists}) {
+            my $playlists = $result->{newPlaylists};
+            my @playlist_data = map { { uid => $_->{uid}, kind => $_->{kind} } } @$playlists;
+            $callback->(\@playlist_data);
+        } else {
+            $callback->([]);
+        }
+    }, $error_callback);
 }
-
 
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
