@@ -990,6 +990,10 @@ sub _register_ffmpeg_path {
 sub _globalSearchItems {
     my ($client, $query) = @_;
     return [] unless $query;
+
+    my $yandex_client = getAPIForClient($client);
+    return [] unless $yandex_client;
+
     return [
         {
             name        => cstring($client, 'ARTISTS'),

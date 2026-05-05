@@ -49,6 +49,12 @@ sub clearRecentSearches {
 sub handleRecentSearches {
     my ($client, $cb, $args, $yandex_client, $extra_args) = @_;
 
+    if (ref $yandex_client eq 'HASH') {
+        $extra_args = $yandex_client if !defined $extra_args;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
+
     if ($extra_args && $extra_args->{clear_history}) {
         clearRecentSearches();
     }
@@ -92,6 +98,12 @@ sub handleRecentSearches {
 sub handleSearch {
     my ($client, $cb, $args, $yandex_client, $extra_args) = @_;
 
+    if (ref $yandex_client eq 'HASH') {
+        $extra_args = $yandex_client if !defined $extra_args;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
+
     my $query = $args->{search} || ($extra_args && $extra_args->{query}) || '';
     if (!$query) {
         $cb->({ items => [] });
@@ -127,7 +139,7 @@ sub handleSearch {
             'podcast',
             sub {
                 my $result = shift;
-                $log->info("handleSearchTracks: got results count=[" . ($result->{tracks} ? $result->{tracks}->{total} : 0) . "]");
+                $log->info("handleSearch (Podcasts): received results keys=[" . ($result ? join(',', sort keys %$result) : 'none') . "]");
 
                 if (!$result || ref $result ne 'HASH') {
                     $finish->();
@@ -227,19 +239,21 @@ sub handleSearch {
 sub handleSearchTracks {
     my ($client, $cb, $args, $yandex_client, $params) = @_;
 
-    if (ref $yandex_client eq 'HASH' && !defined $params) {
-        $params = $yandex_client;
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
         $yandex_client = undef;
     }
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    $log->info("handleSearchTracks: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
     
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
     my $quantity = $args->{quantity} || 50;
+    # Cap quantity at 200 to avoid Yandex API errors. LMS will handle 
+    # further pagination if the interface needs more items.
+    $quantity = 200 if $quantity > 200;
 
     my $page = int($index / $quantity);
 
@@ -250,8 +264,10 @@ sub handleSearchTracks {
         'track',
         sub {
             my $result = shift;
+            $log->info("handleSearchTracks: received results");
 
             if (!$result || ref $result ne 'HASH') {
+                $log->error("handleSearchTracks: invalid response format or empty result");
                 $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
                 return;
             }
@@ -261,8 +277,12 @@ sub handleSearchTracks {
             if ($result->{tracks} && $result->{tracks}->{results}) {
                 $tracks = $result->{tracks}->{results};
                 $total = $result->{tracks}->{total} || 0;
+                $log->info("handleSearchTracks: found $total tracks");
                 $total = 200 if $total > 200;
+            } else {
+                $log->warn("handleSearchTracks: no tracks found in result");
             }
+
             Plugins::yandex::Browse::Common::renderTrackList($tracks, $cb, "Tracks: $query", undef, {
                 offset => $page * $quantity,
                 total  => $total,
@@ -270,6 +290,7 @@ sub handleSearchTracks {
         },
         sub {
             my $error = shift;
+            $log->error("handleSearchTracks: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
@@ -280,19 +301,21 @@ sub handleSearchTracks {
 sub handleSearchAlbums {
     my ($client, $cb, $args, $yandex_client, $params) = @_;
 
-    if (ref $yandex_client eq 'HASH' && !defined $params) {
-        $params = $yandex_client;
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
         $yandex_client = undef;
     }
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    $log->info("handleSearchAlbums: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
 
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
     my $quantity = $args->{quantity} || 50;
+    # Cap quantity at 200 to avoid Yandex API errors. LMS will handle 
+    # further pagination if the interface needs more items.
+    $quantity = 200 if $quantity > 200;
     my $page = int($index / $quantity);
 
     my $encoded_query = encode('utf8', $query);
@@ -302,8 +325,10 @@ sub handleSearchAlbums {
         'album',
         sub {
             my $result = shift;
+            $log->info("handleSearchAlbums: received results");
 
             if (!$result || ref $result ne 'HASH') {
+                $log->error("handleSearchAlbums: invalid response format or empty result");
                 $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
                 return;
             }
@@ -313,6 +338,7 @@ sub handleSearchAlbums {
 
             if ($result->{albums} && $result->{albums}->{results}) {
                 $total = $result->{albums}->{total} || 0;
+                $log->info("handleSearchAlbums: found $total albums");
                 $total = 200 if $total > 200;
                 foreach my $album (@{$result->{albums}->{results}}) {
                     my $title = $album->{title} // 'Unknown Album';
@@ -334,6 +360,8 @@ sub handleSearchAlbums {
                         play => 'yandexmusic://album/' . $album->{id},
                     };
                 }
+            } else {
+                $log->warn("handleSearchAlbums: no albums found in result");
             }
 
             $cb->({
@@ -345,6 +373,7 @@ sub handleSearchAlbums {
         },
         sub {
             my $error = shift;
+            $log->error("handleSearchAlbums: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
@@ -355,19 +384,21 @@ sub handleSearchAlbums {
 sub handleSearchArtists {
     my ($client, $cb, $args, $yandex_client, $params) = @_;
 
-    if (ref $yandex_client eq 'HASH' && !defined $params) {
-        $params = $yandex_client;
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
         $yandex_client = undef;
     }
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
-    $log->info("handleSearchArtists: query=[$query] has_api=[" . ($yandex_client ? 1 : 0) . "]");
-
+    
     return $cb->({ items => [] }) unless $yandex_client && $query;
 
     my $index = $args->{index} || 0;
     my $quantity = $args->{quantity} || 50;
+    # Cap quantity at 200 to avoid Yandex API errors. LMS will handle 
+    # further pagination if the interface needs more items.
+    $quantity = 200 if $quantity > 200;
     my $page = int($index / $quantity);
 
     my $encoded_query = encode('utf8', $query);
@@ -377,8 +408,10 @@ sub handleSearchArtists {
         'artist',
         sub {
             my $result = shift;
+            $log->info("handleSearchArtists: received results");
 
             if (!$result || ref $result ne 'HASH') {
+                $log->error("handleSearchArtists: invalid response format or empty result");
                 $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
                 return;
             }
@@ -388,6 +421,7 @@ sub handleSearchArtists {
 
             if ($result->{artists} && $result->{artists}->{results}) {
                 $total = $result->{artists}->{total} || 0;
+                $log->info("handleSearchArtists: found $total artists");
                 $total = 200 if $total > 200;
                 foreach my $artist (@{$result->{artists}->{results}}) {
                     my $name = $artist->{name} // 'Unknown Artist';
@@ -407,6 +441,8 @@ sub handleSearchArtists {
                         image => $icon,
                     };
                 }
+            } else {
+                $log->warn("handleSearchArtists: no artists found in result");
             }
 
             $cb->({
@@ -418,6 +454,7 @@ sub handleSearchArtists {
         },
         sub {
             my $error = shift;
+            $log->error("handleSearchArtists: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
@@ -428,8 +465,8 @@ sub handleSearchArtists {
 sub handleSearchPlaylists {
     my ($client, $cb, $args, $yandex_client, $params) = @_;
 
-    if (ref $yandex_client eq 'HASH' && !defined $params) {
-        $params = $yandex_client;
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
         $yandex_client = undef;
     }
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
@@ -439,6 +476,9 @@ sub handleSearchPlaylists {
 
     my $index = $args->{index} || 0;
     my $quantity = $args->{quantity} || 50;
+    # Cap quantity at 200 to avoid Yandex API errors. LMS will handle 
+    # further pagination if the interface needs more items.
+    $quantity = 200 if $quantity > 200;
     my $page = int($index / $quantity);
 
     my $encoded_query = encode('utf8', $query);
@@ -448,8 +488,10 @@ sub handleSearchPlaylists {
         'playlist',
         sub {
             my $result = shift;
+            $log->info("handleSearchPlaylists: received results. keys=[" . ($result ? join(',', keys %$result) : 'undef') . "]");
 
             if (!$result || ref $result ne 'HASH') {
+                $log->error("handleSearchPlaylists: invalid response format or empty result");
                 $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
                 return;
             }
@@ -459,6 +501,7 @@ sub handleSearchPlaylists {
 
             if ($result->{playlists} && $result->{playlists}->{results}) {
                 $total = $result->{playlists}->{total} || 0;
+                $log->info("handleSearchPlaylists: found $total playlists");
                 $total = 200 if $total > 200;
                 foreach my $playlist (@{$result->{playlists}->{results}}) {
                     my $title = $playlist->{title} // 'Unknown Playlist';
@@ -484,6 +527,8 @@ sub handleSearchPlaylists {
                         play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
                     };
                 }
+            } else {
+                $log->warn("handleSearchPlaylists: no playlists found in result");
             }
 
             $cb->({
@@ -495,6 +540,7 @@ sub handleSearchPlaylists {
         },
         sub {
             my $error = shift;
+            $log->error("handleSearchPlaylists: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,
@@ -505,8 +551,8 @@ sub handleSearchPlaylists {
 sub handleSearchPodcasts {
     my ($client, $cb, $args, $yandex_client, $params) = @_;
 
-    if (ref $yandex_client eq 'HASH' && !defined $params) {
-        $params = $yandex_client;
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
         $yandex_client = undef;
     }
     $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
@@ -516,6 +562,9 @@ sub handleSearchPodcasts {
 
     my $index = $args->{index} || 0;
     my $quantity = $args->{quantity} || 50;
+    # Cap quantity at 200 to avoid Yandex API errors. LMS will handle 
+    # further pagination if the interface needs more items.
+    $quantity = 200 if $quantity > 200;
     my $page = int($index / $quantity);
 
     my $encoded_query = encode('utf8', $query);
@@ -525,8 +574,10 @@ sub handleSearchPodcasts {
         'podcast',
         sub {
             my $result = shift;
+            $log->info("handleSearchPodcasts: received results. keys=[" . ($result ? join(',', keys %$result) : 'undef') . "]");
 
             if (!$result || ref $result ne 'HASH') {
+                $log->error("handleSearchPodcasts: invalid response format or empty result");
                 $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
                 return;
             }
@@ -536,6 +587,7 @@ sub handleSearchPodcasts {
 
             if ($result->{podcasts} && $result->{podcasts}->{results}) {
                 $total = $result->{podcasts}->{total} || 0;
+                $log->info("handleSearchPodcasts: found $total podcasts");
                 $total = 200 if $total > 200;
                 foreach my $album (@{$result->{podcasts}->{results}}) {
                     my $title = $album->{title} // 'Unknown Podcast/Audiobook';
@@ -557,6 +609,8 @@ sub handleSearchPodcasts {
                         play => 'yandexmusic://album/' . $album->{id},
                     };
                 }
+            } else {
+                $log->warn("handleSearchPodcasts: no podcasts found in result");
             }
 
             $cb->({
@@ -568,6 +622,7 @@ sub handleSearchPodcasts {
         },
         sub {
             my $error = shift;
+            $log->error("handleSearchPodcasts: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,

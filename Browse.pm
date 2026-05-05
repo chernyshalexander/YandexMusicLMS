@@ -75,9 +75,10 @@ sub _handleTagPlaylists   { Plugins::yandex::Browse::Collection::handleTagPlayli
 sub _handleAlbum {
     my ($client, $cb, $args, $yandex_client, $album_id) = @_;
     if (ref $yandex_client eq 'HASH') {
-        $album_id = $yandex_client->{id};
-        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+        $album_id ||= $yandex_client->{id};
+        $yandex_client = undef;
     }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_album_with_tracks(
         $album_id,
@@ -96,9 +97,10 @@ sub _handleAlbum {
 sub _handleArtist {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
     if (ref $yandex_client eq 'HASH') {
-        $artist_id = $yandex_client->{id};
-        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+        $artist_id ||= $yandex_client->{id};
+        $yandex_client = undef;
     }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     my $base_url = 'yandexmusic://rotor_session/';
 
@@ -150,6 +152,11 @@ sub _handleArtist {
 
 sub _handleArtistTracks {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $artist_id ||= $yandex_client->{id}; # id or undef
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_artist_tracks(
         $artist_id,
@@ -166,6 +173,11 @@ sub _handleArtistTracks {
 
 sub _handleArtistAlbums {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $artist_id ||= $yandex_client->{id};
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_artist_albums(
         $artist_id,
@@ -209,6 +221,11 @@ sub _handleArtistAlbums {
 
 sub _handleArtistAlsoAlbums {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $artist_id ||= $yandex_client->{id};
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_artist_also_albums(
         $artist_id,
@@ -254,6 +271,11 @@ sub _handleArtistAlsoAlbums {
 
 sub _handleSimilarArtists {
     my ($client, $cb, $args, $yandex_client, $artist_id) = @_;
+    if (ref $yandex_client eq 'HASH') {
+        $artist_id ||= $yandex_client->{id};
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_similar_artists(
         $artist_id,
@@ -295,10 +317,11 @@ sub _handleSimilarArtists {
 sub _handlePlaylist {
     my ($client, $cb, $args, $yandex_client, $user_id, $kind) = @_;
     if (ref $yandex_client eq 'HASH') {
-        $user_id = $yandex_client->{uid};
-        $kind = $yandex_client->{kind};
-        $yandex_client = Plugins::yandex::Plugin::getAPIForClient($client);
+        $user_id ||= $yandex_client->{uid};
+        $kind    ||= $yandex_client->{kind};
+        $yandex_client = undef;
     }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
 
     $yandex_client->get_playlist(
         $user_id,

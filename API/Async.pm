@@ -98,8 +98,10 @@ sub get {
         sub {
             my $http = shift;
             my $content = $http->content();
+            $log->info("Yandex API (GET): success. code=[" . ($http->code || '200') . "] length=[" . length($content) . "] url=[" . $uri->as_string . "]");
             my $json = eval { decode_json($content) };
             if ($@ || !defined $json) {
+                $log->error("Yandex API (GET): JSON decode failed: $@. Content snippet: " . substr($content, 0, 100));
                 $error_callback->($@ || "Failed to decode JSON response");
             } else {
                 $callback->($json);
@@ -107,10 +109,12 @@ sub get {
         },
         sub {
             my ($http, $error) = @_;
+            $log->error("Yandex API (GET): HTTP error: $error. code=[" . ($http->code || '') . "] url=[" . $uri->as_string . "]");
             $error_callback->($error);
         },
     );
 
+    $log->info("Yandex API: Requesting GET " . $uri->as_string);
     $http->get($uri, %{$self->{default_headers}});
 }
 
