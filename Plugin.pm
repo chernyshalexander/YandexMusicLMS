@@ -20,20 +20,15 @@ use warnings;
 use utf8;
 use base qw(Slim::Plugin::OPMLBased);
 
-use Data::Dumper;             # TODO: unused (Dumper never called) — remove after testing
-use Encode qw(encode decode); # TODO: unused (encode/decode never called) — remove after testing
 use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::API::Async;
 use Plugins::yandex::Browse;
 use Plugins::yandex::Browse::InfoMenu;
-use Slim::Networking::SimpleAsyncHTTP; # TODO: unused (HTTP via API.pm) — remove after testing
 use Slim::Player::ProtocolHandlers;
-use Slim::Utils::Cache;       # TODO: unused (no cache ops here) — remove after testing
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(string cstring);
 use Slim::Utils::Versions;
-use URI::Escape qw(uri_escape_utf8); # TODO: unused (uri_escape_utf8 never called) — remove after testing
 
 use constant CAN_IMPORTER => (Slim::Utils::Versions->compareVersions($::VERSION, '8.0.0') >= 0);
 

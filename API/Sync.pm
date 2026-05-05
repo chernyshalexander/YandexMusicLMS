@@ -11,6 +11,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use URI;
 use URI::Escape qw(uri_escape_utf8);
+use Plugins::yandex::API::Common;
 
 my $cache = Slim::Utils::Cache->new();
 my $log = logger('plugin.yandex');
@@ -23,21 +24,14 @@ my $minRequestInterval = 0.2;  # 200ms between requests to avoid rate limiting
 sub _get {
     my ($class, $path, $uid, $params) = @_;
 
-    my $accounts = $prefs->get('accounts') || {};
-    my $account = $accounts->{$uid} || return;
-    my $token = $account->{token} || return;
+    my ($token, $userId) = $class->_get_auth_data($uid);
+    return unless $token;
 
-    my $url = 'https://api.music.yandex.net' . $path;
+    my $url = Plugins::yandex::API::Common::BASE_URL . $path;
     my $uri = URI->new($url);
     $uri->query_form($params) if $params;
 
-    my $headers = {
-        'User-Agent' => 'Yandex-Music-API',
-        'X-Yandex-Music-Client' => 'YandexMusicAndroid/24023621',
-        'Accept-Language' => 'ru',
-        'Content-Type' => 'application/json',
-        'Authorization' => "OAuth " . $token,
-    };
+    my $headers = Plugins::yandex::API::Common::get_default_headers($token);
 
     main::INFOLOG && $log->is_info && $log->info("Sync GET: $uri");
 
@@ -189,21 +183,14 @@ sub tracks {
     my @ids = ref $track_ids eq 'ARRAY' ? @$track_ids : ($track_ids);
     return [] unless @ids;
 
-    my $accounts = $prefs->get('accounts') || {};
-    my $account = $accounts->{$uid} || return [];
-    my $token = $account->{token} || return [];
+    my ($token, $userId) = $class->_get_auth_data($uid);
+    return [] unless $token;
 
-    my $url = 'https://api.music.yandex.net/tracks/';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/tracks/';
 
     my $body = 'track-ids=' . join(',', @ids) . '&with-positions=true';
 
-    my $headers = {
-        'User-Agent' => 'Yandex-Music-API',
-        'X-Yandex-Music-Client' => 'YandexMusicAndroid/24023621',
-        'Accept-Language' => 'ru',
-        'Content-Type' => 'application/x-www-form-urlencoded',
-        'Authorization' => "OAuth " . $token,
-    };
+    my $headers = Plugins::yandex::API::Common::get_default_headers($token, 'application/x-www-form-urlencoded');
 
     main::INFOLOG && $log->is_info && $log->info("Sync POST: $url (tracks: " . scalar(@ids) . ")");
 
@@ -237,6 +224,16 @@ sub tracks {
     }
 
     return \@tracks;
+}
+
+sub _get_auth_data {
+    my ($class, $uid) = @_;
+
+    my $accounts = $prefs->get('accounts') || {};
+    my $account = $accounts->{$uid} || return;
+    my $token = $account->{token} || return;
+
+    return ($token, $uid);
 }
 
 1;

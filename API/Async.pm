@@ -28,6 +28,7 @@ use JSON::XS::VersionOneAndTwo;
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;
+use Plugins::yandex::API::Common;
 use Slim::Utils::Cache;
 use Digest::MD5 qw(md5_hex);
 
@@ -62,13 +63,7 @@ sub new {
         token => $token,
         proxy_url => $args{proxy_url},
         me => undef,
-        default_headers => {
-            'User-Agent' => 'Yandex-Music-API',
-            'X-Yandex-Music-Client' => 'YandexMusicAndroid/24023621',
-            'Accept-Language' => 'ru',
-            'Content-Type' => 'application/json',
-            'Authorization' => "OAuth " . $token,
-        },
+        default_headers => Plugins::yandex::API::Common::get_default_headers($token),
     };
 
     bless $self, $class;
@@ -217,7 +212,7 @@ sub get_raw {
 sub init {
     my ($self, $callback, $error_callback) = @_;
     $self->get(
-        'https://api.music.yandex.net/account/status',
+        Plugins::yandex::API::Common::BASE_URL . '/account/status',
         undef,
         sub {
             my $result = shift;
@@ -242,21 +237,21 @@ sub get_me {
 sub like_track {
     my ($self, $track_id, $callback, $error_callback) = @_;
     my $uid = $self->get_me->{uid};
-    my $url = 'https://api.music.yandex.net/users/' . $uid . '/likes/tracks/add?track-id=' . uri_escape_utf8($track_id);
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $uid . '/likes/tracks/add?track-id=' . uri_escape_utf8($track_id);
     $self->post($url, {}, sub { $callback->() }, $error_callback);
 }
 
 sub dislike_track {
     my ($self, $track_id, $callback, $error_callback) = @_;
     my $uid = $self->get_me->{uid};
-    my $url = 'https://api.music.yandex.net/users/' . $uid . '/dislikes/tracks/add?track-id=' . uri_escape_utf8($track_id);
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $uid . '/dislikes/tracks/add?track-id=' . uri_escape_utf8($track_id);
     $self->post($url, {}, sub { $callback->() }, $error_callback);
 }
 
 
 sub users_likes_tracks {
     my ($self, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/likes/tracks/';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/tracks/';
 
     $self->get(
         $url,
@@ -282,7 +277,7 @@ sub users_likes_tracks {
 
 sub users_likes_albums {
     my ($self, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/likes/albums';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/albums';
     my $params = { rich => 'true' };
 
     $self->get(
@@ -304,7 +299,7 @@ sub users_likes_albums {
 
 sub users_likes_artists {
     my ($self, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/likes/artists';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/artists';
 
     $self->get(
         $url,
@@ -325,7 +320,7 @@ sub users_likes_artists {
 
 sub users_likes_playlists {
     my ($self, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/likes/playlists';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/likes/playlists';
 
     $self->get(
         $url,
@@ -346,7 +341,7 @@ sub users_likes_playlists {
 
 sub users_playlists_list {
     my ($self, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $self->get_me->{uid} . '/playlists/list';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $self->get_me->{uid} . '/playlists/list';
 
     $self->get(
         $url,
@@ -366,7 +361,7 @@ sub users_playlists_list {
 sub tracks {
     my ($self, $track_ids, $callback, $error_callback) = @_;
     my @ids = ref $track_ids eq 'ARRAY' ? @$track_ids : ($track_ids);
-    my $url = 'https://api.music.yandex.net/tracks/'; 
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/tracks/'; 
 
     my $data = {
         'track-ids' => \@ids,
@@ -397,7 +392,7 @@ sub tracks {
 
 sub get_album_with_tracks {
     my ($self, $album_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/albums/' . $album_id . '/with-tracks';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/albums/' . $album_id . '/with-tracks';
 
     $self->get(
         $url,
@@ -416,7 +411,7 @@ sub get_album_with_tracks {
 
 sub get_artist_tracks {
     my ($self, $artist_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/tracks';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/tracks';
     my $params = { 'page-size' => 100 };
 
     $self->get(
@@ -436,7 +431,7 @@ sub get_artist_tracks {
 
 sub get_artist_albums {
     my ($self, $artist_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/direct-albums';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/direct-albums';
     my $params = { 'page-size' => 100, 'sort-by' => 'year' };
 
     $self->get(
@@ -456,7 +451,7 @@ sub get_artist_albums {
 
 sub get_similar_artists {
     my ($self, $artist_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/similar';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/similar';
 
     $self->get(
         $url,
@@ -476,7 +471,7 @@ sub get_similar_artists {
 
 sub get_artist_also_albums {
     my ($self, $artist_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/artists/' . $artist_id . '/also-albums';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/artists/' . $artist_id . '/also-albums';
     my $params = { 'page-size' => 100, 'sort-by' => 'year' };
 
     $self->get(
@@ -496,7 +491,7 @@ sub get_artist_also_albums {
 
 sub get_playlist {
     my ($self, $user_id, $kind, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/users/' . $user_id . '/playlists/' . $kind;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $user_id . '/playlists/' . $kind;
     
     $self->get(
         $url,
@@ -515,7 +510,7 @@ sub get_playlist {
 
 sub rotor_station_info {
     my ($self, $station, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/station/' . $station . '/info';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/station/' . $station . '/info';
 
     $self->get(
         $url,
@@ -534,7 +529,7 @@ sub rotor_station_info {
 
 sub rotor_session_new {
     my ($self, $station_id, $settings, $queue, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/session/new';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/new';
 
     my @seeds = ($station_id);
     push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
@@ -566,7 +561,7 @@ sub rotor_session_new {
 
 sub rotor_session_feedback {
     my ($self, $radio_session_id, $batch_id, $event_type, $track_id, $total_played_seconds, $timestamp, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/session/' . uri_escape_utf8($radio_session_id) . '/feedback';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/' . uri_escape_utf8($radio_session_id) . '/feedback';
     
     my $event = {
         'type' => $event_type,
@@ -598,7 +593,7 @@ sub rotor_session_feedback {
 
 sub rotor_session_tracks {
     my ($self, $radio_session_id, $current_track_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/rotor/session/' . uri_escape_utf8($radio_session_id) . '/tracks';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/' . uri_escape_utf8($radio_session_id) . '/tracks';
     
     my $data = {
         'queue' => [$current_track_id],
@@ -636,7 +631,7 @@ sub search {
         return;
     }
 
-    my $url = 'https://api.music.yandex.net/search';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/search';
     my $params = {
         'text' => $query,
         'type' => $type,
@@ -668,7 +663,7 @@ sub rotor_stations_list {
     my ($self, $callback, $error_callback) = @_;
 
     $self->get(
-        'https://api.music.yandex.net/rotor/stations/list',
+        Plugins::yandex::API::Common::BASE_URL . '/rotor/stations/list',
         { language => 'any' },
         sub {
             my $result = shift;
@@ -704,7 +699,7 @@ sub landing_personal_playlists {
     my ($self, $callback, $error_callback) = @_;
 
     $self->get(
-        'https://api.music.yandex.net/landing3',
+        Plugins::yandex::API::Common::BASE_URL . '/landing3',
         { 'blocks' => 'personal-playlists' },
         sub {
             my $result = shift;
@@ -721,7 +716,7 @@ sub landing_personal_playlists {
 sub get_chart {
     my ($self, $chart_option, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/landing3/chart';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3/chart';
     if ($chart_option) {
         $url .= '/' . $chart_option;
     }
@@ -746,7 +741,7 @@ sub get_chart {
 sub get_new_releases {
     my ($self, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/landing3/new-releases';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3/new-releases';
 
     $self->get(
         $url,
@@ -767,7 +762,7 @@ sub get_new_releases {
 sub get_new_playlists {
     my ($self, $callback, $error_callback) = @_;
 
-    my $url = 'https://api.music.yandex.net/landing3/new-playlists';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3/new-playlists';
 
     $self->get(
         $url,
@@ -789,7 +784,7 @@ sub get_new_playlists {
 
 sub tags {
     my ($self, $tag_id, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/tags/' . $tag_id . '/playlist-ids';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/tags/' . $tag_id . '/playlist-ids';
 
     $self->get(
         $url,
@@ -808,7 +803,7 @@ sub tags {
 
 sub playlists_list {
     my ($self, $playlist_ids, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/playlists/list';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/playlists/list';
     my $data = { 'playlistIds' => join(',', @$playlist_ids) };
 
     $self->post_form(
@@ -864,7 +859,7 @@ sub get_track_file_info {
     my $hmac_bytes    = Digest::SHA::hmac_sha256($param_string, $sign_key);
     my $sign          = substr(MIME::Base64::encode_base64($hmac_bytes, ''), 0, 43);
 
-    my $url = 'https://api.music.yandex.net/get-file-info'
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/get-file-info'
             . '?ts='         . $ts
             . '&trackId='    . $track_id
             . '&quality=lossless'
@@ -903,7 +898,7 @@ sub get_track_file_info {
 
 sub get_track_download_info {
     my ($self, $track_id, $cb) = @_;
-    my $url = "https://api.music.yandex.net/tracks/" . $track_id . "/download-info";
+    my $url = Plugins::yandex::API::Common::BASE_URL . "/tracks/" . $track_id . "/download-info";
 
     unless (defined $cb && ref($cb) eq 'CODE') {
          $log->error("Yandex API: get_track_download_info called without a valid callback!");
@@ -1117,27 +1112,12 @@ sub _find_ffmpeg {
     return undef;
 }
 
-# DEAD CODE: sub album() — never called anywhere in the plugin.
-# It's a thin wrapper around albums() that extracts the first element.
-# albums() is used directly everywhere. TODO: remove.
-# sub album {
-#     my ($self, $album_id, $callback, $error_callback) = @_;
-#     $self->albums([$album_id], sub {
-#         my $albums = shift;
-#         if ($albums && @$albums) {
-#             $callback->($albums->[0]);
-#         } else {
-#             $error_callback->("Album not found");
-#         }
-#     }, $error_callback);
-# }
-
 sub albums {
     my ($self, $album_ids, $callback, $error_callback) = @_;
 
     return unless $album_ids && @$album_ids;
 
-    my $url = 'https://api.music.yandex.net/albums';
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/albums';
     my @ids = ref $album_ids eq 'ARRAY' ? @$album_ids : ($album_ids);
 
     my $data = {

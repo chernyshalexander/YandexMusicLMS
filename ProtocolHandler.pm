@@ -64,34 +64,6 @@ sub new {
 
     $log->info("YANDEX: Handler new() called for streamUrl: $streamUrl");
 
-    # DEAD CODE: file:// branch was for Tier-2 openssl fallback (_decrypt_flac_via_openssl in API.pm).
-    # That function was removed; no code in the plugin generates file:// URLs anymore.
-    # TODO: remove this entire block.
-    # if ($streamUrl =~ m{^file://(.+)}) {
-    #     my $path = $1;
-    #     $path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
-    #
-    #     require Symbol;
-    #     my $sock = Symbol::gensym();
-    #     open($sock, '<', $path) or do {
-    #         $log->error("YANDEX: Cannot open local file $path: $!");
-    #         return;
-    #     };
-    #     binmode($sock);
-    #     bless $sock, $class;
-    #     ${*$sock}{contentType}     = 'audio/flac';
-    #     ${*$sock}{yandex_temp_file} = $path;
-    #
-    #     if ($client) {
-    #         my $duration = $song->duration || 0;
-    #         $song->isLive(0);
-    #         $song->duration($duration) if $duration;
-    #         Slim::Music::Info::setDuration($song->currentTrack, $duration)
-    #             if $duration && $song->currentTrack;
-    #     }
-    #     $log->info("YANDEX: file handle ready, size=" . (-s $path) . " fileno=" . (fileno($sock) // 'undef'));
-    #     return $sock;
-    # }
 
     my $sock = $class->SUPER::new( {
         url     => $streamUrl,
