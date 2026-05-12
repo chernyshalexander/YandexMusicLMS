@@ -35,7 +35,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts enable_ynison show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language aes_backend demux_backend));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language aes_backend demux_backend));
 }
 
 sub handler {
@@ -105,7 +105,6 @@ sub handler {
 		$params->{pref_show_new_playlists}             ||= 0;
 		$params->{pref_show_audiobooks_in_collection}  ||= 0;
 		$params->{pref_search_podcasts}                ||= 0;
-		$params->{pref_enable_ynison}                  ||= 0;
 		$params->{pref_show_wave_wizard}               ||= 0;
 		$params->{pref_wizard_station_type}            //= 'activity';
 		$params->{pref_wizard_cat_diversity}           ||= 0;

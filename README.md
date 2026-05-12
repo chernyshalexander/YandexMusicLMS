@@ -23,8 +23,6 @@
 2. **Встроенный 2, Drag-and-Drop:** нажмите «Login to yandex», в открывшемся окне авторизуйтесь в Яндексе и перетащите URL с токеном из адресной строки браузера в поле настройки.
 3. **Вручную:** используйте [yandex-music-token](https://github.com/MarshalX/yandex-music-token) и вставьте токен в поле настроек.
 
-##### В планах (TODO)
- - Интеграция с протоколом Ynison
 
 ##### Благодарности
 За идеи и вдохновение: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
@@ -68,8 +66,6 @@ An OAuth token is required. Ways to obtain it:
 2. **Built-in 2, Drag-and-Drop:** Click "Login to yandex", authenticate in the opened window, and drag the URL with the token from the browser’s address bar into the settings field.
 3. **Manual:** Use [yandex-music-token](https://github.com/MarshalX/yandex-music-token) and paste the token manually.
 
-##### Roadmap (TODO)
- - Ynison protocol integration
 
 ##### Credits
 For ideas and inspiration: [MarshalX](https://github.com/MarshalX), [philippe44](https://github.com/philippe44), [Michael Herger](https://github.com/michaelherger).
