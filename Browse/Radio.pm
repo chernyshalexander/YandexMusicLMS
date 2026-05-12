@@ -163,7 +163,7 @@ sub handleVibeWheel {
             }
 
             $cb->({
-                items => \@waves,
+                items => [@waves, @reshuffles],
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
             });
         },
