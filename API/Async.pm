@@ -486,6 +486,25 @@ sub rotor_station_info {
     }, $error_callback);
 }
 
+sub wheel_new {
+    my ($self, $callback, $error_callback) = @_;
+    my $url = 'https://api.music.yandex.net/wheel/new';
+
+    $self->post(
+        $url,
+        { context => { type => 'WAVE' } },
+        sub {
+            my $result = shift;
+            if (exists $result->{items}) {
+                $callback->($result);
+            } else {
+                $error_callback->("Failed to fetch Vibe Wheel");
+            }
+        },
+        $error_callback,
+    );
+}
+
 sub rotor_session_new {
     my ($self, $station_id, $settings, $queue, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/new';
