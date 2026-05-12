@@ -224,7 +224,6 @@ sub _init_api_client {
                     }
                 }
 
-                _maybe_init_ynison($realUserId);
             } else {
                 my $accounts = $prefs->get('accounts') || {};
                 if ($accounts->{$userId}) {
@@ -241,39 +240,8 @@ sub _init_api_client {
     );
 }
 
-# Start Ynison for all players assigned to a given userId (if enabled)
-sub _maybe_init_ynison {
-    my $userId = shift;
-    return unless $prefs->get('enable_ynison');
-    return unless exists $api_clients{$userId};
 
-    my $accounts = $prefs->get('accounts') || {};
-    my $token    = $accounts->{$userId}{token} || return;
-    my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
-
-    require Plugins::yandex::Ynison;
-    foreach my $player (Slim::Player::Client::clients()) {
-        my $playerUserId = _getUserIdForClient($player);
-        next unless defined $playerUserId && $playerUserId eq $userId;
-        next if exists $ynison_instances{$player->id()};
-
-        my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
-        $ynison_instances{$player->id()} = $ynison;
-
-        # Register listener for incoming Yandex state updates
-        $ynison->on_state(sub {
-            _handle_yandex_state_update($player, @_);
-        });
-
-        # Start connection
-        $ynison->connect();
-
-        $log->info("YANDEX: Ynison started for player " . $player->name() . " (userId=$userId)");
-    }
-}
-
-# Remove an account's cached API client and shut down any Ynison sessions
-# that were attached to that account.
+# Remove an account's cached API client.
 sub _remove_api_client {
     my $userId = shift;
     delete $api_clients{$userId};
@@ -301,7 +269,7 @@ sub playerEventCallback {
     my $client  = $request->client() || return;
 
     # Respond to LMS player events relevant to Yandex Music.
-    # This includes radio feedback, Ynison lifecycle management, and volume
+    # This includes radio feedback and volume
     # synchronization between the local player and Yandex.
     my $command = $request->getRequest(1);
 
