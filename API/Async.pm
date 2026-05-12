@@ -509,10 +509,15 @@ sub rotor_session_new {
     my ($self, $station_id, $settings, $queue, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/new';
 
-    my @seeds = ($station_id);
-    push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
-    push @seeds, 'settingMoodEnergy:' . $settings->{moodEnergy} if $settings && $settings->{moodEnergy};
-    push @seeds, 'settingLanguage:'   . $settings->{language}   if $settings && $settings->{language};
+    my @seeds;
+    if (ref $station_id eq 'ARRAY') {
+        @seeds = @$station_id;
+    } else {
+        @seeds = ($station_id);
+        push @seeds, 'settingDiversity:'  . $settings->{diversity}  if $settings && $settings->{diversity};
+        push @seeds, 'settingMoodEnergy:' . $settings->{moodEnergy} if $settings && $settings->{moodEnergy};
+        push @seeds, 'settingLanguage:'   . $settings->{language}   if $settings && $settings->{language};
+    }
 
     my $data = {
         'seeds'                   => \@seeds,
