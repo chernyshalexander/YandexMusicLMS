@@ -7,8 +7,8 @@ yandex
 	RU	Яндекс Музыка
 
 PLUGIN_YANDEX_DESC
-	EN	Play channels from Yandex Music
-	RU	Воспроизведение каналов Яндекс Музыки
+	EN	Yandex Music plugin for Lyrion Music Server. Allows browsing and playing radio channels, playlists, and tracks from Yandex Music.
+	RU	Плагин Яндекс Музыки для Lyrion Music Server. Позволяет просматривать и воспроизводить радиоканалы, плейлисты и треки из Яндекс Музыки.
 
 PLUGIN_YANDEX_MUSIC_TOKEN
 	EN	Yandex Music Token
