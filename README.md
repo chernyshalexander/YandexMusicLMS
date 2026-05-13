@@ -9,6 +9,7 @@
 - Радиостанции по жанрам, настроениям, действиям и эпохам.
 - **Build My Vibe** (Создай свою волну) — гибкая настройка радиопотока с фильтрами по настроению/активности, жанру, эпохе и языку.
 - **My Vibe by Artist** — персональное радио в стиле выбранного исполнителя.
+- **My Vibe Wheel** (Колесо настроения) — Персонализированный подбор радиоволн на основе ИИ Яндекса. Показывает набор волн, подобранных специально под ваш вкус.
 - Умные плейлисты и миксы. Поиск по трекам, альбомам, исполнителям, подкастам и аудиокнигам.
 - Отображение «Горячих треков» и «Новых релизов» в главном меню (при желании).
 - Поддержка высококачественного аудио: **FLAC** (включая FLAC-in-MP4) и **AAC** (включая AAC-MP4 и HE-AAC).
@@ -54,6 +55,7 @@ A plugin to play Yandex Music on Lyrion Music Server (LMS).
 - Radio stations by genre, mood, activity, and era.
 - **Build My Vibe** — fine-grained control over the radio stream with filters for mood/activity, genre, era, and language.
 - **My Vibe by Artist** — start a personalized radio station based on any chosen artist’s style.
+- **My Vibe Wheel** — A personalized radio picker powered by Yandex AI. Displays a curated set of wave stations tailored to your taste.
 - Smart playlists and mixes. Search for tracks, albums, artists, podcasts, and audiobooks.
 - Optional "Hot Tracks" and "New Releases" in the main menu.
 - High-quality audio support: **FLAC** (including FLAC-in-MP4) and **AAC** (including AAC-MP4 & HE-AAC).
