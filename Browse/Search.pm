@@ -76,7 +76,7 @@ sub handleRecentSearches {
             type  => 'link',
             url   => \&handleSearch,
             passthrough => [$yandex_client, { query => $recent, recent => 1 }],
-            image => 'plugins/yandex/html/images/history.png',
+            image => 'plugins/yandex/html/images/history_svg.png',
         };
     }
 
@@ -86,7 +86,7 @@ sub handleRecentSearches {
             type => 'link',
             url  => \&handleRecentSearches,
             passthrough => [$yandex_client, { clear_history => 1 }],
-            image => 'plugins/yandex/html/images/icon_blank.png'
+            image => 'plugins/yandex/html/images/icon_blank_svg.png'
         };
     }
 
