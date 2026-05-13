@@ -207,8 +207,8 @@ sub handleSmartPlaylists {
             foreach my $block (@$blocks) {
                 if ($block->{entities}) {
                     foreach my $entity (@{$block->{entities}}) {
-                        if ($entity->{data}) {
-                            my $pl = $entity->{data};
+                        if ($entity->{type} eq 'personal-playlist' && $entity->{data} && $entity->{data}->{data}) {
+                            my $pl = $entity->{data}->{data};
                             my $uid = $pl->{owner}->{uid};
                             my $kind = $pl->{kind};
                             my $title = $pl->{title};
