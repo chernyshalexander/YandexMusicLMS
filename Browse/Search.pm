@@ -153,7 +153,7 @@ sub handleSearch {
                         type => 'link',
                         url  => \&handleSearchPodcasts,
                         passthrough => [$yandex_client, { query => $query }],
-                        image => 'plugins/yandex/html/images/podcast.png',
+                        image => 'plugins/yandex/html/images/podcast_svg.png',
                     };
                 }
                 $finish->(\@pod_items);
@@ -223,7 +223,7 @@ sub handleSearch {
                     type => 'link',
                     url  => \&handleSearchPodcasts,
                     passthrough => [$yandex_client, { query => $query }],
-                    image => 'plugins/yandex/html/images/podcast.png',
+                    image => 'plugins/yandex/html/images/podcast_svg.png',
                 };
             }
 
