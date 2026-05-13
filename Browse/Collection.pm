@@ -176,21 +176,21 @@ sub handleForYou {
             type => 'link',
             url  => \&handleSmartPlaylists,
             passthrough => [$yandex_client],
-            image => 'plugins/yandex/html/images/personal.png',
+            image => 'plugins/yandex/html/images/personal_svg.png',
         },
         {
             name => translate($client, 'picks'),
             type => 'link',
             url  => \&handlePicks,
             passthrough => [$yandex_client],
-            image => 'plugins/yandex/html/images/personal.png',
+            image => 'plugins/yandex/html/images/personal_svg.png',
         },
         {
             name => translate($client, 'mixes'),
             type => 'link',
             url  => \&handleMixes,
             passthrough => [$yandex_client],
-            image => 'plugins/yandex/html/images/personal.png',
+            image => 'plugins/yandex/html/images/personal_svg.png',
         }
     );
     $cb->({ items => \@items, title => cstring($client, 'PLUGIN_YANDEX_FOR_YOU') });
@@ -213,7 +213,7 @@ sub handleSmartPlaylists {
                             my $kind = $pl->{kind};
                             my $title = $pl->{title};
 
-                            my $icon = 'plugins/yandex/html/images/personal.png';
+                            my $icon = 'plugins/yandex/html/images/personal_svg.png';
                             if ($pl->{cover} && $pl->{cover}->{uri}) {
                                 $icon = "https://" . $pl->{cover}->{uri};
                                 $icon =~ s/%%/200x200/;
@@ -283,7 +283,7 @@ sub handlePicks {
                             type => 'link',
                             url  => \&handlePicks,
                             passthrough => [$yandex_client, $cat],
-                            image => 'plugins/yandex/html/images/personal.png',
+                            image => 'plugins/yandex/html/images/personal_svg.png',
                         }
                     }
                 }
@@ -295,7 +295,7 @@ sub handlePicks {
                             type => 'link',
                             url  => \&handlePicks,
                             passthrough => [$yandex_client, $cat],
-                            image => 'plugins/yandex/html/images/personal.png',
+                            image => 'plugins/yandex/html/images/personal_svg.png',
                          }
                     }
                 }
@@ -314,7 +314,7 @@ sub handlePicks {
                         type => 'link',
                         url  => \&handleTagPlaylists,
                         passthrough => [$yandex_client, $slug],
-                        image => 'plugins/yandex/html/images/personal.png',
+                        image => 'plugins/yandex/html/images/personal_svg.png',
                     };
                 }
             }
@@ -327,7 +327,7 @@ sub handlePicks {
                             type => 'link',
                             url  => \&handleTagPlaylists,
                             passthrough => [$yandex_client, $slug],
-                            image => 'plugins/yandex/html/images/personal.png',
+                            image => 'plugins/yandex/html/images/personal_svg.png',
                         };
                     }
                 }
@@ -354,7 +354,7 @@ sub handleMixes {
             type => 'link',
             url  => \&handleTagPlaylists,
             passthrough => [$yandex_client, $tag],
-            image => 'plugins/yandex/html/images/personal.png',
+            image => 'plugins/yandex/html/images/personal_svg.png',
         };
     }
 

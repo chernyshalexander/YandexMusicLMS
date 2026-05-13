@@ -774,7 +774,7 @@ sub _renderRootMenu {
             type => 'link',
             url  => \&Plugins::yandex::Browse::_handleChart,
             passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/focus.png',
+            image => 'plugins/yandex/html/images/focus_svg.png',
         };
     }
 
@@ -804,7 +804,7 @@ sub _renderRootMenu {
             type => 'link',
             url  => \&Plugins::yandex::Browse::_handleForYou,
             passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/personal.png',
+            image => 'plugins/yandex/html/images/personal_svg.png',
         },
         {
             name => cstring($client, 'PLUGIN_YANDEX_MY_COLLECTION'),
@@ -841,7 +841,7 @@ sub _renderRootMenu {
             name  => cstring($client, 'PLUGIN_YANDEX_SWITCH_ACCOUNT') . ': ' . $currentName,
             type  => 'link',
             url   => \&selectAccount,
-            image => 'plugins/yandex/html/images/accnts.png',
+            image => 'plugins/yandex/html/images/accnts_svg.png',
         };
     }
 

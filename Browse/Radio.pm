@@ -44,7 +44,7 @@ sub handleRadioCategories {
             type => 'link',
             url  => \&handleWaveWizard,
             passthrough => [$yandex_client],
-            image => 'plugins/yandex/html/images/settings.png',
+            image => 'plugins/yandex/html/images/settings_svg.png',
         };
     }
 

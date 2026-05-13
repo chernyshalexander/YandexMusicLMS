@@ -63,7 +63,7 @@ sub handleFavorites {
             type => 'link',
             url  => \&handleLikedPodcasts,
             passthrough => [$yandex_client],
-            image => 'plugins/yandex/html/images/podcast.png',
+            image => 'plugins/yandex/html/images/podcast_svg.png',
         };
     }
 
