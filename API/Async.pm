@@ -460,11 +460,11 @@ sub get_playlist {
     my ($self, $user_id, $kind, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/users/' . $user_id . '/playlists/' . $kind;
     my $cacheKey = "yandex_playlist_${user_id}_${kind}";
-    
+
     $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
         my $result = shift;
-        if (exists $result->{result}) {
-            $callback->($result->{result});
+        if ($result) {
+            $callback->($result);
         } else {
             $error_callback->("Failed to get playlist");
         }
