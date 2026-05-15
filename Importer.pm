@@ -6,12 +6,14 @@ use utf8;
 
 use base qw(Slim::Plugin::OnlineLibraryBase);
 
+use Digest::MD5 qw(md5_hex);
 use Slim::Utils::Cache;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Progress;
 use Slim::Utils::Strings qw(string);
 use Slim::Utils::Versions;
+use Plugins::yandex::API::Common;
 
 use constant CAN_IMPORTER => (Slim::Utils::Versions->compareVersions($::VERSION, '8.0.0') >= 0);
 
@@ -62,6 +64,19 @@ sub startScan { if (main::SCANNER) {
 
         $class->deleteRemovedTracks();
         $cache->set('yandex_library_last_scan', time(), '1y');
+
+        # Save library fingerprint for needsUpdate() to detect future changes
+        my ($anyUserId) = values %$accounts;
+        if ($anyUserId) {
+            main::INFOLOG && $log->is_info && $log->info("Yandex startScan: computing library fingerprint for caching");
+            my $fingerprint = Plugins::yandex::API::Sync->get_library_fingerprint($anyUserId);
+            if ($fingerprint) {
+                $cache->set('yandex_library_fingerprint', $fingerprint, '1y');
+                main::INFOLOG && $log->is_info && $log->info("Yandex startScan: saved fingerprint=$fingerprint to cache");
+            } else {
+                main::INFOLOG && $log->is_info && $log->info("Yandex startScan: failed to compute fingerprint, skipping cache");
+            }
+        }
     }
 
     Slim::Music::Import->endImporter($class);
@@ -258,12 +273,69 @@ sub trackUriPrefix { 'yandexmusic://' }
 sub needsUpdate { if (!main::SCANNER) {
     my ($class, $cb) = @_;
 
-    return $cb->(0) unless scalar keys %{_enabledAccounts()};
+    my $accounts = _enabledAccounts();
+    return $cb->(0) unless scalar keys %$accounts;
 
-    my $lastScanTime = $cache->get('yandex_library_last_scan') || return $cb->(1);
+    my $lastScanTime = $cache->get('yandex_library_last_scan');
+    my $lastFingerprint = $cache->get('yandex_library_fingerprint') || '';
 
-    # TODO: Implement fingerprinting like Deezer/Spotty to check for actual changes
-    return $cb->( (time() - $lastScanTime) / 86400 > 7 ? 1 : 0 );
+    main::INFOLOG && $log->is_info && $log->info("Yandex needsUpdate called. lastScanTime=" . ($lastScanTime || 'never') . ", lastFingerprint=" . ($lastFingerprint || 'none'));
+
+    return $cb->(1) unless $lastScanTime;
+
+    # For multi-account setups, fingerprint is checked for first account only.
+    # Different accounts may have different libraries; manual rescan can be triggered via UI.
+    my @userIds = sort values %$accounts;
+    my ($anyUserId) = @userIds;
+    my $token = ($prefs->get('accounts') || {})->{$anyUserId}{token};
+
+    unless ($token) {
+        main::INFOLOG && $log->is_info && $log->info("Yandex needsUpdate: no token found for user $anyUserId, falling back to time-based check");
+        return $cb->( (time() - $lastScanTime) / 86400 > 7 ? 1 : 0 );
+    }
+
+    require Plugins::yandex::API::Async;
+    require Plugins::yandex::API::Common;
+    my $api = Plugins::yandex::API::Async->new($token);
+
+    main::INFOLOG && $log->is_info && $log->info("Yandex needsUpdate: fetching fingerprint from /library/all-ids endpoint");
+
+    $api->get(
+        Plugins::yandex::API::Common::BASE_URL . '/library/all-ids',
+        undef,
+        sub {
+            my $result = shift;
+            my $r = ref $result eq 'HASH' ? ($result->{result} || {}) : {};
+
+            my $albumsCount = scalar keys %{$r->{albums} || {}};
+            my $artistsCount = scalar keys %{$r->{artists} || {}};
+            my $libraryCount = scalar keys %{$r->{library} || {}};
+            my $playlistsCount = scalar keys %{$r->{playlists} || {}};
+
+            my $fingerprint = md5_hex(
+                'albums='    . $albumsCount . '|' .
+                'artists='   . $artistsCount . '|' .
+                'library='   . $libraryCount . '|' .
+                'playlists=' . $playlistsCount
+            );
+
+            main::INFOLOG && $log->is_info && $log->info("Yandex fingerprint computed: albums=$albumsCount, artists=$artistsCount, library=$libraryCount, playlists=$playlistsCount, md5=$fingerprint");
+            main::INFOLOG && $log->is_info && $log->info("Yandex fingerprint comparison: current=$fingerprint vs cached=$lastFingerprint");
+
+            my $needsScan = $fingerprint ne $lastFingerprint;
+            main::INFOLOG && $log->is_info && $log->info("Yandex needsUpdate result: " . ($needsScan ? 'SCAN NEEDED (fingerprint changed)' : 'SKIP SCAN (fingerprint unchanged)'));
+
+            $cb->($needsScan ? 1 : 0);
+        },
+        sub {
+            my $error = shift;
+            main::INFOLOG && $log->is_info && $log->info("Yandex fingerprint check failed: $error, falling back to time-based check");
+            my $daysSinceScan = (time() - $lastScanTime) / 86400;
+            my $needsScan = $daysSinceScan > 7 ? 1 : 0;
+            main::INFOLOG && $log->is_info && $log->info("Yandex fallback: days since last scan=$daysSinceScan, needsScan=$needsScan");
+            $cb->($needsScan);
+        }
+    );
 } }
 
 sub _enabledAccounts {
