@@ -1,5 +1,21 @@
 package Plugins::yandex::Browse::Search;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse::Search - Search interface and per-type result handlers
+
+=head1 DESCRIPTION
+
+Handles user search within the Yandex Music plugin:
+recent searches (with keyboard input), and result pages for each content type
+(tracks, albums, artists, playlists, podcasts).
+
+Each search type has its own handler that fetches and formats results.
+
+=cut
+
 # Search handlers: recent searches, per-type search results (tracks, albums,
 # artists, playlists, podcasts). The "recent searches" screen shows a keyboard
 # prompt; the actual search is dispatched to per-type handlers.

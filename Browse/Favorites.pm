@@ -1,5 +1,21 @@
 package Plugins::yandex::Browse::Favorites;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse::Favorites - Browse handlers for user's personal library
+
+=head1 DESCRIPTION
+
+Provides menu navigation and content fetching for user's liked items:
+tracks, albums, artists, playlists, and podcasts.
+
+All handlers follow a two-phase pattern: fetch list of short objects,
+then fetch full metadata in chunks (API limit: 50 items per request).
+
+=cut
+
 # Browse handlers for the user's personal library:
 # liked tracks, albums, artists, playlists, and podcasts.
 # All handlers follow the same pattern: fetch a list of short objects from the

@@ -1,5 +1,22 @@
 package Plugins::yandex::Browse::Radio;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse::Radio - Yandex Radio (Rotor) station browser and wizard
+
+=head1 DESCRIPTION
+
+Provides browse menu for Yandex Radio service (Rotor):
+station categories, station lists, and the "My Wave" (Волна) wizard for
+personalized station creation.
+
+Selecting a station produces a C<yandexmusic://rotor_session/{id}> URL that
+ProtocolHandler converts into an infinite stream of recommended tracks.
+
+=cut
+
 # Browse handlers for Yandex Radio (rotor): station categories, station lists,
 # and the "My Wave" wizard. Selecting a station produces a
 # yandexmusic://rotor_session/{id}?... URL that explodePlaylist() in

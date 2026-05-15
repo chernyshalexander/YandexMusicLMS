@@ -111,7 +111,7 @@ sub initPlugin {
     }
 
     # Protocol registration
-    $log->error("YANDEX INIT: Registering ProtocolHandler...");
+    $log->info("YANDEX INIT: Registering ProtocolHandler...");
     Slim::Player::ProtocolHandlers->registerHandler('yandexmusic', 'Plugins::yandex::ProtocolHandler');
 
     # Subscription to player status changes

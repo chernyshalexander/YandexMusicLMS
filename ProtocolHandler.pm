@@ -253,7 +253,7 @@ sub getNextTrack {
     my ($class, $song, $successCb, $errorCb) = @_;
 
     my $url = $song->currentTrack()->url;
-    $log->error("YANDEX: getNextTrack called for: $url");
+    $log->info("YANDEX: getNextTrack called for: $url");
 
     my $track_id = $url;
     unless ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
@@ -855,32 +855,7 @@ sub _sysread {
 
     my $cipher = ${*$self}{yandex_cipher};
     unless ($cipher) {
-        # DEAD CODE: yandex_temp_file branch was for the file:// Tier-2 fallback (removed).
-        # yandex_temp_file is never set now, so the ternary always takes SUPER::_sysread.
-        # TODO: simplify to: my $bytes = $self->SUPER::_sysread($_[1], $length, $offset);
-        my $bytes = ${*$self}{yandex_temp_file}
-            ? sysread($self, $_[1], $length, $offset)
-            : $self->SUPER::_sysread($_[1], $length, $offset);
-        # DEAD CODE: block below never executes (yandex_temp_file always undef)
-        # if (${*$self}{yandex_temp_file}) {
-        #     my $cnt = ++${*$self}{_sysread_logged};
-        #     if ($cnt == 1 && defined $bytes && $bytes >= 4) {
-        #         my $magic = unpack('H8', substr($_[1], $offset, 4));
-        #         $log->info("YANDEX: _sysread file #1 got=$bytes magic=$magic (expect 664c6143=fLaC)");
-        #     }
-        # }
-        if (${*$self}{yandex_temp_file}) {
-            my $cnt = ++${*$self}{_sysread_logged};
-            if ($cnt == 1 && defined $bytes && $bytes >= 4) {
-                my $magic = unpack('H8', substr($_[1], $offset, 4));
-                $log->info("YANDEX: _sysread file #1 got=$bytes magic=$magic (expect 664c6143=fLaC)");
-            }
-        }
-        # DEAD CODE: temp file cleanup — yandex_temp_file is never set, unlink never runs
-        # TODO: remove the entire yandex_temp_file ternary and both dead blocks above
-        if (defined $bytes && $bytes == 0 && ${*$self}{yandex_temp_file}) {
-            unlink(delete ${*$self}{yandex_temp_file});
-        }
+        my $bytes = $self->SUPER::_sysread($_[1], $length, $offset);
         return $bytes;
     }
 

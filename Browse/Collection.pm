@@ -1,5 +1,20 @@
 package Plugins::yandex::Browse::Collection;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::Browse::Collection - Discovery and collection content browser
+
+=head1 DESCRIPTION
+
+Provides browse menu for discovery content within Yandex Music:
+charts, new releases, playlists, "For You" personalized mixes,
+smart playlists (Deja Vu, Never Heard, etc.), themed mixes,
+and tag-based playlist collections.
+
+=cut
+
 # Browse handlers for discovery content: chart, new releases, new playlists,
 # "For You" personal mixes, smart playlists (Deja Vu, Never Heard, etc.),
 # themed mixes, and tag-based playlist collections.

@@ -1,5 +1,43 @@
 package Plugins::yandex::API::Sync;
 
+=encoding utf8
+
+=head1 NAME
+
+Plugins::yandex::API::Sync - Synchronous Yandex Music API client for library scanning
+
+=head1 DESCRIPTION
+
+Synchronous (blocking) HTTP wrapper around Yandex Music API endpoints.
+Used by the library importer/scanner process to fetch user library data:
+liked albums, artists, playlists, and track metadata.
+
+All methods perform direct HTTP requests without callbacks.
+Includes rate-limiting (200ms between requests) and caching to avoid
+excessive API calls during library scans.
+
+=head1 METHODS
+
+Fetch operations (return data or empty list on error):
+
+=over 4
+
+=item B<users_likes_albums($user_id)> - User's liked albums
+
+=item B<users_likes_artists($user_id)> - User's liked artists
+
+=item B<users_likes_playlists($user_id)> - User's liked playlists
+
+=item B<get_album_with_tracks($album_id, $user_id)> - Full album with all tracks
+
+=item B<get_playlist_tracks($user_id, $playlist_uid, $kind)> - Playlist tracks
+
+=item B<get_library_fingerprint($user_id)> - MD5 hash of library state for change detection
+
+=back
+
+=cut
+
 use strict;
 use warnings;
 use utf8;
