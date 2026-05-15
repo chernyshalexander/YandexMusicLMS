@@ -11,6 +11,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use URI;
 use URI::Escape qw(uri_escape_utf8);
+use Digest::MD5 qw(md5_hex);
 use Plugins::yandex::API::Common;
 
 my $cache = Slim::Utils::Cache->new();
@@ -224,6 +225,20 @@ sub tracks {
     }
 
     return \@tracks;
+}
+
+sub get_library_fingerprint {
+    my ($class, $uid) = @_;
+
+    my $result = $class->_get('/library/all-ids', $uid);
+    my $r = ref $result eq 'HASH' ? ($result->{result} || {}) : {};
+
+    return md5_hex(
+        'albums='    . (scalar keys %{$r->{albums}    || {}}) . '|' .
+        'artists='   . (scalar keys %{$r->{artists}   || {}}) . '|' .
+        'library='   . (scalar keys %{$r->{library}   || {}}) . '|' .
+        'playlists=' . (scalar keys %{$r->{playlists} || {}})
+    );
 }
 
 sub _get_auth_data {
