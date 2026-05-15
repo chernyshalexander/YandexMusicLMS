@@ -628,6 +628,7 @@ sub rotor_stations_list {
     $self->_cached_get($cacheKey, LONG_TTL, $url, { language => 'any' }, $callback, $error_callback);
 }
 
+# Get mixes landing page blocks (for discovering tag-based playlists)
 sub landing_mixes {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/landing3';
@@ -644,7 +645,9 @@ sub landing_mixes {
     }, $error_callback);
 }
 
-# Extract tag slugs from landing mixes blocks
+# Discover tag slugs from landing mixes page.
+# Parses mix-link entities and filters to /tag/ URLs only.
+# Returns list of (slug, title) tuples for tags with playlists (e.g., 'chill' → 'Chill').
 sub get_landing_tags {
     my ($self, $callback, $error_callback) = @_;
 
@@ -661,7 +664,7 @@ sub get_landing_tags {
                     my $url = $data->{url} or next;
                     my $title = $data->{title} or next;
 
-                    # Extract tag slug from /tag/slug/ URLs only
+                    # Extract tag slug from /tag/slug/ URLs only (skip /post/ editorial links)
                     if ($url =~ m{^/tag/([^/]+)/?$}) {
                         my $slug = $1;
                         push @tags, [$slug, $title];
@@ -675,7 +678,9 @@ sub get_landing_tags {
     );
 }
 
-# Check if a tag has playlists
+# Check if a tag slug has any playlists available.
+# Calls /tags/$slug/playlist-ids and validates response. Returns 1 if playlists exist, 0 otherwise.
+# On API errors, returns 0 (safer than assuming playlists exist).
 sub validate_tag {
     my ($self, $tag_slug, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . "/tags/$tag_slug/playlist-ids";
@@ -687,13 +692,12 @@ sub validate_tag {
         undef,
         sub {
             my $result = shift;
-            # Tag is valid if it has playlists
             my $ids = $result->{ids} || [];
             my $has_playlists = scalar(@$ids) > 0;
             $callback->($has_playlists);
         },
         sub {
-            # On API error, consider tag invalid (safer than showing empty)
+            # On API error, consider tag invalid to avoid showing empty menus
             $callback->(0);
         }
     );
