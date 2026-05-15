@@ -4,13 +4,7 @@ use strict;
 use warnings;
 use utf8;
 
-# can't "use base ()", as this would fail in LMS 7
-BEGIN {
-    eval {
-        require Slim::Plugin::OnlineLibraryBase;
-        our @ISA = qw(Slim::Plugin::OnlineLibraryBase);
-    };
-}
+use base qw(Slim::Plugin::OnlineLibraryBase);
 
 use Slim::Utils::Cache;
 use Slim::Utils::Log;
@@ -18,7 +12,6 @@ use Slim::Utils::Prefs;
 use Slim::Utils::Progress;
 use Slim::Utils::Strings qw(string);
 use Slim::Utils::Versions;
-use Slim::Utils::PluginManager;
 
 use constant CAN_IMPORTER => (Slim::Utils::Versions->compareVersions($::VERSION, '8.0.0') >= 0);
 
@@ -27,86 +20,55 @@ my $log = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
 
 my ($ct, $splitChar);
-my $previousArtistId;  # Used to avoid duplicate caching of the same artist (like TIDAL does)
+my $previousArtistId = '';
 
 sub initPlugin {
     my $class = shift;
 
-    my $isScanner = main::SCANNER ? 'YES' : 'NO';
-    my $lastArg = $ARGV[-1] || 'UNDEFINED';
-    my $isImportEnabled = $class->isImportEnabled();
-    my $pluginData = Slim::Utils::PluginManager->dataForPlugin($class);
-    my $pluginName = $pluginData ? $pluginData->{name} : 'N/A';
-
-    main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: initPlugin() - SCANNER=$isScanner, lastArg=$lastArg, importEnabled=$isImportEnabled, pluginName=$pluginName (CAN_IMPORTER=" . CAN_IMPORTER . ")");
-
     if (!CAN_IMPORTER) {
-        $log->warn('YANDEX: The library importer feature requires at least Lyrion Music Server 8.0.0');
+        $log->warn('YANDEX: Library importer requires Lyrion Music Server 8.0.0+');
         return;
     }
 
     if (!main::SCANNER) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: initPlugin() - not SCANNER, returning");
         return;
     }
 
     $class->SUPER::initPlugin(@_);
-    main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: initPlugin() completed, called SUPER");
 }
 
 sub startScan { if (main::SCANNER) {
     my ($class) = @_;
 
-    main::INFOLOG && $log->is_info && $log->info("=========== YANDEX SCANNER: startScan() STARTED ===========");
-
     require Plugins::yandex::API::Sync;
-    $ct = 'mp3';  # Default content type
+    $ct = 'mp3';
     $splitChar = substr(Slim::Utils::Prefs::preferences('server')->get('splitList'), 0, 1);
 
     my $accounts = _enabledAccounts();
-    main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: startScan - found " . scalar(keys %$accounts) . " enabled accounts");
 
     if (scalar keys %$accounts) {
         my $playlistsOnly = Slim::Music::Import->scanPlaylistsOnly();
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: playlistsOnly=" . ($playlistsOnly ? 'true' : 'false'));
 
         $class->initOnlineTracksTable();
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: initialized online tracks table");
 
         if (!$playlistsOnly) {
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: starting to scan albums");
             $class->scanAlbums($accounts);
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: completed scanning albums");
-
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: starting to scan artists");
             $class->scanArtists($accounts);
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: completed scanning artists");
         }
 
         if (!$class->can('ignorePlaylists') || !$class->ignorePlaylists) {
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: starting to scan playlists");
             $class->scanPlaylists($accounts);
-            main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: completed scanning playlists");
         }
 
         $class->deleteRemovedTracks();
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: deleted removed tracks");
-
         $cache->set('yandex_library_last_scan', time(), '1y');
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: set last_scan cache");
-    } else {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: no enabled accounts, skipping scan");
     }
 
-    main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: calling endImporter");
     Slim::Music::Import->endImporter($class);
-    main::INFOLOG && $log->is_info && $log->info("=========== YANDEX SCANNER: startScan() COMPLETED ===========");
 } }
 
 sub scanAlbums { if (main::SCANNER) {
     my ($class, $accounts) = @_;
-
-    main::INFOLOG && $log->is_info && $log->info("YANDEX SCANNER: scanAlbums() starting");
 
     my $progress = Slim::Utils::Progress->new({
         'type'  => 'importer',
@@ -115,15 +77,10 @@ sub scanAlbums { if (main::SCANNER) {
         'every' => 1,
     });
 
-    main::INFOLOG && $log->is_info && $log->info("YANDEX SCANNER: Created Progress object - type=" . $progress->type . ", name=" . $progress->name);
-
     while (my ($accountName, $userId) = each %$accounts) {
         my %missingAlbums;
 
-        main::INFOLOG && $log->is_info && $log->info("Reading albums for $accountName (userId=$userId)...");
-        my $progressMsg = string('PLUGIN_YANDEX_PROGRESS_READ_ALBUMS', $accountName);
-        main::INFOLOG && $log->is_info && $log->info("YANDEX SCANNER: Updating progress - message='$progressMsg', type=" . $progress->type . ", name=" . $progress->name);
-        $progress->update($progressMsg);
+        $progress->update(string('PLUGIN_YANDEX_PROGRESS_READ_ALBUMS', $accountName));
 
         my $albums = Plugins::yandex::API::Sync->users_likes_albums($userId) || [];
         $progress->total(scalar @$albums);
@@ -135,9 +92,8 @@ sub scanAlbums { if (main::SCANNER) {
             if ($albumDetails && $albumDetails->{volumes} && ref $albumDetails->{volumes}) {
                 $progress->update($album->{title});
 
-                my @tracks = _flattenTracks($albumDetails);
                 $class->storeTracks([
-                    map { _prepareTrack($albumDetails, $_) } @tracks
+                    map { _prepareTrack($albumDetails, $_) } _flattenTracks($albumDetails)
                 ], undef, $accountName);
 
                 main::SCANNER && Slim::Schema->forceCommit;
@@ -147,7 +103,6 @@ sub scanAlbums { if (main::SCANNER) {
             }
         }
 
-        # Fetch albums that weren't in cache
         while (my ($albumId, $album) = each %missingAlbums) {
             $progress->update($album->{title});
 
@@ -160,9 +115,8 @@ sub scanAlbums { if (main::SCANNER) {
 
             $cache->set('yandex_album_with_tracks_' . $albumId, $albumDetails, '3M');
 
-            my @tracks = _flattenTracks($albumDetails);
             $class->storeTracks([
-                map { _prepareTrack($albumDetails, $_) } @tracks
+                map { _prepareTrack($albumDetails, $_) } _flattenTracks($albumDetails)
             ], undef, $accountName);
 
             main::SCANNER && Slim::Schema->forceCommit;
@@ -183,40 +137,26 @@ sub scanArtists { if (main::SCANNER) {
         'every' => 1,
     });
 
+    $previousArtistId = '';
+
     while (my ($accountName, $userId) = each %$accounts) {
-        main::INFOLOG && $log->is_info && $log->info("Reading artists for $accountName...");
-        my $progressMsg = string('PLUGIN_YANDEX_PROGRESS_READ_ARTISTS', $accountName);
-        main::INFOLOG && $log->is_info && $log->info("PROGRESS UPDATE: $progressMsg (type=" . $progress->type . ", name=" . $progress->name . ")");
-        $progress->update($progressMsg);
+        $progress->update(string('PLUGIN_YANDEX_PROGRESS_READ_ARTISTS', $accountName));
 
         my $artists = Plugins::yandex::API::Sync->users_likes_artists($userId) || [];
         $progress->total($progress->total + scalar @$artists);
 
         foreach my $artist (@$artists) {
             my $name = $artist->{name} or next;
-            my $artistId = $artist->{id};
 
             $progress->update($name);
             main::SCANNER && Slim::Schema->forceCommit;
 
-            # Add artist to database (without picture, like Deezer does)
             Slim::Schema::Contributor->add({
                 'artist' => $class->normalizeContributorName($name),
-                'extid'  => 'yandex:artist:' . $artistId,
+                'extid'  => 'yandex:artist:' . $artist->{id},
             });
 
-            # Cache artist picture separately (like Deezer does)
-            # Extract and cache artist cover/image if available
-            # Note: API /artists/$id/brief-info does NOT return cover_uri, so we extract it here
-            if ($artist->{cover} && $artist->{cover}{uri}) {
-                my $cover = $artist->{cover}{uri};
-                $cover =~ s/%%/200x200/;
-                $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-                _cacheArtistPicture($artist, '3M');
-                main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Adding artist '$name' (id=$artistId) with cover: $cover");
-            } else {
-                main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Adding artist '$name' (id=$artistId) - no cover available");
-            }
+            _cacheArtistPicture($artist, '3M');
         }
     }
 
@@ -237,42 +177,30 @@ sub scanPlaylists { if (main::SCANNER) {
         'every' => 1,
     });
 
-    main::INFOLOG && $log->is_info && $log->info("Removing old playlists...");
     $progress->update(string('PLAYLIST_DELETED_PROGRESS'), $progress->done);
     my $deletePlaylists_sth = $dbh->prepare_cached("DELETE FROM tracks WHERE url LIKE 'yandexmusic://playlist/%'");
     $deletePlaylists_sth->execute();
 
     while (my ($accountName, $userId) = each %$accounts) {
-        my $progressMsg = string('PLUGIN_YANDEX_PROGRESS_READ_PLAYLISTS', $accountName);
-        main::INFOLOG && $log->is_info && $log->info("PROGRESS UPDATE: $progressMsg (type=" . $progress->type . ", name=" . $progress->name . ")");
-        $progress->update($progressMsg);
+        $progress->update(string('PLUGIN_YANDEX_PROGRESS_READ_PLAYLISTS', $accountName));
 
-        main::INFOLOG && $log->is_info && $log->info("Reading playlists for $accountName...");
         my $playlists = Plugins::yandex::API::Sync->users_likes_playlists($userId) || [];
-
         $progress->total($progress->total + @$playlists);
 
         my $prefix = 'Yandex' . string('COLON') . ' ';
 
-        main::INFOLOG && $log->is_info && $log->info(sprintf("Importing tracks for %s playlists...", scalar @$playlists));
         foreach my $playlist (@{$playlists || []}) {
             my $id = $playlist->{kind} or next;
             my $ownerUid = $playlist->{owner}{uid} or next;
 
-            my $tracks = Plugins::yandex::API::Sync->get_playlist_tracks($userId, $ownerUid, $id);
-            $tracks = $tracks || [];
+            my $tracks = Plugins::yandex::API::Sync->get_playlist_tracks($userId, $ownerUid, $id) || [];
 
             $progress->update($accountName . string('COLON') . ' ' . $playlist->{title});
             Slim::Schema->forceCommit;
 
             my $url = "yandexmusic://playlist/$ownerUid/$id";
 
-            my $cover = '';
-            if ($playlist->{cover}) {
-                $cover = $playlist->{cover}{uri} || '';
-                $cover =~ s/%%/200x200/;
-                $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-            }
+            my $cover = $playlist->{cover} ? _normalizeImageUrl($playlist->{cover}{uri} || '') : '';
 
             my $playlistObj = Slim::Schema->updateOrCreate({
                 url        => $url,
@@ -300,97 +228,44 @@ sub scanPlaylists { if (main::SCANNER) {
     Slim::Schema->forceCommit;
 } }
 
-# Get artist picture (called by LMS UI when displaying artist information)
-# Note: Called from main LMS process, NOT from scanner
-sub getArtistPicture {
+# Called from SCANNER process — synchronous API call is valid here
+sub getArtistPicture { if (main::SCANNER) {
     my ($class, $id) = @_;
 
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: getArtistPicture() called for $id");
-
-    my $cache_key = 'yandex_artist_image_' . $id;
-    my $url = $cache->get($cache_key);
-    if ($url) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: Found cached artist picture for $id -> $url");
-        return $url;
-    }
-
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: No cached picture for $id, attempting API fetch");
+    my $url = $cache->get('yandex_artist_image_' . $id);
+    return $url if $url;
 
     $id =~ s/yandex:artist://;
 
-    # Get any available uid
     my $accounts = _enabledAccounts();
     my ($anyUserId) = keys %$accounts;
-    unless ($anyUserId) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: No enabled accounts found for getArtistPicture($id)");
-        return;
-    }
+    return unless $anyUserId;
 
     require Plugins::yandex::API::Sync;
     my $artist = Plugins::yandex::API::Sync->get_artist($id, $anyUserId) || {};
 
     if ($artist->{cover_uri}) {
-        my $cover = $artist->{cover_uri};
-        $cover =~ s/%%/200x200/;
-        $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-        my $save_key = 'yandex_artist_image_' . 'yandex:artist:' . $id;
-        $cache->set($save_key, $cover, '3M');
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: Fetched and cached artist picture for $id -> $cover");
+        my $cover = _normalizeImageUrl($artist->{cover_uri});
+        $cache->set('yandex_artist_image_yandex:artist:' . $id, $cover, '3M');
         return $cover;
     }
 
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: No cover_uri in getArtistPicture($id) API response");
     return;
-}
+} }
 
 sub trackUriPrefix { 'yandexmusic://' }
 
-# Check if library needs update (runs in main LMS process, not scanner)
 sub needsUpdate { if (!main::SCANNER) {
     my ($class, $cb) = @_;
 
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate() called with callback");
+    return $cb->(0) unless scalar keys %{_enabledAccounts()};
 
-    my $enabledAccounts = _enabledAccounts();
-    my $accountCount = scalar keys %{$enabledAccounts};
+    my $lastScanTime = $cache->get('yandex_library_last_scan') || return $cb->(1);
 
-    unless ($accountCount) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - no enabled accounts found, returning 0");
-        my $result = $cb->(0);
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate callback returned: $result");
-        return $result;
-    }
-
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - found $accountCount enabled accounts");
-
-    my $lastScanTime = $cache->get('yandex_library_last_scan');
-    unless ($lastScanTime) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - never scanned before, requesting update (returning 1)");
-        my $result = $cb->(1);
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate callback returned: $result");
-        return $result;
-    }
-
-    my $daysSinceScan = (time() - $lastScanTime) / 86400;
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - last scan was $daysSinceScan days ago");
-
-    # For now, always rescan if more than 7 days have passed
-    # TODO: Implement fingerprinting like Deezer to check for actual changes
-    if ($daysSinceScan > 7) {
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - requesting update (7+ days since last scan, returning 1)");
-        my $result = $cb->(1);
-        main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate callback returned: $result");
-        return $result;
-    }
-
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate - library is up to date (returning 0)");
-    my $result = $cb->(0);
-    main::INFOLOG && $log->is_info && $log->info("YANDEX: needsUpdate callback returned: $result");
-    return $result;
+    # TODO: Implement fingerprinting like Deezer/Spotty to check for actual changes
+    return $cb->( (time() - $lastScanTime) / 86400 > 7 ? 1 : 0 );
 } }
 
-# Filter accounts based on import preferences
-# Returns hash: { account_name => uid, ... }
 sub _enabledAccounts {
     my $accounts = $prefs->get('accounts') || {};
     my $dontImportAccounts = $prefs->get('dontImportAccounts') || {};
@@ -401,33 +276,26 @@ sub _enabledAccounts {
         next if $uid eq 'migrating';
         next if $dontImportAccounts->{$uid};
 
-        # Use account name/login for display, uid for API calls
-        my $accountName = $account->{name} || $account->{login} || $uid;
-        $enabledAccounts->{$accountName} = $uid;
+        $enabledAccounts->{ $account->{name} || $account->{login} || $uid } = $uid;
     }
 
     return $enabledAccounts;
 }
 
-# Flatten nested volumes structure into flat track list
 sub _flattenTracks {
     my ($album) = @_;
-
-    my @tracks;
-    if ($album->{volumes} && ref $album->{volumes} eq 'ARRAY') {
-        foreach my $volume (@{$album->{volumes}}) {
-            if ($volume && ref $volume eq 'ARRAY') {
-                foreach my $track (@$volume) {
-                    push @tracks, $track;
-                }
-            }
-        }
-    }
-
-    return @tracks;
+    return unless $album->{volumes};
+    return map { @{$_} } grep { ref $_ eq 'ARRAY' } @{$album->{volumes}};
 }
 
-# Prepare track data for LMS database storage
+sub _normalizeImageUrl {
+    my ($url) = @_;
+    return '' unless $url;
+    $url =~ s/%%/200x200/;
+    $url = "https://$url" if $url !~ /^https?:/;
+    return $url;
+}
+
 sub _prepareTrack {
     my ($album, $track) = @_;
 
@@ -441,13 +309,6 @@ sub _prepareTrack {
         $artist_name = $track->{artists}[0]{name};
     }
 
-    my $cover = '';
-    if ($album->{coverUri}) {
-        $cover = $album->{coverUri};
-        $cover =~ s/%%/200x200/;
-        $cover = "https://$cover" if $cover;
-    }
-
     my $trackData = {
         url          => $url,
         TITLE        => $track->{title} || 'Unknown',
@@ -457,18 +318,16 @@ sub _prepareTrack {
         ALBUM_EXTID  => 'yandex:album:' . $album->{id},
         TRACKNUM     => $track->{trackNumber} || 0,
         SECS         => $duration,
-        COVER        => $cover,
+        COVER        => $album->{coverUri} ? _normalizeImageUrl($album->{coverUri}) : '',
         AUDIO        => 1,
         EXTID        => $url,
         CONTENT_TYPE => $ct,
         LOSSLESS     => 0,
     };
 
-    # Add additional artists if present
     if ($track->{artists} && @{$track->{artists}} > 1) {
         my @otherArtists = map { $_->{name} } grep { $_->{name} ne $artist_name } @{$track->{artists}};
         if (@otherArtists) {
-            $splitChar ||= substr(Slim::Utils::Prefs::preferences('server')->get('splitList'), 0, 1);
             $trackData->{TRACKARTIST} = join($splitChar, @otherArtists);
         }
     }
@@ -476,43 +335,17 @@ sub _prepareTrack {
     return $trackData;
 }
 
-# Cache artist picture with TTL (like TIDAL/Deezer do)
-# Receives full artist object, extracts and caches the cover
-# Avoids duplicate caching of the same artist (like TIDAL does with $previousArtistId)
 sub _cacheArtistPicture {
     my ($artist, $ttl) = @_;
 
     my $artistId = $artist->{id};
-    my $cover;
+    return if !$artistId || $artistId eq $previousArtistId;
 
-    # Skip if we just cached this artist (avoid duplication)
-    if ($artistId eq $previousArtistId) {
-        return;
-    }
+    my $cover = ref $artist->{cover} eq 'HASH' ? $artist->{cover}{uri} : '';
+    return unless $cover;
 
-    # Extract cover URL from artist object (may be nested or direct)
-    if ($artist->{cover}) {
-        if (ref $artist->{cover} eq 'HASH' && $artist->{cover}{uri}) {
-            # Nested structure: cover.uri
-            $cover = $artist->{cover}{uri};
-        } elsif (!ref $artist->{cover}) {
-            # Direct string
-            $cover = $artist->{cover};
-        }
-    }
-
-    if ($cover) {
-        # Normalize URL
-        $cover =~ s/%%/200x200/;
-        $cover = "https://$cover" if $cover && $cover !~ /^https?:/;
-
-        my $cache_key = 'yandex_artist_image_yandex:artist:' . $artistId;
-        $cache->set($cache_key, $cover, $ttl || '3M');
-        main::INFOLOG && $log->is_info && $log->info("YANDEX IMPORTER: Cached artist picture for yandex:artist:$artistId -> $cover");
-        $previousArtistId = $artistId;  # Remember this artist to avoid duplicate caching
-    }
+    $cache->set('yandex_artist_image_yandex:artist:' . $artistId, _normalizeImageUrl($cover), $ttl || '3M');
+    $previousArtistId = $artistId;
 }
-
-$previousArtistId = '';  # Initialize to avoid "used only once" warning
 
 1;

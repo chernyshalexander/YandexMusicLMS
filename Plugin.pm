@@ -86,7 +86,7 @@ sub initPlugin {
 
     # Register service icon for OnlineLibrary (shows Yandex logo on album covers)
     if (Slim::Utils::PluginManager->isEnabled('Slim::Plugin::OnlineLibrary::Plugin')) {
-        my $icon_path = 'plugins/yandex/html/images/yandex.png';
+        my $icon_path = '/plugins/yandex/html/images/yandex.png';
         my $ret = eval {
             Slim::Plugin::OnlineLibrary::Plugin->addLibraryIconProvider(
                 'yandex',
