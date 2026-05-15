@@ -534,21 +534,6 @@ sub get_playlist {
     }, $error_callback);
 }
 
-sub rotor_station_info {
-    my ($self, $station, $callback, $error_callback) = @_;
-    my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/station/' . $station . '/info';
-    my $cacheKey = 'yandex_station_info_' . $station;
-
-    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, sub {
-        my $result = shift;
-        if (exists $result->{result}) {
-            $callback->($result->{result});
-        } else {
-            $error_callback->("Failed to get station info");
-        }
-    }, $error_callback);
-}
-
 sub wheel_new {
     my ($self, $client, $callback, $error_callback, $feedbacks, $extra_headers) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/wheel/new';
