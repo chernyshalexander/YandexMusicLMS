@@ -262,99 +262,115 @@ sub handleSmartPlaylists {
 sub handlePicks {
     my ($client, $cb, $args, $yandex_client, $category) = @_;
 
-    $yandex_client->landing_mixes(
+    $yandex_client->get_landing_tags(
         sub {
-            my $blocks = shift;
-            my @discovered_tags;
-            
-            foreach my $block (@$blocks) {
-                if ($block->{entities}) {
-                    foreach my $entity (@{$block->{entities}}) {
-                        if ($entity->{type} eq 'mix-link' && $entity->{data} && $entity->{data}->{url}) {
-                            my $url = $entity->{data}->{url};
-                            if ($url =~ /^\/tag\/([^\/]+)\/?$/) {
-                                my $slug = $1;
-                                my $title = $entity->{data}->{title} || $slug;
-                                push @discovered_tags, { slug => $slug, title => $title };
-                            }
-                        }
-                    }
-                }
+            my $landing_tags = shift;
+            my %landing_map;  # slug => title (from landing API)
+
+            foreach my $tag_pair (@$landing_tags) {
+                my ($slug, $title) = @$tag_pair;
+                $landing_map{$slug} = $title;
             }
 
             if (!$category) {
-                my %active_categories;
-                foreach my $t (@discovered_tags) {
-                    my $cat = $TAG_SLUG_CATEGORY{$t->{slug}} || 'mood';
-                    next if $cat eq 'seasonal';
-                    $active_categories{$cat} = 1;
-                }
-
-                my @items;
-                for my $cat (qw(mood activity era genres)) {
-                    if ($active_categories{$cat}) {
-                        push @items, {
-                            name => translate($client, $cat),
-                            type => 'link',
-                            url  => \&handlePicks,
-                            passthrough => [$yandex_client, $cat],
-                            image => 'plugins/yandex/html/images/personal_svg.png',
-                        }
+                # Top level: show all 4 category folders
+                my @items = map {
+                    {
+                        name => translate($client, $_),
+                        type => 'link',
+                        url  => \&handlePicks,
+                        passthrough => [$yandex_client, $_],
+                        image => 'plugins/yandex/html/images/personal_svg.png',
                     }
-                }
-                
-                if (!@items) {
-                    for my $cat (qw(mood activity era genres)) {
-                         push @items, {
-                            name => translate($client, $cat),
-                            type => 'link',
-                            url  => \&handlePicks,
-                            passthrough => [$yandex_client, $cat],
-                            image => 'plugins/yandex/html/images/personal_svg.png',
-                         }
-                    }
-                }
+                } qw(mood activity era genres);
 
                 return $cb->({ items => \@items, title => translate($client, 'picks') });
-            } 
-            
-            my @items;
-            my %seen_slugs;
-            foreach my $t (@discovered_tags) {
-                my $slug = $t->{slug};
+            }
+
+            # Category selected: build tag list with hardcoded + landing, then validate
+            my @all_tags;
+            my %seen;
+
+            # Start with hardcoded tags for this category
+            foreach my $slug (keys %TAG_SLUG_CATEGORY) {
+                next if $TAG_SLUG_CATEGORY{$slug} ne $category;
+                next if $seen{$slug}++;
+                push @all_tags, { slug => $slug, title => translate($client, $slug) };
+            }
+
+            # Add landing-discovered tags for this category
+            foreach my $slug (keys %landing_map) {
                 my $cat = $TAG_SLUG_CATEGORY{$slug} || 'mood';
-                if ($cat eq $category && !$seen_slugs{$slug}++) {
-                    push @items, {
-                        name => translate($client, $slug),
+                next if $cat ne $category;
+                next if $seen{$slug}++;
+                push @all_tags, { slug => $slug, title => $landing_map{$slug} };
+            }
+
+            # Validate all tags in parallel
+            _validateTagsAndBuild($yandex_client, $client, $cb, $category, \@all_tags);
+        },
+        sub {
+            my $error = shift;
+            # Fallback to hardcoded categories even if landing discovery fails
+            my @items = map {
+                {
+                    name => translate($client, $_),
+                    type => 'link',
+                    url  => \&handlePicks,
+                    passthrough => [$yandex_client, $_],
+                    image => 'plugins/yandex/html/images/personal_svg.png',
+                }
+            } qw(mood activity era genres);
+
+            $cb->({ items => \@items, title => translate($client, 'picks') });
+        }
+    );
+}
+
+# Helper: validate multiple tags and build menu
+sub _validateTagsAndBuild {
+    my ($yandex_client, $client, $cb, $category, $tags) = @_;
+
+    if (!@$tags) {
+        return $cb->([{ name => "No tags found in category $category", type => 'text' }]);
+    }
+
+    my @validated_items;
+    my $pending = scalar(@$tags);
+
+    foreach my $tag_info (@$tags) {
+        my $slug = $tag_info->{slug};
+        my $title = $tag_info->{title};
+
+        $yandex_client->validate_tag(
+            $slug,
+            sub {
+                my $is_valid = shift;
+                if ($is_valid) {
+                    push @validated_items, {
+                        name => $title,
                         type => 'link',
                         url  => \&handleTagPlaylists,
                         passthrough => [$yandex_client, $slug],
                         image => 'plugins/yandex/html/images/personal_svg.png',
                     };
                 }
-            }
 
-            if (!@items) {
-                foreach my $slug (keys %TAG_SLUG_CATEGORY) {
-                    if ($TAG_SLUG_CATEGORY{$slug} eq $category) {
-                        push @items, {
-                            name => translate($client, $slug),
-                            type => 'link',
-                            url  => \&handleTagPlaylists,
-                            passthrough => [$yandex_client, $slug],
-                            image => 'plugins/yandex/html/images/personal_svg.png',
-                        };
+                $pending--;
+                if ($pending == 0) {
+                    # All validations done
+                    if (@validated_items) {
+                        # Sort by name for consistent ordering
+                        @validated_items = sort { $a->{name} cmp $b->{name} } @validated_items;
+                        $cb->({ items => \@validated_items, title => translate($client, $category) });
+                    } else {
+                        # No valid tags - show message
+                        $cb->([{ name => "No playlists available in $category", type => 'text' }]);
                     }
                 }
             }
-
-            $cb->({ items => \@items, title => translate($client, $category) });
-        },
-        sub {
-            my $error = shift;
-            $cb->([{ name => "Error loading mixes: $error", type => 'text' }]);
-        }
-    );
+        );
+    }
 }
 
 sub handleMixes {

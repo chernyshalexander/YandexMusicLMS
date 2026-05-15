@@ -636,12 +636,67 @@ sub landing_mixes {
 
     $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, sub {
         my $result = shift;
-        if (exists $result->{result} && exists $result->{result}->{blocks}) {
-            $callback->($result->{result}->{blocks});
+        if (exists $result->{blocks}) {
+            $callback->($result->{blocks});
         } else {
             $callback->([]);
         }
     }, $error_callback);
+}
+
+# Extract tag slugs from landing mixes blocks
+sub get_landing_tags {
+    my ($self, $callback, $error_callback) = @_;
+
+    $self->landing_mixes(
+        sub {
+            my $blocks = shift;
+            my @tags;
+
+            foreach my $block (@$blocks) {
+                next unless $block->{entities};
+                foreach my $entity (@{$block->{entities}}) {
+                    next unless $entity->{type} eq 'mix-link';
+                    my $data = $entity->{data} or next;
+                    my $url = $data->{url} or next;
+                    my $title = $data->{title} or next;
+
+                    # Extract tag slug from /tag/slug/ URLs only
+                    if ($url =~ m{^/tag/([^/]+)/?$}) {
+                        my $slug = $1;
+                        push @tags, [$slug, $title];
+                    }
+                }
+            }
+
+            $callback->(\@tags);
+        },
+        $error_callback,
+    );
+}
+
+# Check if a tag has playlists
+sub validate_tag {
+    my ($self, $tag_slug, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . "/tags/$tag_slug/playlist-ids";
+
+    $self->_cached_get(
+        "yandex_tag_playlists_$tag_slug",
+        3600,  # 1 hour TTL
+        $url,
+        undef,
+        sub {
+            my $result = shift;
+            # Tag is valid if it has playlists
+            my $ids = $result->{ids} || [];
+            my $has_playlists = scalar(@$ids) > 0;
+            $callback->($has_playlists);
+        },
+        sub {
+            # On API error, consider tag invalid (safer than showing empty)
+            $callback->(0);
+        }
+    );
 }
 
 sub landing_personal_playlists {
