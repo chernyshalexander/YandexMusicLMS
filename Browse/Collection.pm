@@ -259,13 +259,18 @@ sub handleSmartPlaylists {
     );
 }
 
+# Browse picks (tag-based playlists) by category.
+# Top level shows 4 categories (mood, activity, era, genres).
+# When category selected: combines hardcoded + landing-discovered tags, validates each
+# (checks if tag has playlists), and shows only valid tags to avoid empty menus.
+# Falls back to hardcoded categories if landing API fails.
 sub handlePicks {
     my ($client, $cb, $args, $yandex_client, $category) = @_;
 
     $yandex_client->get_landing_tags(
         sub {
             my $landing_tags = shift;
-            my %landing_map;  # slug => title (from landing API)
+            my %landing_map;  # slug => title (from landing API discovery)
 
             foreach my $tag_pair (@$landing_tags) {
                 my ($slug, $title) = @$tag_pair;
@@ -273,7 +278,7 @@ sub handlePicks {
             }
 
             if (!$category) {
-                # Top level: show all 4 category folders
+                # Top level: always show all 4 category folders
                 my @items = map {
                     {
                         name => translate($client, $_),
@@ -287,7 +292,7 @@ sub handlePicks {
                 return $cb->({ items => \@items, title => translate($client, 'picks') });
             }
 
-            # Category selected: build tag list with hardcoded + landing, then validate
+            # Category selected: build tag list (hardcoded + landing), then validate
             my @all_tags;
             my %seen;
 
@@ -298,7 +303,7 @@ sub handlePicks {
                 push @all_tags, { slug => $slug, title => translate($client, $slug) };
             }
 
-            # Add landing-discovered tags for this category
+            # Supplement with landing-discovered tags (may include new tags from API)
             foreach my $slug (keys %landing_map) {
                 my $cat = $TAG_SLUG_CATEGORY{$slug} || 'mood';
                 next if $cat ne $category;
@@ -306,12 +311,12 @@ sub handlePicks {
                 push @all_tags, { slug => $slug, title => $landing_map{$slug} };
             }
 
-            # Validate all tags in parallel
+            # Validate all tags (filter out tags without playlists)
             _validateTagsAndBuild($yandex_client, $client, $cb, $category, \@all_tags);
         },
         sub {
             my $error = shift;
-            # Fallback to hardcoded categories even if landing discovery fails
+            # Fallback: show hardcoded categories even if landing API fails
             my @items = map {
                 {
                     name => translate($client, $_),
@@ -327,7 +332,9 @@ sub handlePicks {
     );
 }
 
-# Helper: validate multiple tags and build menu
+# Validate multiple tags and build menu (async validation).
+# Filters out tags without playlists, sorts by name, returns OPML menu.
+# Uses a counter ($pending) to track async validations and call callback when all are done.
 sub _validateTagsAndBuild {
     my ($yandex_client, $client, $cb, $category, $tags) = @_;
 
@@ -358,13 +365,11 @@ sub _validateTagsAndBuild {
 
                 $pending--;
                 if ($pending == 0) {
-                    # All validations done
+                    # All async validations complete
                     if (@validated_items) {
-                        # Sort by name for consistent ordering
                         @validated_items = sort { $a->{name} cmp $b->{name} } @validated_items;
                         $cb->({ items => \@validated_items, title => translate($client, $category) });
                     } else {
-                        # No valid tags - show message
                         $cb->([{ name => "No playlists available in $category", type => 'text' }]);
                     }
                 }
