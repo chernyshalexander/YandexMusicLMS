@@ -230,7 +230,7 @@ sub scanPlaylists { if (main::SCANNER) {
                 },
             });
 
-            my @trackIds = map { "yandexmusic://$_->{id}." . $ct } @$tracks;
+            my @trackIds = map { "yandexmusic://$_->{id}" } @$tracks;
 
             $playlistObj->setTracks(\@trackIds) if $playlistObj && scalar @trackIds;
             $insertTrackInTempTable_sth && $insertTrackInTempTable_sth->execute($url);
@@ -372,7 +372,7 @@ sub _prepareTrack {
     my ($album, $track) = @_;
 
     my $trackId = $track->{id} or return;
-    my $url = 'yandexmusic://' . $trackId . '.' . $ct;
+    my $url = 'yandexmusic://' . $trackId;
 
     my $duration = $track->{durationMs} ? int($track->{durationMs} / 1000) : 0;
 

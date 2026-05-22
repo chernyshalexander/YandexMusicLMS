@@ -155,8 +155,8 @@ sub new {
              my $radio_session_id = URI::Escape::uri_unescape($1);
              my $batch_id = ($original_url =~ /batch_id=([^&]+)/) ? URI::Escape::uri_unescape($1) : undef;
              my $track_id = ($original_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/)[0];
-             
-             my $yandex_client = Plugins::yandex::Plugin->getClient();
+
+             my $yandex_client = Plugins::yandex::Plugin->getAPIForClient($client);
              if ($yandex_client) {
                  my $playlist_size = Slim::Player::Playlist::count($client);
                  my $current_index = Slim::Player::Source::playingSongIndex($client);
@@ -264,7 +264,8 @@ sub getNextTrack {
     $track_id = $1;
 
     # Get client instance from Plugin
-    my $yandex_client = Plugins::yandex::Plugin->getClient();
+    my $client = $song->master();
+    my $yandex_client = Plugins::yandex::Plugin->getAPIForClient($client);
 
     unless ($yandex_client) {
         $log->error("YANDEX: Could not get Yandex client instance. Plugin might not be initialized.");
@@ -531,7 +532,7 @@ sub getMetadataFor {
         }
 
         # Fetch metadata asynchronously using pending queue (like Deezer)
-        my $yandex_client = Plugins::yandex::Plugin->getClient();
+        my $yandex_client = Plugins::yandex::Plugin->getAPIForClient($client);
         if ($yandex_client) {
             my $now = time();
             # Cleanup old requests (lost after 60 seconds)
@@ -589,7 +590,7 @@ sub getIcon {
 sub explodePlaylist {
 	my ($class, $client, $url, $cb) = @_;
 
-	my $yandex_client = Plugins::yandex::Plugin->getClient();
+	my $yandex_client = Plugins::yandex::Plugin->getAPIForClient($client);
 	unless ($yandex_client) {
 		$cb->([]);
 		return;
