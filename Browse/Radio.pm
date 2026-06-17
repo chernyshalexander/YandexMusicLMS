@@ -137,7 +137,7 @@ sub handleVibeWheel {
         [$seeds],
         sub {
             my $wheel = shift;
-            my (@regular_waves, $reshuffle_entry, $back_entry);
+            my (@regular_waves, @controls);
 
             foreach my $item (@{ $wheel->{items} }) {
                 next unless $item->{type} && $item->{type} eq 'WAVE';
@@ -147,7 +147,8 @@ sub handleVibeWheel {
                 my $wave_seeds = $wave->{seeds} // [];
                 next unless @$wave_seeds;
 
-                my $is_reshuffle = ($item->{style} // '') eq 'CONTROL_ACCENT';
+                my $is_control = ($item->{style} // '') eq 'CONTROL_ACCENT';
+                my $control_seed = $wave_seeds->[0];
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
@@ -162,15 +163,24 @@ sub handleVibeWheel {
                     }
                 }
 
-                if ($is_reshuffle) {
-                    my $reshuffle_seed = $wave_seeds->[0];
-                    $reshuffle_entry = {
-                        name      => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
-                        type      => 'link',
-                        url       => \&handleVibeWheelReshuffle,
-                        passthrough => [$yandex_client, $reshuffle_seed],
-                        image     => $cover || 'plugins/yandex/html/images/radio.png',
-                    };
+                if ($is_control) {
+                    if ($control_seed =~ /^diversity:reshuffle/) {
+                        push @controls, {
+                            name      => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
+                            type      => 'link',
+                            url       => \&handleVibeWheelReshuffle,
+                            passthrough => [$yandex_client, $control_seed],
+                            image     => $cover || 'plugins/yandex/html/images/radio.png',
+                        };
+                    } elsif ($control_seed eq 'user:onyourwave' && $is_reshuffle_view) {
+                        push @controls, {
+                            name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
+                            type      => 'link',
+                            url       => \&handleVibeWheel,
+                            passthrough => [$yandex_client],
+                            image     => $cover || 'plugins/yandex/html/images/back_to_usual.png',
+                        };
+                    }
                 } else {
                     my $name = $wave->{name} || $item->{id};
                     my $seeds_param = uri_escape_utf8(join(',', @$wave_seeds));
@@ -187,22 +197,7 @@ sub handleVibeWheel {
                 }
             }
 
-            my @items = @regular_waves;
-
-            if ($reshuffle_entry) {
-                push @items, $reshuffle_entry;
-            }
-
-            if ($is_reshuffle_view) {
-                $back_entry = {
-                    name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
-                    type      => 'link',
-                    url       => \&handleVibeWheel,
-                    passthrough => [$yandex_client],
-                    image     => 'plugins/yandex/html/images/icon_blank_svg.png',
-                };
-                push @items, $back_entry;
-            }
+            my @items = (@regular_waves, @controls);
 
             $cb->({
                 items => \@items,
