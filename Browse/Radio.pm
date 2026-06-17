@@ -169,7 +169,7 @@ sub handleVibeWheel {
                         type      => 'link',
                         url       => \&handleVibeWheelReshuffle,
                         passthrough => [$yandex_client, $reshuffle_seed],
-                        image     => 'plugins/yandex/html/images/radio.png',
+                        image     => $cover || 'plugins/yandex/html/images/radio.png',
                     };
                 } else {
                     my $name = $wave->{name} || $item->{id};
@@ -199,7 +199,7 @@ sub handleVibeWheel {
                     type      => 'link',
                     url       => \&handleVibeWheel,
                     passthrough => [$yandex_client],
-                    image     => 'plugins/yandex/html/images/radio.png',
+                    image     => 'plugins/yandex/html/images/icon_blank_svg.png',
                 };
                 push @items, $back_entry;
             }
