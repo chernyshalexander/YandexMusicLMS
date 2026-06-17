@@ -267,7 +267,7 @@ sub handleWaveModes {
 
     my $base_url = 'yandexmusic://rotor_session/';
 
-    $yandex_client->yjdsq_new(
+    $yandex_client->wheel_new(
         sub {
             my $wheel = shift;
 
