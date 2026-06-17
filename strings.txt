@@ -689,7 +689,7 @@ PLUGIN_YANDEX_VIBE_RESHUFFLE
 
 PLUGIN_YANDEX_BACK_TO_USUAL
 	EN	Back to usual
-	RU	Вернуться к обычной волне
+	RU	Назад к привычному
 
 PLUGIN_YANDEX_TAG_IN_THE_MOOD
 	EN	In the mood
