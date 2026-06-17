@@ -687,6 +687,10 @@ PLUGIN_YANDEX_VIBE_RESHUFFLE
 	EN	Reshuffle My Vibe
 	RU	Встряхнуть мою волну
 
+PLUGIN_YANDEX_BACK_TO_USUAL
+	EN	Back to usual
+	RU	Назад к привычному
+
 PLUGIN_YANDEX_TAG_IN_THE_MOOD
 	EN	In the mood
 	RU	В настроении
