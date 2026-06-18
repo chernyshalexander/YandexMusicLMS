@@ -64,4 +64,25 @@ sub get_default_headers {
     return $headers;
 }
 
+# Get language parameter for API calls based on client language preference
+# Returns 'ru' if Russian, 'en' for all other languages
+sub get_api_language {
+    my ($client) = @_;
+
+    # Try to get language from client override (transient, per-request)
+    my $lang;
+    if ($client && $client->can('languageOverride')) {
+        $lang = $client->languageOverride();
+    }
+
+    # Fall back to server default
+    if (!$lang) {
+        require Slim::Utils::Prefs;
+        $lang = Slim::Utils::Prefs::preferences('server')->get('language') || 'en';
+    }
+
+    # Normalize: Russian -> 'ru', everything else -> 'en'
+    return ($lang && $lang =~ /^ru/i) ? 'ru' : 'en';
+}
+
 1;

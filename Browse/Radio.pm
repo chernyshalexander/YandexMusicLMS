@@ -134,6 +134,7 @@ sub handleVibeWheel {
     my $is_reshuffle_view = defined $initial_seeds;
 
     $yandex_client->wheel_new_with_seeds(
+        $client,
         [$seeds],
         sub {
             my $wheel = shift;
@@ -263,6 +264,7 @@ sub handleWaveModes {
     my $base_url = 'yandexmusic://rotor_session/';
 
     $yandex_client->wheel_new(
+        $client,
         sub {
             my $wheel = shift;
 

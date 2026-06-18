@@ -114,8 +114,14 @@ sub get {
         },
     );
 
-    $log->info("Yandex API: Requesting GET " . $uri->as_string);
-    $http->get($uri, %{$self->{default_headers}});
+    my %headers = %{$self->{default_headers}};
+    my $accept_lang = $headers{'Accept-Language'} || 'unknown';
+    $log->info("GET: url=" . $uri->as_string . ", Accept-Language=$accept_lang");
+    foreach my $key (sort keys %headers) {
+        $log->info("  Header: $key => " . $headers{$key});
+    }
+
+    $http->get($uri, %headers);
 }
 
 sub _cached_get {
@@ -146,7 +152,10 @@ sub _cached_get {
 }
 
 sub post {
-    my ($self, $url, $data, $callback, $error_callback) = @_;
+    my ($self, $url, $data, $callback, $error_callback, $params) = @_;
+
+    my $uri = URI->new($url);
+    $uri->query_form($params) if $params;
 
     my $http = $self->_create_http_object(
         sub {
@@ -165,10 +174,22 @@ sub post {
         },
     );
 
+    my %headers = %{$self->{default_headers}};
+    my $accept_lang = $headers{'Accept-Language'} || 'unknown';
+    my $user_agent = $headers{'User-Agent'} || 'unknown';
+    $log->info("POST: url=" . $uri->as_string . ", Accept-Language=$accept_lang, User-Agent=$user_agent");
+
+    foreach my $key (sort keys %headers) {
+        $log->info("  Header: $key => " . $headers{$key});
+    }
+
+    $log->info("POST: Calling \$http->post() with URL and headers");
     $http->post(
-        $url, %{$self->{default_headers}},       
+        $uri,
+        %headers,
         encode_json($data),
     );
+    $log->info("POST: HTTP request sent");
 }
 
 sub post_form {
@@ -472,40 +493,67 @@ sub get_playlist {
 }
 
 sub wheel_new {
-    my ($self, $callback, $error_callback) = @_;
+    my ($self, $client, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/wheel/new';
+
+    my $lang = Plugins::yandex::API::Common::get_api_language($client);
+    my $body_data = { context => { type => 'WAVE' } };
+    $log->info("WHEEL_NEW: Requesting default wheel, language=$lang");
+    $log->info("WHEEL_NEW: POST body=" . JSON::XS->new->encode($body_data));
 
     $self->post(
         $url,
-        { context => { type => 'WAVE' } },
+        $body_data,
         sub {
             my $result = shift;
             if (exists $result->{items}) {
+                my @wave_names;
+                foreach my $item (@{ $result->{items} // [] }) {
+                    next unless $item->{type} && $item->{type} eq 'WAVE';
+                    my $wave = $item->{data}{wave} // {};
+                    push @wave_names, $wave->{name} if $wave->{name};
+                }
+                $log->info("WHEEL_NEW: Got " . scalar(@wave_names) . " waves: " . join(', ', @wave_names));
                 $callback->($result);
             } else {
                 $error_callback->("Failed to fetch Vibe Wheel");
             }
         },
         $error_callback,
+        { language => $lang },
     );
 }
 
 sub wheel_new_with_seeds {
-    my ($self, $seeds, $callback, $error_callback) = @_;
+    my ($self, $client, $seeds, $callback, $error_callback) = @_;
     my $url = 'https://api.music.yandex.net/wheel/new';
+
+    my $seeds_str = join(',', @$seeds);
+    my $lang = Plugins::yandex::API::Common::get_api_language($client);
+    my $body_data = { context => { type => 'WAVE', data => { seeds => $seeds } } };
+    $log->info("WHEEL_NEW_WITH_SEEDS: Requesting with seeds=[$seeds_str], language=$lang");
+    $log->info("WHEEL_NEW_WITH_SEEDS: POST body=" . JSON::XS->new->encode($body_data));
 
     $self->post(
         $url,
-        { context => { type => 'WAVE', data => { seeds => $seeds } } },
+        $body_data,
         sub {
             my $result = shift;
             if (exists $result->{items}) {
+                my @wave_names;
+                foreach my $item (@{ $result->{items} // [] }) {
+                    next unless $item->{type} && $item->{type} eq 'WAVE';
+                    my $wave = $item->{data}{wave} // {};
+                    push @wave_names, $wave->{name} if $wave->{name};
+                }
+                $log->info("WHEEL_NEW_WITH_SEEDS: Got " . scalar(@wave_names) . " waves: " . join(', ', @wave_names));
                 $callback->($result);
             } else {
                 $error_callback->("Failed to fetch Vibe Wheel");
             }
         },
         $error_callback,
+        { language => $lang },
     );
 }
 
