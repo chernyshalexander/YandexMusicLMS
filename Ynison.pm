@@ -46,6 +46,7 @@ use constant {
     RECONNECT_MIN        => 5,      # seconds
     RECONNECT_MAX        => 60,     # seconds
     KEEPALIVE_INTERVAL   => 20,     # seconds
+    RID_TIMEOUT          => 10,     # seconds - cleanup old RID entries
 };
 
 # Inner class: Slim::Networking::Async with HTTPS support
@@ -93,6 +94,11 @@ sub new {
         socket          => undef,
         read_buffer     => '',
         write_queue     => [],
+
+        # NEW: RID tracking for echo detection
+        sent_commands   => {},      # {rid => {time, command_type, data}}
+        command_counter => 0,       # Debug counter
+
         state           => STATE_DISCONNECTED,
         redirect_data   => undef,   # {host, redirect_ticket, session_id}
 
@@ -993,6 +999,33 @@ sub _decode_ws_frame {
     # Payload is already extracted and unmasked by _extract_ws_frame
     return $payload if defined $payload && length($payload) > 0;
     return;
+}
+
+# ===========================================================================
+# RID tracking / echo detection helpers
+# ===========================================================================
+sub _detect_command_type {
+    my ($msg) = @_;
+
+    return 'ping' if $msg->{ping};
+    return 'pong' if $msg->{pong};
+    return 'update_full_state' if $msg->{update_full_state};
+    return 'update_player_state' if $msg->{update_player_state};
+    return 'update_playing_status' if $msg->{update_playing_status};
+    return 'update_device' if $msg->{update_device};
+    return 'unknown';
+}
+
+sub _cleanup_old_commands {
+    my ($self) = @_;
+    my $now = time();
+    my $timeout = RID_TIMEOUT();
+
+    foreach my $rid (keys %{$self->{sent_commands}}) {
+        if ($now - $self->{sent_commands}->{$rid}->{time} > $timeout) {
+            delete $self->{sent_commands}->{$rid};
+        }
+    }
 }
 
 1;
