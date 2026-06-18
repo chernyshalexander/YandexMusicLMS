@@ -276,6 +276,12 @@ sub _build_player_state {
         };
     }
 
+    $self->_log(LOG_LEVEL_DEBUG(),
+        sprintf('Built player state: queue_size=%d, paused=%d, progress=%sms',
+            scalar(@{$player_queue->{playable_list}}),
+            ${$status->{paused}},
+            $status->{progress_ms}));
+
     return {status => $status, player_queue => $player_queue};
 }
 
