@@ -463,22 +463,46 @@ sub _on_writable {
 
     return unless $self->{write_queue} && @{$self->{write_queue}};
 
-    my $data = $self->{write_queue}[0];
+    my $frame = $self->{write_queue}[0];
+    my $data = $frame->{data};
+
+    # Check for frame timeout
+    if (time() - $frame->{sent_at} > FRAME_TIMEOUT()) {
+        $log->warn(sprintf('Ynison [%s]: Frame delivery timeout (%.1fs), dropping',
+            $self->{client}->name(), time() - $frame->{sent_at}));
+        shift @{$self->{write_queue}};
+        return;
+    }
+
     my $written = syswrite($fh, $data);
 
     if (!defined $written) {
         return if $! == EAGAIN || $! == EWOULDBLOCK;
-        $log->error('Ynison: Write error: ' . $!);
-        $self->_schedule_reconnect();
+        $log->error(sprintf('Ynison [%s]: Write error: %s',
+            $self->{client}->name(), $!));
+        $self->_schedule_reconnect('write_error');
         return;
     }
 
     if ($written == length($data)) {
+        # Frame sent completely
         shift @{$self->{write_queue}};
-        $log->debug('Ynison: Request sent');
-        Slim::Networking::IO::Select::removeWrite($fh);
+        $log->debug(sprintf('Ynison [%s]: Frame sent (%d bytes)',
+            $self->{client}->name(), length($data)));
+
+        if (!@{$self->{write_queue}}) {
+            Slim::Networking::IO::Select::removeWrite($fh);
+        }
     } else {
-        $self->{write_queue}[0] = substr($data, $written);
+        # Partial write - update buffer
+        $frame->{data} = substr($data, $written);
+        $frame->{attempts}++;
+
+        if ($frame->{attempts} > 5) {
+            $log->warn(sprintf('Ynison [%s]: Too many partial writes (%d), dropping frame',
+                $self->{client}->name(), $frame->{attempts}));
+            shift @{$self->{write_queue}};
+        }
     }
 }
 
