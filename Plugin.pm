@@ -63,6 +63,7 @@ sub initPlugin {
         show_new_playlists => 0,
         show_audiobooks_in_collection => 1,
         enable_ynison => 0,
+        ynison_debug => 0,
         yandex_wave_presets => [],
         show_wave_wizard     => 1,
         wizard_station_type  => 'activity',
