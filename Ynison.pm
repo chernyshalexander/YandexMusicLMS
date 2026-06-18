@@ -624,6 +624,22 @@ sub _process_state_frames {
 sub _on_message_received {
     my ($self, $msg) = @_;
 
+    # NEW: Check if this is an echo (response to our own command)
+    if ($msg->{rid} && $self->{sent_commands}->{$msg->{rid}}) {
+        my $sent = $self->{sent_commands}->{$msg->{rid}};
+        my $latency = time() - $sent->{time};
+
+        # If latency is short and command type matches, likely an echo
+        if ($latency < 3 && $sent->{command_type} eq _detect_command_type($msg)) {
+            $log->info(sprintf('Ynison [%s]: Echo detected (rid=%s, latency=%.1fs)',
+                $self->{client}->name(), $msg->{rid}, $latency));
+            delete $self->{sent_commands}->{$msg->{rid}};
+            return;  # Skip processing this echo
+        }
+
+        delete $self->{sent_commands}->{$msg->{rid}};
+    }
+
     if ($self->{state} == STATE_STATE_SERVICE) {
         return $self->_handle_redirect($msg);
     }
@@ -640,6 +656,9 @@ sub _on_message_received {
         eval { $listener->($msg) };
         $log->error("Ynison listener error: $@") if $@;
     }
+
+    # Clean up old RID entries
+    $self->_cleanup_old_commands();
 }
 
 
