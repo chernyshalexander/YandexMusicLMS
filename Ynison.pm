@@ -61,6 +61,11 @@ use constant {
 
     KEEPALIVE_INTERVAL   => 20,     # seconds
     RID_TIMEOUT          => 10,     # seconds - cleanup old RID entries
+
+    # Queue buffering and frame management
+    MAX_WRITE_QUEUE_SIZE  => 100,          # max messages in queue
+    MAX_FRAME_SIZE        => 1024 * 1024,  # max 1MB per frame
+    FRAME_TIMEOUT         => 30,           # seconds to timeout
 };
 
 # Inner class: Slim::Networking::Async with HTTPS support
@@ -426,7 +431,11 @@ sub _open_ws {
                 $self->{client}->name()));
 
             $fh->blocking(0);
-            $self->{write_queue} = [$req];
+            $self->{write_queue} = [{
+                data     => $req,
+                sent_at  => time(),
+                attempts => 0,
+            }];
 
             Slim::Networking::IO::Select::addWrite($fh, sub { $self->_on_writable(@_) });
             Slim::Networking::IO::Select::addRead($fh,  sub { $self->_on_http_response(@_) });
@@ -825,7 +834,27 @@ sub _encode_ws_text_frame {
 sub _queue_frame {
     my ($self, $data) = @_;
     return unless $self->{socket};
-    push @{$self->{write_queue}}, $data;
+
+    # Validate frame size
+    if (length($data) > MAX_FRAME_SIZE()) {
+        $log->error(sprintf('Ynison [%s]: Frame too large (%d bytes), dropping',
+            $self->{client}->name(), length($data)));
+        return;
+    }
+
+    # Check queue size and drop oldest if full
+    if (scalar(@{$self->{write_queue}}) >= MAX_WRITE_QUEUE_SIZE()) {
+        $log->warn(sprintf('Ynison [%s]: Write queue full (%d messages), dropping oldest',
+            $self->{client}->name(), scalar(@{$self->{write_queue}})));
+        shift @{$self->{write_queue}};
+    }
+
+    # Add frame to queue with metadata
+    push @{$self->{write_queue}}, {
+        data      => $data,
+        sent_at   => time(),
+        attempts  => 0,
+    };
     Slim::Networking::IO::Select::addWrite($self->{socket}, sub { $self->_on_writable(@_) });
 }
 
