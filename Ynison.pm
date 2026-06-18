@@ -43,8 +43,22 @@ use constant {
     STATE_STATE_SERVICE  => 2,
     STATE_ACTIVE         => 3,
     STATE_RECONNECT_WAIT => 4,
-    RECONNECT_MIN        => 5,      # seconds
-    RECONNECT_MAX        => 60,     # seconds
+
+    # Normal reconnection strategy (default)
+    NORMAL_RECONNECT_MIN    => 5,       # seconds
+    NORMAL_RECONNECT_MAX    => 60,      # seconds
+
+    # Timeout strategy (server timeouts)
+    TIMEOUT_RECONNECT_MIN   => 30,      # seconds
+    TIMEOUT_RECONNECT_MAX   => 120,     # seconds
+
+    # Network error strategy (network issues)
+    NETWORK_RECONNECT_MIN   => 10,      # seconds
+    NETWORK_RECONNECT_MAX   => 180,     # seconds
+
+    # Auth error strategy
+    AUTH_ERROR_MAX_RETRIES  => 3,       # max attempts
+
     KEEPALIVE_INTERVAL   => 20,     # seconds
     RID_TIMEOUT          => 10,     # seconds - cleanup old RID entries
 };
@@ -99,11 +113,21 @@ sub new {
         sent_commands   => {},      # {rid => {time, command_type, data}}
         command_counter => 0,       # Debug counter
 
+        # NEW: Error tracking for adaptive reconnection
+        last_error              => undef,
+        error_count             => 0,
+        first_error_time        => 0,
+        reconnection_stats      => {
+            total_attempts      => 0,
+            successful_connects => 0,
+            failed_connects     => 0,
+        },
+
         state           => STATE_DISCONNECTED,
         redirect_data   => undef,   # {host, redirect_ticket, session_id}
 
         # Timing
-        reconnect_delay => RECONNECT_MIN(),
+        reconnect_delay => NORMAL_RECONNECT_MIN(),
         keepalive_time  => 0,
 
         # Listeners / callbacks
@@ -506,7 +530,10 @@ sub _handle_state_service_upgrade {
 
     $log->info(sprintf('Ynison [%s]: State service upgrade OK - ACTIVE', $self->{client}->name()));
     $self->{state} = STATE_ACTIVE;
-    $self->{reconnect_delay} = RECONNECT_MIN();
+    $self->{reconnect_delay} = NORMAL_RECONNECT_MIN();
+    $self->{error_count} = 0;
+    $self->{last_error} = undef;
+    $self->{reconnection_stats}->{successful_connects}++;
 
     Slim::Networking::IO::Select::removeRead($fh);
     Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
@@ -1060,6 +1087,35 @@ sub _cleanup_old_commands {
             delete $self->{sent_commands}->{$rid};
         }
     }
+}
+
+sub _get_reconnect_strategy {
+    my ($reason, $error_count) = @_;
+    $reason //= 'unknown';
+    $error_count //= 0;
+
+    if ($reason eq 'auth_error') {
+        return (undef, undef, $error_count < AUTH_ERROR_MAX_RETRIES());
+    }
+    elsif ($reason eq 'timeout') {
+        return (TIMEOUT_RECONNECT_MIN(), TIMEOUT_RECONNECT_MAX(), 1);
+    }
+    elsif ($reason eq 'network_error') {
+        return (NETWORK_RECONNECT_MIN(), NETWORK_RECONNECT_MAX(), 1);
+    }
+    else {
+        return (NORMAL_RECONNECT_MIN(), NORMAL_RECONNECT_MAX(), 1);
+    }
+}
+
+sub get_reconnection_stats {
+    my ($self) = @_;
+    return {
+        %{$self->{reconnection_stats}},
+        last_error     => $self->{last_error},
+        error_count    => $self->{error_count},
+        current_delay  => $self->{reconnect_delay},
+    };
 }
 
 1;
