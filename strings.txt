@@ -742,6 +742,18 @@ PLUGIN_YANDEX_ENABLE_YNISON_DESC
 	EN	Make this player visible in the Yandex Music app for remote control and casting.
 	RU	Сделать этот плеер видимым в приложении Яндекс Музыка для управления и трансляции.
 
+PLUGIN_YANDEX_YNISON_SETTINGS
+	EN	Ynison Settings
+	RU	Настройки Ynison
+
+PLUGIN_YANDEX_YNISON_DEBUG
+	EN	Enable Ynison Debug Mode
+	RU	Включить режим отладки Ynison
+
+PLUGIN_YANDEX_YNISON_DEBUG_DESCRIPTION
+	EN	Enable detailed logging and extended debugging information for Ynison multi-device sync.
+	RU	Включить подробное логирование и расширенную отладочную информацию для синхронизации Ynison между устройствами.
+
 PLUGIN_YANDEX_ACCOUNTS
 	EN	Accounts
 	RU	Аккаунты
