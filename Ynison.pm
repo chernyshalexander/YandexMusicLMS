@@ -33,6 +33,7 @@ use Slim::Networking::Async;
 use Slim::Networking::IO::Select;
 use Time::HiRes qw(time);
 use Errno qw(EAGAIN EWOULDBLOCK);
+use POSIX qw(strftime);
 
 my $log   = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
@@ -66,6 +67,13 @@ use constant {
     MAX_WRITE_QUEUE_SIZE  => 100,          # max messages in queue
     MAX_FRAME_SIZE        => 1024 * 1024,  # max 1MB per frame
     FRAME_TIMEOUT         => 30,           # seconds to timeout
+
+    # Logging levels
+    LOG_LEVEL_TRACE => 0,
+    LOG_LEVEL_DEBUG => 1,
+    LOG_LEVEL_INFO  => 2,
+    LOG_LEVEL_WARN  => 3,
+    LOG_LEVEL_ERROR => 4,
 };
 
 # Inner class: Slim::Networking::Async with HTTPS support
@@ -126,6 +134,18 @@ sub new {
             total_attempts      => 0,
             successful_connects => 0,
             failed_connects     => 0,
+        },
+
+        # NEW: Extended logging
+        debug_mode   => $prefs->get('ynison_debug') || 0,
+        log_buffer   => [],             # Last 1000 log entries
+        stats        => {
+            frames_sent      => 0,
+            frames_received  => 0,
+            bytes_sent       => 0,
+            bytes_received   => 0,
+            connection_uptime => 0,
+            last_activity    => time(),
         },
 
         state           => STATE_DISCONNECTED,
@@ -1189,6 +1209,94 @@ sub get_reconnection_stats {
         last_error     => $self->{last_error},
         error_count    => $self->{error_count},
         current_delay  => $self->{reconnect_delay},
+    };
+}
+
+sub _log {
+    my ($self, $level, $msg) = @_;
+    my $client_name = $self->{client}->name();
+
+    # Format message with timestamp
+    my $timestamp = POSIX::strftime('%H:%M:%S', localtime());
+    my $full_msg = "[$timestamp] Ynison[$client_name] $msg";
+
+    # Log to LMS logger if appropriate level
+    if ($level == LOG_LEVEL_TRACE() || $level == LOG_LEVEL_DEBUG()) {
+        $log->debug($full_msg) if $self->{debug_mode};
+    } elsif ($level == LOG_LEVEL_INFO()) {
+        $log->info($full_msg);
+    } elsif ($level == LOG_LEVEL_WARN()) {
+        $log->warn($full_msg);
+    } elsif ($level == LOG_LEVEL_ERROR()) {
+        $log->error($full_msg);
+    }
+
+    # Store in buffer
+    push @{$self->{log_buffer}}, {
+        time      => time(),
+        level     => $level,
+        msg       => $msg,
+        timestamp => $timestamp,
+    };
+
+    # Limit buffer size to 1000
+    if (scalar(@{$self->{log_buffer}}) > 1000) {
+        shift @{$self->{log_buffer}};
+    }
+}
+
+sub _log_frame {
+    my ($self, $direction, $frame_data) = @_;
+    return unless $self->{debug_mode};
+
+    my $json;
+    eval { $json = JSON::XS::VersionOneAndTwo::decode_json($frame_data) };
+
+    if ($json) {
+        $self->_log(LOG_LEVEL_TRACE(),
+            "$direction: " . JSON::XS::VersionOneAndTwo::encode_json($json));
+    } else {
+        $self->_log(LOG_LEVEL_TRACE(),
+            "$direction: (binary data, " . length($frame_data) . " bytes)");
+    }
+}
+
+sub _log_state {
+    my ($self) = @_;
+    return unless $self->{debug_mode};
+
+    my $state_name = {
+        0 => 'DISCONNECTED',
+        1 => 'REDIRECTOR',
+        2 => 'STATE_SERVICE',
+        3 => 'ACTIVE',
+        4 => 'RECONNECT_WAIT',
+    }->{$self->{state}} // 'UNKNOWN';
+
+    $self->_log(LOG_LEVEL_DEBUG(), "State: $state_name");
+}
+
+sub get_debug_info {
+    my ($self) = @_;
+
+    my $state_name = {
+        0 => 'DISCONNECTED',
+        1 => 'REDIRECTOR',
+        2 => 'STATE_SERVICE',
+        3 => 'ACTIVE',
+        4 => 'RECONNECT_WAIT',
+    }->{$self->{state}} // 'UNKNOWN';
+
+    return {
+        device_id        => $self->{device_id},
+        state            => $state_name,
+        is_active        => $self->is_active(),
+        reconnect_delay  => $self->{reconnect_delay},
+        queue_size       => scalar(@{$self->{write_queue}}),
+        buffer_size      => length($self->{read_buffer}),
+        log_buffer_size  => scalar(@{$self->{log_buffer}}),
+        debug_mode       => $self->{debug_mode},
+        stats            => $self->{stats},
     };
 }
 
