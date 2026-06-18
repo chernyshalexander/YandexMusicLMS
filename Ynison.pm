@@ -762,17 +762,38 @@ sub _send_pong {
 }
 
 sub _schedule_reconnect {
-    my ($self) = @_;
+    my ($self, $reason) = @_;
+    $reason //= 'unknown';
 
     $self->_disconnect_socket();
     $self->{state} = STATE_RECONNECT_WAIT();
+    $self->{last_error} = $reason;
+    $self->{error_count}++;
 
-    if ($self->{reconnect_delay} < RECONNECT_MAX()) {
-        $self->{reconnect_delay} *= 2;
+    # Determine strategy based on error reason
+    my ($min_delay, $max_delay, $should_retry) = _get_reconnect_strategy($reason, $self->{error_count});
+
+    unless ($should_retry) {
+        $log->error(sprintf('Ynison [%s]: Not retrying (%s), max attempts exceeded',
+            $self->{client}->name(), $reason));
+        return;
     }
 
-    $log->warn(sprintf('Ynison [%s]: Reconnecting in %d seconds...',
-        $self->{client}->name(), $self->{reconnect_delay}));
+    # Calculate next delay using strategy bounds
+    if ($self->{reconnect_delay} < $min_delay) {
+        $self->{reconnect_delay} = $min_delay;
+    } elsif ($self->{reconnect_delay} < $max_delay) {
+        $self->{reconnect_delay} = int($self->{reconnect_delay} * 1.5);
+        $self->{reconnect_delay} = $max_delay if $self->{reconnect_delay} > $max_delay;
+    }
+
+    $self->{reconnection_stats}->{total_attempts}++;
+
+    $log->warn(sprintf('Ynison [%s]: Reconnecting in %d seconds... (reason=%s, attempt=%d)',
+        $self->{client}->name(),
+        $self->{reconnect_delay},
+        $reason,
+        $self->{error_count}));
 
     Slim::Utils::Timers::setTimer($self, \&connect, $self->{reconnect_delay}, 'reconnect');
 }
