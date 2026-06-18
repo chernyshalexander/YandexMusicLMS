@@ -298,7 +298,22 @@ sub send_command {
     my $json = JSON::XS::VersionOneAndTwo::encode_json($request_hash);
     my $frame = _encode_ws_text_frame($json);
     return unless $frame;
-    $log->debug(sprintf('Ynison [%s]: Sending frame (%d bytes)', $self->{client}->name(), length($frame)));
+
+    # NEW: Track sent command for echo detection
+    if ($request_hash->{rid}) {
+        $self->{sent_commands}->{$request_hash->{rid}} = {
+            time         => time(),
+            command_type => _detect_command_type($request_hash),
+            data         => $request_hash,
+        };
+        $self->{command_counter}++;
+    }
+
+    $log->debug(sprintf('Ynison [%s]: Sending command %d: %s (rid=%s)',
+        $self->{client}->name(),
+        $self->{command_counter},
+        _detect_command_type($request_hash),
+        $request_hash->{rid} // 'no-rid'));
     $self->_queue_frame($frame);
 }
 
