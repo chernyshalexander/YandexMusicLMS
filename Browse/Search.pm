@@ -24,6 +24,7 @@ use strict;
 use warnings;
 use utf8;
 use Encode qw(encode);
+use URI::Escape;
 
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
@@ -176,6 +177,36 @@ sub handleSearch {
             },
             sub { $finish->() },
             0, 1 # We only need to know if there's at least one result to show the category
+        );
+    }
+
+    if ($prefs->get('search_waves')) {
+        $pending++;
+        $yandex_client->search_mixed(
+            $encoded_query,
+            1,  # include_waves = true
+            sub {
+                my $result = shift;
+                $log->info("handleSearch (Waves): received results");
+
+                if (!$result || ref $result ne 'HASH' || !$result->{by_type}) {
+                    $finish->();
+                    return;
+                }
+
+                my @wave_items;
+                if ($result->{by_type}->{wave} && @{$result->{by_type}->{wave}}) {
+                    push @wave_items, {
+                        name => cstring($client, 'PLUGIN_YANDEX_WAVES'),
+                        type => 'link',
+                        url  => \&handleSearchWaves,
+                        passthrough => [$yandex_client, { query => $query }],
+                        image => 'plugins/yandex/html/images/vibe_wheel_svg.png',
+                    };
+                }
+                $finish->(\@wave_items);
+            },
+            sub { $finish->() }
         );
     }
 
@@ -639,6 +670,102 @@ sub handleSearchPodcasts {
         sub {
             my $error = shift;
             $log->error("handleSearchPodcasts: API error: $error");
+            $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
+        },
+        $page,
+        $quantity
+    );
+}
+
+sub handleSearchWaves {
+    my ($client, $cb, $args, $yandex_client, $params) = @_;
+
+    if (ref $yandex_client eq 'HASH') {
+        $params = $yandex_client if !defined $params;
+        $yandex_client = undef;
+    }
+    $yandex_client ||= Plugins::yandex::Plugin::getAPIForClient($client);
+
+    my $query  = (ref $params eq 'HASH' ? $params->{query} : $params) || $args->{search} || '';
+    return $cb->({ items => [] }) unless $yandex_client && $query;
+
+    my $index = $args->{index} || 0;
+    my $quantity = $args->{quantity} || 50;
+    $quantity = 200 if $quantity > 200;
+    my $page = int($index / $quantity);
+
+    my $encoded_query = encode('utf8', $query);
+
+    $yandex_client->search_mixed(
+        $encoded_query,
+        1,  # include_waves = true
+        sub {
+            my $result = shift;
+            $log->info("handleSearchWaves: received results");
+
+            if (!$result || ref $result ne 'HASH' || !exists $result->{by_type}) {
+                $log->error("handleSearchWaves: invalid response format");
+                $cb->({ items => [{ name => "Error: Invalid response format", type => 'text' }] });
+                return;
+            }
+
+            my @items;
+            my $total = 0;
+
+            if ($result->{by_type} && exists $result->{by_type}->{wave}) {
+                my $waves = $result->{by_type}->{wave};
+                $total = scalar(@$waves);
+                $log->info("handleSearchWaves: found $total waves");
+
+                foreach my $wave_item (@$waves) {
+                    next unless $wave_item && $wave_item->{wave};
+                    my $wave = $wave_item->{wave};
+
+                    my $title = $wave->{title} // 'Unknown Wave';
+                    my $subtitle = $wave->{subTitle} // '';
+                    my $icon = 'plugins/yandex/html/images/vibe_wheel_svg.png';
+
+                    if ($wave->{agent} && $wave->{agent}->{cover} && $wave->{agent}->{cover}->{uri}) {
+                        $icon = $wave->{agent}->{cover}->{uri};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon" unless $icon =~ /^https?:/;
+                    } elsif ($wave->{image}) {
+                        $icon = $wave->{image};
+                        $icon =~ s/%%/200x200/;
+                        $icon = "https://$icon" unless $icon =~ /^https?:/;
+                    }
+
+                    # Build seed parameter for vibe wheel
+                    my $seed = '';
+                    if ($wave->{seeds} && @{$wave->{seeds}}) {
+                        $seed = join(',', @{$wave->{seeds}});
+                    } elsif ($wave->{id} && ref $wave->{id} eq 'HASH' && $wave->{id}->{tag}) {
+                        $seed = $wave->{id}->{type} . ':' . $wave->{id}->{tag};
+                    }
+
+                    push @items, {
+                        name => $title . ($subtitle ? ' (' . $subtitle . ')' : ''),
+                        type => 'link',
+                        url => \&Plugins::yandex::Browse::_handleRadioSession,
+                        passthrough => [{ station_or_seeds => $seed, vibe => 1 }],
+                        image => $icon,
+                        play => $seed ? 'yandexmusic://rotor_session/_vibe_?seeds=' . URI::Escape::uri_escape_utf8($seed) : undef,
+                    };
+                }
+            } else {
+                $log->warn("handleSearchWaves: no waves found in result");
+            }
+
+            $cb->({
+                items => \@items,
+                title => cstring($client, 'PLUGIN_YANDEX_WAVES') . ": $query",
+                offset => $page * $quantity,
+                total => $total,
+            });
+        },
+        sub {
+            my $error = shift;
+            $log->error("handleSearchWaves: API error: $error");
             $cb->({ items => [{ name => "Error: $error", type => 'text' }] });
         },
         $page,

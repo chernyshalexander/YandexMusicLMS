@@ -672,6 +672,57 @@ sub search {
     $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
 }
 
+# Search with /search/instant/mixed endpoint (supports waves, clips, videos, etc.)
+# Returns results as array of items with 'type' and type-specific data (e.g., wave, clip, etc.)
+sub search_mixed {
+    my ($self, $query, $include_waves, $callback, $error_callback, $page, $page_size) = @_;
+
+    my $cache_key = 'yandex_search_mixed_' . md5_hex(lc($query)) . '_waves_' . ($include_waves ? 1 : 0) . '_p' . ($page || 0);
+    my $url = 'https://api.music.yandex.ru/search/instant/mixed';  # Note: .ru endpoint, not .net
+
+    # Build type list
+    my @types = qw(album artist playlist track podcast podcast_episode clip concert);
+    push @types, 'wave' if $include_waves;
+    my $type_str = join(',', @types);
+
+    my $params = {
+        'text'              => $query,
+        'type'              => $type_str,
+        'page'              => $page || 0,
+        'pageSize'          => $page_size || 36,
+        'withLikesCount'    => 'true',
+        'withBestResults'   => $include_waves ? 'false' : 'true'
+    };
+
+    $self->_cached_get($cache_key, SEARCH_TTL, $url, $params, sub {
+        my $result = shift;
+
+        # Parse /search/instant/mixed response format
+        if (!$result || ref $result ne 'HASH' || !exists $result->{results}) {
+            $callback->({ items => [], total => 0 });
+            return;
+        }
+
+        # Group results by type for easier access
+        my %by_type;
+        foreach my $item (@{$result->{results}}) {
+            next unless $item && ref $item eq 'HASH';
+            my $type = $item->{type} || 'unknown';
+            push @{$by_type{$type}}, $item;
+        }
+
+        # Return in format compatible with Browse/Search.pm
+        my $response = {
+            items => $result->{results},
+            by_type => \%by_type,
+            total => scalar(@{$result->{results}}) || 0,
+            lastPage => $result->{lastPage} || 0,
+        };
+
+        $callback->($response);
+    }, $error_callback);
+}
+
 sub rotor_stations_list {
     my ($self, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/stations/list';
