@@ -736,20 +736,24 @@ sub handleSearchWaves {
                     }
 
                     # Build seed parameter for vibe wheel
-                    my $seed = '';
+                    my $seeds = '';
                     if ($wave->{seeds} && @{$wave->{seeds}}) {
-                        $seed = join(',', @{$wave->{seeds}});
+                        $seeds = join(',', @{$wave->{seeds}});
                     } elsif ($wave->{id} && ref $wave->{id} eq 'HASH' && $wave->{id}->{tag}) {
-                        $seed = $wave->{id}->{type} . ':' . $wave->{id}->{tag};
+                        $seeds = $wave->{id}->{type} . ':' . $wave->{id}->{tag};
                     }
+
+                    next unless $seeds;  # Skip waves without seeds
+
+                    my $vibe_url = 'yandexmusic://rotor_session/_vibe_?seeds=' . URI::Escape::uri_escape_utf8($seeds);
 
                     push @items, {
                         name => $title . ($subtitle ? ' (' . $subtitle . ')' : ''),
-                        type => 'link',
-                        url => \&Plugins::yandex::Browse::_handleRadioSession,
-                        passthrough => [{ station_or_seeds => $seed, vibe => 1 }],
+                        type => 'audio',
+                        url => $vibe_url,
+                        play => $vibe_url,
+                        on_select => 'play',
                         image => $icon,
-                        play => $seed ? 'yandexmusic://rotor_session/_vibe_?seeds=' . URI::Escape::uri_escape_utf8($seed) : undef,
                     };
                 }
             } else {
