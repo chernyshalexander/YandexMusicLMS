@@ -214,6 +214,13 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_SEARCH_WAVES" desc="PLUGIN_YANDEX_SEARCH_WAVES_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_search_waves" id="pref_search_waves" [% IF prefs.search_waves %]checked[%
+        END %]>
+</div>
+[% END %]
+
 <hr>
 
 [% WRAPPER setting title="PLUGIN_YANDEX_SHOW_WAVE_WIZARD" desc="PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC" %]
