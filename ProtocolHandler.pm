@@ -88,13 +88,28 @@ sub new {
                 $content_type = 'audio/mpeg';  # AAC, HE-AAC, MP3 default
             }
 
+            # CRITICAL: Extract Range offset from HTTP Content-Range header (if present)
+            # When LMS does Range request for resume/seek, CDN returns 206 Partial Content
+            # with Content-Range: bytes START-END/TOTAL. We must initialize yandex_offset
+            # to START, not 0, so AES-CTR counter is calculated correctly.
+            # BUG HYPOTHESIS: Boom may trigger Range requests on pause/resume, causing
+            # yandex_offset=0 with Range data → wrong CTR counter → corrupted audio (whistle).
+            my $initial_offset = 0;
+            if ($sock->can('contentRange')) {
+                my $content_range = $sock->contentRange;
+                if ($content_range && $content_range =~ /^(\d+)-/) {
+                    $initial_offset = $1;
+                    $log->warn("YANDEX: HTTP Range request detected! Content-Range: $content_range. Setting yandex_offset=$initial_offset");
+                }
+            }
+
             if ($meta->{aes_key}) {
                 eval {
                     require Plugins::yandex::API::Async;
                     my $key_bytes = pack('H*', $meta->{aes_key});
                     ${*$sock}{yandex_cipher} = Plugins::yandex::API::Async::make_aes_cipher($key_bytes);
-                    ${*$sock}{yandex_offset} = 0;
-                    $log->info("YANDEX: AES-CTR cipher ready for track $track_id");
+                    ${*$sock}{yandex_offset} = $initial_offset;
+                    $log->info("YANDEX: AES-CTR cipher ready for track $track_id, initial_offset=$initial_offset");
                 };
                 $log->error("YANDEX: AES cipher init failed: $@") if $@;
             }
@@ -102,16 +117,24 @@ sub new {
             if ($meta->{codec} && ($meta->{codec} eq 'flac-mp4' || $meta->{codec} =~ /-mp4$/) && ${*$sock}{yandex_cipher}) {
                 my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
                 if ($demux_backend eq 'internal') {
-                    eval {
-                        require Plugins::yandex::Decode::MP4Demux;
-                        my $demux_codec = ($meta->{codec} =~ /aac/) ? 'aac' : 'flac';
-                        ${*$sock}{yandex_demux} = Plugins::yandex::Decode::MP4Demux->new(codec => $demux_codec);
-                        if ($demux_codec eq 'aac') {
-                            $content_type = 'audio/aac';
-                        }
-                        $log->info("YANDEX: MP4Demux (internal) enabled for $meta->{codec} track $track_id");
-                    };
-                    $log->error("YANDEX: MP4Demux init failed: $@") if $@;
+                    # IMPORTANT: Disable internal demux on Range requests (resume/seek).
+                    # MP4Demux expects complete file from start (moov → moof/mdat).
+                    # Range requests deliver partial data (moof/mdat), which breaks the parser.
+                    # Fallback to ffmpeg instead (via custom-convert.conf).
+                    if ($initial_offset > 0) {
+                        $log->warn("YANDEX: Range request detected for $meta->{codec} track $track_id at offset $initial_offset. Disabling internal demux (would fail mid-stream). Fallback to ffmpeg.");
+                    } else {
+                        eval {
+                            require Plugins::yandex::Decode::MP4Demux;
+                            my $demux_codec = ($meta->{codec} =~ /aac/) ? 'aac' : 'flac';
+                            ${*$sock}{yandex_demux} = Plugins::yandex::Decode::MP4Demux->new(codec => $demux_codec);
+                            if ($demux_codec eq 'aac') {
+                                $content_type = 'audio/aac';
+                            }
+                            $log->info("YANDEX: MP4Demux (internal) enabled for $meta->{codec} track $track_id");
+                        };
+                        $log->error("YANDEX: MP4Demux init failed: $@") if $@;
+                    }
                 }
             }
             # Store song ref for FLAC header parsing in _sysread (plain flac only)
