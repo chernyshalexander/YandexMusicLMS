@@ -197,11 +197,11 @@ sub handleSearch {
                 my @wave_items;
                 if ($result->{by_type}->{wave} && @{$result->{by_type}->{wave}}) {
                     push @wave_items, {
-                        name => cstring($client, 'PLUGIN_YANDEX_WAVES'),
+                        name => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
                         type => 'link',
                         url  => \&handleSearchWaves,
                         passthrough => [$yandex_client, { query => $query }],
-                        image => 'plugins/yandex/html/images/vibe_wheel_svg.png',
+                        image => 'plugins/yandex/html/images/radio.png',
                     };
                 }
                 $finish->(\@wave_items);
@@ -723,7 +723,7 @@ sub handleSearchWaves {
 
                     my $title = $wave->{title} // 'Unknown Wave';
                     my $subtitle = $wave->{subTitle} // '';
-                    my $icon = 'plugins/yandex/html/images/vibe_wheel_svg.png';
+                    my $icon = 'plugins/yandex/html/images/radio.png';
 
                     if ($wave->{agent} && $wave->{agent}->{cover} && $wave->{agent}->{cover}->{uri}) {
                         $icon = $wave->{agent}->{cover}->{uri};
@@ -758,7 +758,7 @@ sub handleSearchWaves {
 
             $cb->({
                 items => \@items,
-                title => cstring($client, 'PLUGIN_YANDEX_WAVES') . ": $query",
+                title => cstring($client, 'PLUGIN_YANDEX_MY_WAVE') . ": $query",
                 offset => $page * $quantity,
                 total => $total,
             });
