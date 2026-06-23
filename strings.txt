@@ -734,6 +734,15 @@ PLUGIN_YANDEX_SEARCH_PODCASTS
 PLUGIN_YANDEX_SEARCH_PODCASTS_DESC
 	EN	Show a separate category for Podcasts and Audiobooks in search results.
 	RU	Показывать отдельную категорию для подкастов и аудиокниг в результатах поиска.
+
+PLUGIN_YANDEX_SEARCH_WAVES
+	EN	Show My Vibe in Search
+	RU	Показывать Мою волну в поиске
+
+PLUGIN_YANDEX_SEARCH_WAVES_DESC
+	EN	Show a separate category for Waves (My Vibe) in search results.
+	RU	Показывать отдельную категорию для волн (Моя волна) в результатах поиска.
+
 PLUGIN_YANDEX_ENABLE_YNISON
 	EN	Enable Ynison (Casting, Experimental)
 	RU	Включить поддержку Ynison (Casting, Экспериментально)
