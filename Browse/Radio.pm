@@ -116,12 +116,16 @@ sub handleVibeWheel {
     my $seeds = $initial_seeds || 'user:onyourwave';
     my $is_reshuffle_view = defined $initial_seeds;
 
+    $log->debug("VIBE WHEEL: Loading with initial_seeds='$seeds', is_reshuffle=" . ($is_reshuffle_view ? 'true' : 'false'));
+
     $yandex_client->wheel_new_with_seeds(
         $client,
         [$seeds],
         sub {
             my $wheel = shift;
             my (@regular_waves, @controls);
+
+            $log->debug("VIBE WHEEL: Received wheel with " . scalar(@{$wheel->{items}}) . " items");
 
             foreach my $item (@{ $wheel->{items} }) {
                 next unless $item->{type} && $item->{type} eq 'WAVE';
@@ -149,6 +153,7 @@ sub handleVibeWheel {
 
                 if ($is_control) {
                     if ($control_seed =~ /^diversity:reshuffle/) {
+                        $log->debug("VIBE WHEEL: Adding reshuffle control with seed='$control_seed'");
                         push @controls, {
                             name      => cstring($client, 'PLUGIN_YANDEX_VIBE_RESHUFFLE'),
                             type      => 'link',
@@ -157,6 +162,7 @@ sub handleVibeWheel {
                             image     => $cover || 'plugins/yandex/html/images/radio.png',
                         };
                     } elsif ($control_seed eq 'user:onyourwave' && $is_reshuffle_view) {
+                        $log->debug("VIBE WHEEL: Adding back to usual control");
                         push @controls, {
                             name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
                             type      => 'link',
@@ -169,6 +175,8 @@ sub handleVibeWheel {
                     my $name = $wave->{name} || $item->{id};
                     my $seeds_param = uri_escape_utf8(join(',', @$wave_seeds));
                     my $url = "yandexmusic://rotor_session/_vibe_?seeds=$seeds_param";
+
+                    $log->debug("VIBE WHEEL: Adding wave - name='$name', seeds='" . join(',', @$wave_seeds) . "', url='$url'");
 
                     push @regular_waves, {
                         name      => $name,
@@ -183,6 +191,8 @@ sub handleVibeWheel {
 
             my @items = (@regular_waves, @controls);
 
+            $log->info("VIBE WHEEL: Loaded " . scalar(@regular_waves) . " waves, " . scalar(@controls) . " controls");
+
             $cb->({
                 items => \@items,
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
@@ -190,7 +200,7 @@ sub handleVibeWheel {
         },
         sub {
             my $error = shift;
-            $log->error("Vibe Wheel: Failed to fetch: $error");
+            $log->error("VIBE WHEEL: Failed to fetch: $error");
             $cb->([{ name => "Error: $error", type => 'text' }]);
         }
     );
@@ -489,6 +499,8 @@ sub _getNextWizardHandler {
 sub handleWaveWizard {
     my ($client, $cb, $args, $yandex_client) = @_;
 
+    $log->debug("WAVE WIZARD: Starting wave builder");
+
     my $initial_state = {
         station         => 'user:onyourwave',
         diversity       => undef,
@@ -684,6 +696,10 @@ sub handleWizardLaunch {
     my $name = _buildWizardName($client, $state);
     my $url  = _buildWizardUrl($state);
 
+    $log->debug("WAVE WIZARD LAUNCH: name='$name', station='" . $state->{station} .
+               "', diversity='" . ($state->{diversity} // 'undef') .
+               "', url='$url'");
+
     my @items = (
         {
             name      => cstring($client, 'PLUGIN_YANDEX_WIZARD_PLAY') . ': ' . $name,
@@ -715,6 +731,12 @@ sub handleWizardSavePreset {
     my $name = _buildWizardName($client, $state);
     my $url  = _buildWizardUrl($state);
 
+    $log->debug("WAVE WIZARD SAVE PRESET: name='$name', station='" . $state->{station} .
+               "', diversity='" . ($state->{diversity} // 'undef') .
+               "', moodEnergy='" . ($state->{moodEnergy} // 'undef') .
+               "', language='" . ($state->{language} // 'undef') .
+               "', url='$url'");
+
     my $new_preset = {
         name       => $name,
         station    => $state->{station},
@@ -728,7 +750,7 @@ sub handleWizardSavePreset {
     $presets = [ @{$presets}[0..9] ] if scalar @$presets > 10;
     $prefs->set('yandex_wave_presets', $presets);
 
-    $log->info("Wave Wizard: Saved preset '$name'");
+    $log->info("WAVE WIZARD PRESET: Saved preset '$name' with station='" . $state->{station} . "'");
 
     $cb->({
         items => [{
@@ -752,10 +774,13 @@ sub handlePresets {
 
     my $presets = $prefs->get('yandex_wave_presets') || [];
 
+    $log->debug("PRESETS: Loading " . scalar(@$presets) . " saved presets");
+
     my @items;
     my $index = 0;
     for my $preset (@$presets) {
         my $i = $index++;
+        $log->debug("PRESETS: [$i] name='" . $preset->{name} . "'");
         push @items, {
             name => $preset->{name},
             type => 'link',
@@ -786,11 +811,14 @@ sub handlePresetItem {
     my $preset  = $presets->[$preset_index];
 
     unless ($preset) {
+        $log->warn("PRESET ITEM: Preset not found at index $preset_index");
         $cb->([{ name => 'Preset not found', type => 'text' }]);
         return;
     }
 
     my $url = _buildWizardUrl($preset);
+
+    $log->debug("PRESET ITEM: Loading preset index=$preset_index, name='" . $preset->{name} . "', url='$url'");
 
     $cb->({
         items => [
