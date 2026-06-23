@@ -709,11 +709,15 @@ sub search_mixed {
         'withBestResults'   => $include_waves ? 'false' : 'true'
     };
 
+    $log->debug("YANDEX SEARCH MIXED: query='$query', include_waves=" . ($include_waves ? 'true' : 'false') .
+               ", types='$type_str', page=" . ($page || 0) . ", pageSize=" . ($page_size || 36));
+
     $self->_cached_get($cache_key, SEARCH_TTL, $url, $params, sub {
         my $result = shift;
 
         # Parse /search/instant/mixed response format
         if (!$result || ref $result ne 'HASH' || !exists $result->{results}) {
+            $log->warn("YANDEX SEARCH MIXED: Invalid response for query='$query'");
             $callback->({ items => [], total => 0 });
             return;
         }
@@ -726,11 +730,20 @@ sub search_mixed {
             push @{$by_type{$type}}, $item;
         }
 
+        my $total = scalar(@{$result->{results}}) || 0;
+        my $type_counts = '';
+        foreach my $type (sort keys %by_type) {
+            $type_counts .= ', ' if $type_counts;
+            $type_counts .= "$type=" . scalar(@{$by_type{$type}});
+        }
+
+        $log->debug("YANDEX SEARCH MIXED: Results for query='$query': total=$total, types=[$type_counts]");
+
         # Return in format compatible with Browse/Search.pm
         my $response = {
             items => $result->{results},
             by_type => \%by_type,
-            total => scalar(@{$result->{results}}) || 0,
+            total => $total,
             lastPage => $result->{lastPage} || 0,
         };
 

@@ -166,6 +166,7 @@ sub handleSearch {
 
     if ($prefs->get('search_waves')) {
         $pending++;
+        $log->debug("handleSearch: Initiating waves search with query='$query'");
         $yandex_client->search_mixed(
             $encoded_query,
             1,  # include_waves = true
@@ -174,12 +175,15 @@ sub handleSearch {
                 $log->info("handleSearch (Waves): received results");
 
                 if (!$result || ref $result ne 'HASH' || !$result->{by_type}) {
+                    $log->debug("handleSearch (Waves): No results or invalid format");
                     $finish->();
                     return;
                 }
 
                 my @wave_items;
                 if ($result->{by_type}->{wave} && @{$result->{by_type}->{wave}}) {
+                    my $wave_count = scalar(@{$result->{by_type}->{wave}});
+                    $log->debug("handleSearch (Waves): Found $wave_count waves for query='$query'");
                     push @wave_items, {
                         name => cstring($client, 'PLUGIN_YANDEX_MY_WAVE'),
                         type => 'link',
@@ -187,10 +191,16 @@ sub handleSearch {
                         passthrough => [$yandex_client, { query => $query }],
                         image => 'plugins/yandex/html/images/radio.png',
                     };
+                } else {
+                    $log->debug("handleSearch (Waves): No waves found in result");
                 }
                 $finish->(\@wave_items);
             },
-            sub { $finish->() }
+            sub {
+                my $error = shift;
+                $log->warn("handleSearch (Waves): API error: $error");
+                $finish->();
+            }
         );
     }
 
@@ -730,6 +740,8 @@ sub handleSearchWaves {
                     next unless $seeds;  # Skip waves without seeds
 
                     my $vibe_url = 'yandexmusic://rotor_session/_vibe_?seeds=' . URI::Escape::uri_escape_utf8($seeds);
+
+                    $log->debug("handleSearchWaves: Creating wave item - title='$title', subtitle='$subtitle', seeds='$seeds', url='$vibe_url'");
 
                     push @items, {
                         name => $title . ($subtitle ? ' (' . $subtitle . ')' : ''),
