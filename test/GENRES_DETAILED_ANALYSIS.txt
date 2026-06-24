@@ -1,0 +1,85 @@
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+YANDEX MUSIC API - DETAILED GENRES ANALYSIS REPORT
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+Date: 2026-06-19 13:11:26
+Endpoint: GET /genres
+Status: 200
+
+SUMMARY
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Total genres returned:      36
+Genres WITH sub_genres:     0
+Genres WITHOUT sub_genres:  36
+Total microgenres found:    0
+
+✗ NO MICROGENRES (sub_genres) FOUND IN API RESPONSE
+  The sub_genres field is not populated in the /genres response
+
+
+
+FIELD STRUCTURE COMPARISON
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Expected Genre fields (from Python API model):
+  - id
+  - weight
+  - composer_top
+  - title
+  - titles (dict)
+  - images
+  - show_in_menu
+  - show_in_regions (optional)
+  - full_title (optional)
+  - url_part (optional)
+  - color (optional)
+  - radio_icon (optional)
+  - sub_genres (optional) ← THIS IS THE FIELD WE'RE LOOKING FOR
+
+Actual fields in API response (example from first genre):
+  - composerTop
+  - fullTitle
+  - id
+  - images
+  - showInMenu
+  - title
+  - titles
+  - weight
+
+
+Full genres list (alphabetical):
+────────────────────────────────────────────────────────────────────────────────────────────────────
+✗ NO SUBGENRES       | rnb                  | R&B
+✗ NO SUBGENRES       | bard                 | Авторская песня
+✗ NO SUBGENRES       | alternative          | Альтернатива
+✗ NO SUBGENRES       | booksnotinrussian    | Аудиокниги на иностранном языке
+✗ NO SUBGENRES       | fairytales           | Аудиосказки
+✗ NO SUBGENRES       | blues                | Блюз
+✗ NO SUBGENRES       | forchildren          | Детская
+✗ NO SUBGENRES       | children             | Детская музыка со всего мира
+✗ NO SUBGENRES       | jazz                 | Джаз
+✗ NO SUBGENRES       | other                | Другое
+✗ NO SUBGENRES       | naturesounds         | Звуки природы и шум города
+✗ NO SUBGENRES       | indie                | Инди
+✗ NO SUBGENRES       | islamicgenre         | Исламская музыка
+✗ NO SUBGENRES       | country              | Кантри
+✗ NO SUBGENRES       | classicalmusic       | Классика
+✗ NO SUBGENRES       | relax                | Лёгкая музыка
+✗ NO SUBGENRES       | metal                | Метал
+✗ NO SUBGENRES       | all                  | Микс
+✗ NO SUBGENRES       | folk                 | Музыка мира
+✗ NO SUBGENRES       | nonfictionliterature | Нон-фикшн
+✗ NO SUBGENRES       | punk                 | Панк
+✗ NO SUBGENRES       | podcasts             | Подкасты
+✗ NO SUBGENRES       | pop                  | Поп
+✗ NO SUBGENRES       | audiobooks           | Разговорное
+✗ NO SUBGENRES       | reggae               | Регги
+✗ NO SUBGENRES       | allrock              | Рок
+✗ NO SUBGENRES       | rap                  | Рэп и хип-хоп
+✗ NO SUBGENRES       | soundtrack           | Саундтреки
+✗ NO SUBGENRES       | ska                  | Ска
+✗ NO SUBGENRES       | poemsforchildren     | Стихи для детей
+✗ NO SUBGENRES       | dance                | Танцевальная
+✗ NO SUBGENRES       | folkgenre            | Фолк
+✗ NO SUBGENRES       | fiction              | Художественная литература
+✗ NO SUBGENRES       | shanson              | Шансон
+✗ NO SUBGENRES       | electronics          | Электроника
+✗ NO SUBGENRES       | estrada              | Эстрада

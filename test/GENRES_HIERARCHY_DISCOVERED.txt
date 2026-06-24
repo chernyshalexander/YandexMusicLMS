@@ -1,0 +1,212 @@
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+🎯 ОБНАРУЖЕНА ПОЛНАЯ ИЕРАРХИЯ ЖАНРОВ В API YANDEX MUSIC
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+КЛЮЧЕВАЯ НАХОДКА: parentId в жанрах содержит ссылку на РОДИТЕЛЬСКИЙ жанр!
+
+Формат parentId:
+{
+  "type": "genre",
+  "tag": "relax"  ← тег родительского жанра
+}
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+ПОЛНАЯ ДВУХУРОВНЕВАЯ ИЕРАРХИЯ ЖАНРОВ (21 родитель → многие потомки)
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+🎵 Rock (allrock)
+   ├─ Folk Rock (folkrock)
+   ├─ Hard Rock (hardrock)
+   ├─ Israeli Rock (israelirock)
+   ├─ New Wave (newwave)
+   ├─ Post Rock (postrock)
+   ├─ Progressive Rock (prog)
+   ├─ Rock and Roll (rnr)
+   ├─ Foreign Rock (rock)
+   ├─ Russian Rock (rusrock)
+   ├─ Stoner Rock (stonerrock)
+   └─ Turkish Rock (turkishrock)
+
+🎵 Alternative (alternative)
+   ├─ Hardcore (hardcore)
+   ├─ Post Hardcore (posthardcore)
+   └─ Turkish Alternative (turkishalternative)
+
+🎵 Bardic (bard)
+   ├─ Foreign Bard (foreignbard)
+   └─ Russian Bard (rusbards)
+
+🎵 Children (children)
+   └─ Arabic Kids (arabickids)
+
+🎵 Classical Music (classicalmusic)
+   ├─ Classical (classical)
+   ├─ Classical Masterpieces (classicalmasterpieces)
+   ├─ Modern Classical (modern)
+   └─ Opera and Vocal (vocal)
+
+🎵 Dance (dance)
+   ├─ EDM (edmgenre)
+   └─ Funk (phonkgenre)
+
+🎵 Electronic (electronics)
+   ├─ Ambient (ambientgenre)
+   ├─ Bass (bassgenre)
+   ├─ Breakbeat (breakbeatgenre)
+   ├─ Drum and Bass (dnb)
+   ├─ Dubstep (dubstep)
+   ├─ Experimental (experimental)
+   ├─ House (house)
+   ├─ IDM (idmgenre)
+   ├─ Lounge (lounge)
+   ├─ New Age (newage)
+   ├─ Techno (techno)
+   ├─ Trance (trance)
+   ├─ Trip Hop (triphopgenre)
+   └─ UK Garage (ukgaragegenre)
+
+🎵 Estrada (estrada)
+   ├─ Kazakh Estrada (kazestrada)
+   ├─ Russian Estrada (rusestrada)
+   └─ Uzbek Estrada (uzretropop)
+
+🎵 Folk (folk)
+   ├─ African (african)
+   ├─ American Folk (amerfolk)
+   ├─ Arabesque (arabesquemusic)
+   ├─ Argentine Tango (argentinetango)
+   ├─ Armenian (armenian)
+   ├─ Azerbaijani (azerbaijani)
+   ├─ Balkan (balkan)
+   ├─ Caucasian (caucasian)
+   ├─ Celtic (celtic)
+   ├─ Eastern (eastern)
+   ├─ European Folk (eurofolk)
+   ├─ Georgian (georgian)
+   ├─ Jewish (jewish)
+   ├─ Kazakh Folk (kazakhfolk)
+   ├─ Latin Folk (latinfolk)
+   ├─ Maqramat (mahraganat)
+   ├─ Raï (raigenre)
+   ├─ Romances (romances)
+   ├─ Russian Folk (rusfolk)
+   ├─ Shalat (shelatgenre)
+   ├─ Tarab (tarab)
+   ├─ Tatar (tatar)
+   ├─ Turkish Classical (turkishclassical)
+   ├─ Turkish Folk (turkishfolk)
+   └─ Uzbek Folk (uzbekfolk)
+
+🎵 For Children (forchildren)
+   └─ Lullaby (lullaby)
+
+🎵 Indie (indie)
+   └─ Local Indie (local-indie)
+
+🎵 Jazz (jazz)
+   ├─ Bebop (bebopgenre)
+   ├─ Big Bands (bigbands)
+   ├─ Contemporary Jazz (conjazz)
+   ├─ Smooth Jazz (smoothjazz)
+   ├─ Traditional Jazz (tradjazz)
+   └─ Vocal Jazz (vocaljazz)
+
+🎵 Metal (metal)
+   ├─ Alternative Metal (alternativemetal)
+   ├─ Black Metal (blackmetal)
+   ├─ Classic Metal (classicmetal)
+   ├─ Death Metal (deathmetal)
+   ├─ Doom Metal (doommetal)
+   ├─ Epic Metal (epicmetal)
+   ├─ Folk Metal (folkmetal)
+   ├─ Gothic Metal (gothicmetal)
+   ├─ Industrial (industrial)
+   ├─ Metalcore (metalcoregenre)
+   ├─ Nu Metal (numetal)
+   ├─ Post Metal (postmetal)
+   ├─ Progressive Metal (progmetal)
+   ├─ Sludge Metal (sludgemetal)
+   └─ Thrash Metal (thrashmetal)
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+ИНТЕРЕСНЫЕ НАХОДКИ
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+1. PARENTID СОДЕРЖИТ ОБЪЕКТ (не строку!)
+   ✓ Тип данных: dict (JSON объект)
+   ✓ Структура: {"type": "genre", "tag": "<parent_tag>"}
+   ✓ Это позволяет расширять в будущем (например, добавить type: "micro-genre")
+
+2. idForFrom ОТРАЖАЕТ ИЕРАРХИЮ
+   ✓ Формат: "genre-<parent>_<child>" или "genre-<single>"
+   ✓ Примеры:
+     - "genre-allrock_rusrock" → Rock → Russian Rock
+     - "genre-electronics_techno" → Electronic → Techno
+     - "genre-jazz_tradjazz" → Jazz → Traditional Jazz
+   ✓ Это может быть использовано для парсинга иерархии!
+
+3. МИКРОЖАНРЫ НЕ ИМЕЮТ PARENTID
+   ✗ Все 367 микрожанров имеют parentId = null/empty
+   ✗ Это означает, что микрожанры НЕ связаны явно с жанрами
+   ✗ Однако, они могут быть связаны неявно через анализ названий
+
+4. СТРУКТУРА ЖАНРОВ
+   ✓ 158 жанров всего
+   ✓ 21 родительский жанр (у которых есть дочерние)
+   ✓ 130+ дочерних жанр (которые ссылаются на родителя)
+   ✓ ~10 корневых жанров (у которых нет parentId и нет дочерних)
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+КАК ИСПОЛЬЗОВАТЬ ЭТУ ИНФОРМАЦИЮ
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+1. ПОСТРОИТЬ ИЕРАРХИЮ ЖАНРОВ
+   ```
+   Browse → Yandex Music → Жанры
+   ├── Rock (parent)
+   │   ├── Hard Rock (child)
+   │   ├── Progressive Rock (child)
+   │   └── Russian Rock (child)
+   ├── Electronic (parent)
+   │   ├── House (child)
+   │   ├── Techno (child)
+   │   └── Dubstep (child)
+   ```
+
+2. РАЗДЕЛИТЬ МЕНЮ
+   ```perl
+   # Получить только родительские жанры (те, у которых есть children)
+   my @parent_genres = grep { has_children($_) } @genres;
+
+   # Для каждого parent получить children через parentId
+   my @children = grep { $_->{parentId}->{tag} eq 'rock' } @genres;
+   ```
+
+3. ИСПОЛЬЗОВАТЬ idForFrom ДЛЯ ВЕРИФИКАЦИИ
+   ```
+   genre-rock_hardrock → Rock > Hard Rock (проверяем иерархию)
+   ```
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+СОПОСТАВЛЕНИЕ ЖАНР ↔ МИКРОЖАНР
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+❌ ПРЯМЫХ СВЯЗЕЙ НЕТ в API
+
+Возможные подходы:
+1. По названиям (например, "Rock" в названии микрожанра)
+   ✓ "Hard Rock" → Rock
+   ✓ "Progressive Rock" → Rock
+   ✓ "Garage Rock" → Rock
+
+2. По иерархии genre (если микрожанр совпадает с дочерним жанром)
+   ✓ "hardrock" микрожанр может быть связан с "hardrock" жанром
+
+3. Через mix-by-micro-genre (косвенно через миксы)
+   ? mix-by-micro-genre может содержать информацию о связях
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ДАТА АНАЛИЗА: 2026-06-19
+ИСТОЧНИК: /rotor/stations/list API endpoint
+СТАТУС: ✅ ОЧЕНЬ ПОЛЕЗНО! Иерархия жанров обнаружена!

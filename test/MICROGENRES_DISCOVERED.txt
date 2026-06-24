@@ -1,0 +1,376 @@
+====================================================================================================
+MICROGENRES DISCOVERY REPORT - 367 MICROGENRES FOUND
+====================================================================================================
+Endpoint: /rotor/stations/list
+Type filter: micro-genre
+Total microgenres: 367
+
+All microgenres:
+----------------------------------------------------------------------------------------------------
+  1. bit-8                                    | 8 бит
+  2. bestial-black-metal                      | Bestial Black Metal
+  3. ebm                                      | EBM
+  4. heavy-psych                              | Heavy psych
+  5. lowercase                                | Lowercase
+  6. neue-deutsche-haerte                     | Neue Deutsche Härte
+  7. power-electronics                        | Power Electronics
+  8. powerviolence                            | Powerviolence
+  9. psyprog                                  | Psyprog
+ 10. raw-black-metal                          | Raw Black Metal
+ 11. uk-bass                                  | UK bass
+ 12. avant-garde-jazz                         | Авангардный джаз
+ 13. avant-garde-metal                        | Авангардный метал
+ 14. avant-pop                                | Авангардный поп
+ 15. acoustic                                 | Акустическая музыка
+ 16. alternative-indie-rock                   | Альтернативный инди-рок
+ 17. alternative-pop-rock                     | Альтернативный поп-рок
+ 18. alternative-folk                         | Альтернативный фолк
+ 19. alternative-hip-hop                      | Альтернативный хип-хоп
+ 20. us-power-metal                           | Американский пауэр-метал
+ 21. underground-hip-hop                      | Андеграундный хип-хоп
+ 22. uplifting-trance                         | Аплифтинг-транс
+ 23. art-punk                                 | Арт-панк
+ 24. art-rock                                 | Арт-рок
+ 25. atmospheric-drum-and-bass                | Атмосферный драм-н-бейс
+ 26. atmospheric-doom-metal                   | Атмосферный дум-метал
+ 27. atmospheric-rock                         | Атмосферный рок
+ 28. afro-cuban-jazz                          | Афро-кубинский джаз
+ 29. afrobeat                                 | Афробит
+ 30. baroque-pop                              | Барокко-поп
+ 31. bachata                                  | Бачата
+ 32. bassline                                 | Бейслайн
+ 33. blue-eyed-soul                           | Белый соул
+ 34. big-beat                                 | Биг-бит
+ 35. beatdown-hardcore                        | Битдаун-хардкор
+ 36. bitpop                                   | Битпоп
+ 37. blackened-doom-metal                     | Блэк-дум-метал
+ 38. blackened-death-metal                    | Блэк-дэт-метал
+ 39. blackened-sludge-metal                   | Блэк-сладж-метал
+ 40. blackened-thrash-metal                   | Блэк-трэш-метал
+ 41. blackgaze                                | Блэкгейз
+ 42. bluegrass                                | Блюграсс
+ 43. east-coast-blues                         | Блюз Восточного Побережья
+ 44. west-coast-blues                         | Блюз Западного побережья
+ 45. blues-rock                               | Блюз-рок
+ 46. bolero                                   | Болеро
+ 47. bossa-nova                               | Босанова
+ 48. mpb                                      | Бразильская популярная музыка
+ 49. breakcore                                | Брейккор
+ 50. breaks                                   | Брейкс
+ 51. braindance                               | Брейнданс
+ 52. britpop                                  | Брит-поп
+ 53. broken-beat                              | Брокен-бит
+ 54. brutal-death-metal                       | Брутальный дэт-метал
+ 55. boogie-woogie                            | Буги-вуги
+ 56. boom-bap                                 | Бум-бэп
+ 57. bhangra                                  | Бхангра
+ 58. vaporwave                                | Вейпорвейв
+ 59. viking-metal                             | Викинг-метал
+ 60. cello-metal                              | Виолончельный метал
+ 61. witch-house                              | Витч-хаус
+ 62. oriental-metal                           | Восточный метал
+ 63. gabber                                   | Габбер
+ 64. gagaku                                   | Гагаку
+ 65. gangsta-rap                              | Гангста-рэп
+ 66. garage-punk                              | Гаражный панк
+ 67. garage-rock                              | Гаражный рок
+ 68. ghetto-house                             | Гетто-хаус
+ 69. ghettotech                               | Геттотек
+ 70. guitar-jazz                              | Гитарный джаз
+ 71. glitch                                   | Глитч
+ 72. glam-metal                               | Глэм-метал
+ 73. glam-rock                                | Глэм-рок
+ 74. goa-trance                               | Гоа-транс
+ 75. gqom                                     | Гом
+ 76. goregrind                                | Гор-грайнд
+ 77. gothabilly                               | Готабилли
+ 78. gothic-country                           | Готик-кантри
+ 79. gothic-rock                              | Готик-рок
+ 80. gothic-black-metal                       | Готический блэк-метал
+ 81. grime                                    | Грайм
+ 82. grindcore                                | Грайндкор
+ 83. grunge                                   | Гранж
+ 84. groove-metal                             | Грув-метал
+ 85. guaguancó                                | Гуагуанко
+ 86. garage-house                             | Гэридж-хаус
+ 87. dub-techno                               | Даб-техно
+ 88. dungeon-synth                            | Данжен-синт
+ 89. dark-jazz                                | Дарк-джаз
+ 90. dark-metal                               | Дарк-метал
+ 91. dark-folk                                | Дарк-фолк
+ 92. dark-electro                             | Дарк-электро
+ 93. dark-ambient                             | Дарк-эмбиент
+ 94. darkwave                                 | Дарквейв
+ 95. darksynth                                | Дарксинт
+ 96. dutch-house                              | Датч-хаус
+ 97. downtempo                                | Даунтемпо
+ 98. delta-blues                              | Дельта-блюз
+ 99. depressive-black-metal                   | Депрессивный блэк-метал
+100. detroit-techno                           | Детройт-техно
+101. trumpet-jazz                             | Джаз с трубой
+102. jazz-rap                                 | Джаз-рэп
+103. jazz-funk                                | Джаз-фанк
+104. jazz-fusion                              | Джаз-фьюжн
+105. jive                                     | Джайв
+106. jump-blues                               | Джамп-блюз
+107. jungle                                   | Джангл
+108. jangle-pop                               | Джангл-поп
+109. japanoise                                | Джапанойз
+110. djent                                    | Джент
+111. g-funk                                   | Джи-фанк
+112. jig                                      | Джига
+113. dixieland                                | Диксиленд
+114. deep-techno                              | Дип-техно
+115. deep-house                               | Дип-хаус
+116. dream-pop                                | Дрим-поп
+117. dreampunk                                | Дримпанк
+118. drift-phonk                              | Дрифт-фонк
+119. drone-metal                              | Дроун-метал
+120. drone-ambient                            | Дроун-эмбиент
+121. doo-wop                                  | Ду-воп
+122. doom-death-metal                         | Дум-дэт-метал
+123. doomcore                                 | Думкор
+124. dancehall                                | Дэнсхолл
+125. death-thrash-metal                       | Дэт-трэш-метал
+126. deathgrind                               | Дэтграйнд
+127. deathcore                                | Дэткор
+128. eurodisco                                | Евродиско
+129. eurodance                                | Евродэнс
+130. europop                                  | Европоп
+131. illbient                                 | Иллбиент
+132. industrial-black-metal                   | Индастриал-блэк-метал
+133. industrial-metal                         | Индастриал-метал
+134. industrial-rock                          | Индастриал-рок
+135. industrial-ambient                       | Индастриал-эмбиент
+136. indie-pop                                | Инди-поп
+137. baroque                                  | Инструментальная музыка эпохи барокко
+138. jazz-instrument                          | Инструментальный джаз
+139. instrumental-rock                        | Инструментальный рок
+140. instrumental-hip-hop                     | Инструментальный хип-хоп
+141. italian                                  | Итальянская музыка
+142. calypso                                  | Калипсо
+143. chamber                                  | Камерная музыка
+144. chamber-pop                              | Камерный поп
+145. country-blues                            | Кантри-блюз
+146. country-rock                             | Кантри-рок
+147. country-rap                              | Кантри-рэп
+148. kwaito                                   | Квайто
+149. celtic-punk                              | Кельтский панк
+150. cybergrind                               | Киберграйнд
+151. cyber-metal                              | Киберметал
+152. keyboard-music-of-the-baroque            | Клавирная музыка эпохи барокко
+153. classic-rock                             | Классический рок
+154. cloud-rap                                | Клауд-рэп
+155. cold-wave                                | Колдвейв
+156. musique-concrète                         | Конкретная музыка
+157. cosmic-black-metal                       | Космический блэк-метал
+158. crunk                                    | Кранк
+159. crust-punk                               | Краст-панк
+160. kraut-rock                               | Краут-рок
+161. crossover-thrash                         | Кроссовер-трэш
+162. cool-jazz                                | Кул-джаз
+163. cumbia                                   | Кумбия
+164. love-metal                               | Лав-метал
+165. latin-pop                                | Латиноамериканская поп-музыка
+166. latin-jazz                               | Латиноамериканский джаз
+167. latin-rock                               | Латиноамериканский рок
+168. liquid-funk                              | Ликвид-фанк
+169. lofi-house                               | Лоу-фай хаус
+170. lofi-hip-hop                             | Лоу-фай хип-хоп
+171. louisiana-blues                          | Луизианский блюз
+172. miami-bass                               | Майами-бейс
+173. mambo                                    | Мамбо
+174. mandopop                                 | Мандопоп
+175. mariachi                                 | Марьячи
+176. math-metal                               | Мат-метал
+177. math-rock                                | Математический рок
+178. math-core                                | Маткор
+179. melodic-black-metal                      | Мелодичный блэк-метал
+180. melodic-death-metal                      | Мелодичный дэт-метал
+181. melodic-metalcore                        | Мелодичный металкор
+182. melodic-hardcore                         | Мелодичный хардкор
+183. melodic-house                            | Мелодичный хаус
+184. memphis-blues                            | Мемфис-блюз
+185. milonga                                  | Милонга
+186. minimal-techno                           | Минимал-техно
+187. minimal-house                            | Минимал-хаус
+188. mallsoft                                 | Моллсофт
+189. renaissance                              | Музыка эпохи Возрождения
+190. moombahton                               | Мумбатон
+191. neurofunk                                | Нейрофанк
+192. neo-psychedelia                          | Нео-психоделия
+193. neotrance                                | Нео-транс
+194. neoclassical-metal                       | Неоклассический метал
+195. neo-prog                                 | Неопрогрессивный рок
+196. neo-soul                                 | Неосоул
+197. nerdcore                                 | Нердкор
+198. new-wave-of-british-heavy-metal          | Новая волна британского хеви-метала
+199. neue-deutsche-welle                      | Новая немецкая волна
+200. noise-pop                                | Нойз-поп
+201. noise-rock                               | Нойз-рок
+202. noisecore                                | Нойзкор
+203. new-beat                                 | Нью-бит
+204. new-jack-swing                           | Нью-джек-свинг
+205. new-rave                                 | Нью-рейв
+206. nu-jazz                                  | Ню-джаз
+207. nu-disco                                 | Ню-диско
+208. old-school-thrash-metal                  | Олдскул-трэш-метал
+209. power-noise                              | Пауэр-нойз
+210. power-pop                                | Пауэр-поп
+211. pop-punk                                 | Поп-панк
+212. pop-rock                                 | Поп-рок
+213. pornogrind                               | Порно-грайнд
+214. post-bop                                 | Постбоп
+215. post-grunge                              | Постгранж
+216. progressive-breaks                       | Прогрессив-брейкс
+217. progressive-house                        | Прогрессив-хаус
+218. progressive-black-metal                  | Прогрессивный блэк-метал
+219. progressive-bluegrass                    | Прогрессивный блюграсс
+220. progressive-death-metal                  | Прогрессивный дэт-метал
+221. progressive-metalcore                    | Прогрессивный металкор
+222. progressive-power-metal                  | Прогрессивный пауэр-метал
+223. progressive-trash-metal                  | Прогрессивный трэш-метал
+224. progressive-folk                         | Прогрессивный фолк
+225. psybient                                 | Псайбиент
+226. psychedelic-pop                          | Психоделический поп
+227. psychedelic-rock                         | Психоделический рок
+228. psychedelic-soul                         | Психоделический соул
+229. psychedelic-trance                       | Психоделический транс
+230. psychedelic-folk                         | Психоделический фолк
+231. desert-rock                              | Пустынный рок
+232. ragga                                    | Рагга
+233. ragga-jungle                             | Рагга-джангл
+234. ragtime                                  | Регтайм
+235. rockabilly                               | Рокабилли
+236. romantic-piano-miniature                 | Романтическая фортепианная миниатюра
+237. rumba                                    | Румба
+238. roots-reggae                             | Рутс-регги
+239. rap-metal                                | Рэп-метал
+240. rap-rock                                 | Рэп-рок
+241. rapcore                                  | Рэпкор
+242. psychobilly                              | Сайкобилли
+243. saxophone-jazz                           | Саксофонный джаз
+244. salsa                                    | Сальса
+245. samba                                    | Самба
+246. soundscape                               | Саундскейп
+247. swing                                    | Свинг
+248. northern-soul                            | Северный соул
+249. symphony                                 | Симфонии
+250. symphonic-metal                          | Симфоник-метал
+251. symphonic-rock                           | Симфоник-рок
+252. symphonic-music-xviii                    | Симфоническая музыка 18 века
+253. symphonic-black-metal                    | Симфонический блэк-метал
+254. symphonic-gothic-metal                   | Симфонический готический метал
+255. symphonic-death-metal                    | Симфонический дэт-метал
+256. symphonic-power-metal                    | Симфонический пауэр-метал
+257. synthwave                                | Синтвейв
+258. synth-punk                               | Синти-панк
+259. synth-pop                                | Синти-поп
+260. ska-punk                                 | Ска-панк
+261. scandinavian-metal                       | Скандинавский метал
+262. skate-punk                               | Скейт-панк
+263. skiffle                                  | Скиффл
+264. screamo                                  | Скримо
+265. slam-death-metal                         | Слэм-дэт-метал
+266. smooth-soul                              | Смус-соул
+267. contemporary-blues                       | Современный блюз
+268. modern-electric-blues                    | Современный электрик-блюз
+269. soul-jazz                                | Соул-джаз
+270. soft-rock                                | Софт-рок
+271. space-rock                               | Спейс-рок
+272. speed-garage                             | Спид-гэридж
+273. speed-metal                              | Спид-метал
+274. speedcore                                | Спидкор
+275. medieval-metal                           | Средневековый метал
+276. ancient-music-for-plucked-strings        | Старинная музыка для щипковых
+277. stoner-metal                             | Стоунер-метал
+278. string-quartet                           | Струнный квартет
+279. suomisaundi                              | Суомисаунди
+280. surf-rock                                | Сёрф-рок
+281. dance-rock                               | Танцевальный рок
+282. twee-pop                                 | Тви-поп
+283. twist                                    | Твист
+284. tech-house                               | Тек-хаус
+285. texas-blues                              | Техасский блюз
+286. technical-death-metal                    | Техничный дэт-метал
+287. tech-trance                              | Техно-транс
+288. traditional-bluegrass                    | Традиционный блюграсс
+289. traditional-doom-metal                   | Традиционный дум-метал
+290. tribal-house                             | Трайбл-хаус
+291. trance-metal                             | Транс-метал
+292. trip-rock                                | Трип-рок
+293. tropical-house                           | Тропический хаус
+294. true-black-metal                         | Тру-блэк-метал
+295. trap-metal                               | Трэп-метал
+296. thrashcore                               | Трэшкор
+297. 2step                                    | Тустеп
+298. turntablism                              | Тёрнтейблизм
+299. fado                                     | Фаду
+300. funky-house                              | Фанки-хаус
+301. philadelphia-soul                        | Филадельфийский соул
+302. flamenco                                 | Фламенко
+303. folk-black-metal                         | Фолк-блэк-метал
+304. folk-punk                                | Фолк-панк
+305. folk-pop                                 | Фолк-поп
+306. folktronica                              | Фолктроника
+307. forro                                    | Форро
+308. piano-blues                              | Фортепианный блюз
+309. piano-jazz                               | Фортепианный джаз
+310. piano-concert                            | Фортепианный концерт
+311. piano                                    | Фортепиано
+312. french                                   | Французская музыка
+313. french-house                             | Французский хаус
+314. free-jazz                                | Фри-джаз
+315. footwork                                 | Футворк
+316. funeral-doom-metal                       | Фьюнерал-дум-метал
+317. future-bass                              | Фьюче-бейс
+318. future-garage                            | Фьюче-гэридж
+319. future-funk                              | Фьюче-фанк
+320. high-energy                              | Хай-энерджи
+321. highlife                                 | Хайлайф
+322. hard-bop                                 | Хард-боп
+323. hard-trance                              | Хард-транс
+324. hardbass                                 | Хардбас
+325. hardcore-punk                            | Хардкор-панк
+326. hardcore-techno                          | Хардкор-техно
+327. hardcore-hip-hop                         | Хардкор-хип-хоп
+328. hardstyle                                | Хардстайл
+329. east-coast-hip-hop                       | Хип-хоп Восточного побережья
+330. west-coast-hip-hop                       | Хип-хоп Западного побережья
+331. choral                                   | Хорал
+332. horror-punk                              | Хоррор-панк
+333. horrorcore                               | Хорроркор
+334. heavy-power-metal                        | Хэви-пауэр-метал
+335. happy-hardcore                           | Хэппи-хардкор
+336. gypsy-jazz                               | Цыганский джаз
+337. cha-cha                                  | Ча-ча-ча
+338. chicago-blues                            | Чикагский блюз
+339. chicago-house                            | Чикагский хаус
+340. chillout                                 | Чиллаут
+341. chillwave                                | Чиллвейв
+342. chiptune                                 | Чиптюн
+343. shoegaze                                 | Шугейз
+344. acid-jazz                                | Эйсид-джаз
+345. acid-house                               | Эйсид-хаус
+346. experimental-techno                      | Экспериментальное техно
+347. experimental-rock                        | Экспериментальный рок
+348. extreme-metal                            | Экстремальный метал
+349. electric-blues                           | Электрик-блюз
+350. electro                                  | Электро
+351. electro-swing                            | Электро-свинг
+352. electro-house                            | Электро-хаус
+353. electroclash                             | Электроклэш
+354. electronicore                            | Электроникор
+355. electropop                               | Электропоп
+356. ambient-dub                              | Эмбиент-даб
+357. ambient-techno                           | Эмбиент-техно
+358. ambient-house                            | Эмбиент-хаус
+359. emo-pop                                  | Эмо-поп
+360. emo-rap                                  | Эмо-рэп
+361. epic-doom-metal                          | Эпический дум-метал
+362. epic-heavy-metal                         | Эпический хэви-метал
+363. ethereal-wave                            | Этериал-вейв
+364. southern-metal                           | Южный метал
+365. southern-rock                            | Южный рок
+366. southern-soul                            | Южный соул
+367. japanese-rock                            | Японский рок
