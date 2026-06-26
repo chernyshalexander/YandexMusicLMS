@@ -869,7 +869,7 @@ sub selectAccount {
             name        => ($isCurrent ? '> ' : '  ') . $name,
             type        => 'link',
             url         => \&_switchAccount,
-            passthrough => [$userId],
+            passthrough => [$client, $userId],
         };
     }
 
@@ -878,7 +878,13 @@ sub selectAccount {
 
 # Action: switch current player to a different account
 sub _switchAccount {
-    my ($client, $cb, $args, $userId) = @_;
+    my ($client, $cb, $args, $passed_client, $userId) = @_;
+
+    $client = $passed_client if $passed_client;
+    unless ($client) {
+        $cb->([{ name => 'Error: No player context available', type => 'text' }]);
+        return;
+    }
 
     my $accounts = $prefs->get('accounts') || {};
     unless (exists $accounts->{$userId}) {
@@ -891,7 +897,7 @@ sub _switchAccount {
 
     # Restart Ynison for this player with new account
     if (exists $ynison_instances{$client->id()}) {
-        $ynison_instances{$client->id()}->_cleanup();
+        $ynison_instances{$client->id()}->disconnect();
         delete $ynison_instances{$client->id()};
     }
 
