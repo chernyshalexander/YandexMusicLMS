@@ -388,7 +388,7 @@ sub _prepareTrack {
         ARTIST_EXTID => 'yandex:artist:' . ($track->{artists}[0]{id} || ''),
         ALBUM        => $album->{title} || 'Unknown',
         ALBUM_EXTID  => 'yandex:album:' . $album->{id},
-        TRACKNUM     => $track->{trackNumber} || 0,
+        TRACKNUM     => $track->{trackPosition}{index} || 0,
         SECS         => $duration,
         COVER        => $album->{coverUri} ? _normalizeImageUrl($album->{coverUri}) : '',
         AUDIO        => 1,
