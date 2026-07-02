@@ -108,7 +108,7 @@ sub scanAlbums { if (main::SCANNER) {
                 $progress->update($album->{title});
 
                 $class->storeTracks([
-                    map { _prepareTrack($albumDetails, $_) } _flattenTracks($albumDetails)
+                    map { _prepareTrack($albumDetails, $_) } _flattenTracksWithNumbers($albumDetails)
                 ], undef, $accountName);
 
                 main::SCANNER && Slim::Schema->forceCommit;
@@ -131,7 +131,7 @@ sub scanAlbums { if (main::SCANNER) {
             $cache->set('yandex_album_with_tracks_' . $albumId, $albumDetails, '3M');
 
             $class->storeTracks([
-                map { _prepareTrack($albumDetails, $_) } _flattenTracks($albumDetails)
+                map { _prepareTrack($albumDetails, $_) } _flattenTracksWithNumbers($albumDetails)
             ], undef, $accountName);
 
             main::SCANNER && Slim::Schema->forceCommit;
@@ -360,6 +360,22 @@ sub _flattenTracks {
     return map { @{$_} } grep { ref $_ eq 'ARRAY' } @{$album->{volumes}};
 }
 
+sub _flattenTracksWithNumbers {
+    my ($album) = @_;
+    return unless $album->{volumes};
+
+    my @tracks;
+    foreach my $volume_idx (0 .. @{$album->{volumes}} - 1) {
+        my $volume = $album->{volumes}[$volume_idx];
+        foreach my $track_idx (0 .. @$volume - 1) {
+            my $track = $volume->[$track_idx];
+            $track->{_track_number} = $track_idx + 1;
+            push @tracks, $track;
+        }
+    }
+    return @tracks;
+}
+
 sub _normalizeImageUrl {
     my ($url) = @_;
     return '' unless $url;
@@ -381,6 +397,8 @@ sub _prepareTrack {
         $artist_name = $track->{artists}[0]{name};
     }
 
+    my $track_num = $track->{_track_number} || 0;
+
     my $trackData = {
         url          => $url,
         TITLE        => $track->{title} || 'Unknown',
@@ -388,7 +406,7 @@ sub _prepareTrack {
         ARTIST_EXTID => 'yandex:artist:' . ($track->{artists}[0]{id} || ''),
         ALBUM        => $album->{title} || 'Unknown',
         ALBUM_EXTID  => 'yandex:album:' . $album->{id},
-        TRACKNUM     => $track->{trackPosition}{index} || 0,
+        TRACKNUM     => $track_num,
         SECS         => $duration,
         COVER        => $album->{coverUri} ? _normalizeImageUrl($album->{coverUri}) : '',
         AUDIO        => 1,
