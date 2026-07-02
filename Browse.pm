@@ -84,7 +84,23 @@ sub _handleAlbum {
         $album_id,
         sub {
             my $album = shift;
-            my $tracks = $album->{volumes} ? [ map { @$_ } @{$album->{volumes}} ] : [];
+            my @all_tracks;
+            if ($album->{volumes}) {
+                foreach my $volume_idx (0 .. @{$album->{volumes}} - 1) {
+                    my $volume = $album->{volumes}[$volume_idx];
+                    foreach my $track (@$volume) {
+                        push @all_tracks, {
+                            track => $track,
+                            volume => $volume_idx,
+                            track_num => $track->{trackNumber} // 0,
+                        };
+                    }
+                }
+                @all_tracks = sort {
+                    $a->{volume} <=> $b->{volume} || $a->{track_num} <=> $b->{track_num}
+                } @all_tracks;
+            }
+            my $tracks = [ map { $_->{track} } @all_tracks ];
             Plugins::yandex::Browse::Common::renderTrackList($tracks, $cb, $album->{title}, 'yandexmusic://album/' . $album_id);
         },
         sub {
