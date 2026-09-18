@@ -271,12 +271,52 @@ sub scanUrl {
     $args->{cb}->( $args->{song}->currentTrack() );
 }
 
-# 4. getNextTrack (ASYNCHRONOUS CALL) 
+# 4. getNextTrack (ASYNCHRONOUS CALL)
 sub getNextTrack {
     my ($class, $song, $successCb, $errorCb) = @_;
 
     my $url = $song->currentTrack()->url;
     $log->error("YANDEX: getNextTrack called for: $url");
+
+    $class->_resolveStreamUrl($song, sub {
+        # Stamp the resolve time so updateOnStream() (called by the core right
+        # before opening the stream) does not hit the API a second time.
+        $song->pluginData('yandex_url_resolved_at' => time());
+        $successCb->();
+    }, $errorCb);
+}
+
+# Core hook (StreamingController::_Stream): called before EVERY (re)open of the
+# song's stream, including the resume paths that bypass getNextTrack() entirely —
+# reconnect after a dropped connection (_Continue) and seek/power-on resume
+# (_JumpToTime). Those paths would re-open a long-stale CDN URL (expired after
+# ~1h) and re-read an expired AES key cache, producing garbage audio or a track
+# error. Re-resolving here gives every (re)open a fresh URL and fresh key.
+# See docs/resume-bug-investigation.md.
+sub updateOnStream {
+    my ($class, $song, $successCb, $errorCb) = @_;
+
+    my $resolved_at = $song->pluginData('yandex_url_resolved_at') || 0;
+    my $age = $resolved_at ? time() - $resolved_at : -1;
+
+    if ($age >= 0 && $age < 300) {
+        # URL was just resolved by getNextTrack() - no need to hit the API again
+        $successCb->();
+        return;
+    }
+
+    $log->info("YANDEX: updateOnStream: stream URL is " . ($age < 0 ? "unresolved" : "${age}s old") . ", re-resolving");
+
+    $class->_resolveStreamUrl($song, sub {
+        $song->pluginData('yandex_url_resolved_at' => time());
+        $successCb->();
+    }, $errorCb);
+}
+
+sub _resolveStreamUrl {
+    my ($class, $song, $successCb, $errorCb) = @_;
+
+    my $url = $song->currentTrack()->url;
 
     my $track_id = $url;
     unless ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
