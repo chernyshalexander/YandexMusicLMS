@@ -88,19 +88,24 @@ sub new {
                 $content_type = 'audio/mpeg';  # AAC, HE-AAC, MP3 default
             }
 
-            # CRITICAL: Extract Range offset from HTTP Content-Range header (if present)
-            # When LMS does Range request for resume/seek, CDN returns 206 Partial Content
-            # with Content-Range: bytes START-END/TOTAL. We must initialize yandex_offset
-            # to START, not 0, so AES-CTR counter is calculated correctly.
-            # BUG HYPOTHESIS: Boom may trigger Range requests on pause/resume, causing
-            # yandex_offset=0 with Range data → wrong CTR counter → corrupted audio (whistle).
+            # Determine the byte offset for resume/seek BEFORE the stream is
+            # opened. Core issues the HTTP Range request itself (restartOffset
+            # after reconnect, sourceStreamOffset after seek), see
+            # Slim::Player::Protocols::HTTP request(). At constructor time the
+            # response does not exist yet, so Content-Range cannot be read here
+            # — the old $sock->contentRange approach never fired, leaving
+            # yandex_offset=0 → wrong AES-CTR counter on Range resume → whistle.
+            # AES-CTR keystream position equals the absolute byte position in
+            # the file, so initializing the offset from seekdata is exact
+            # (same approach as the Deezer plugin, which rebuilds its Blowfish
+            # chunk state from $seekdata->{sourceStreamOffset}).
             my $initial_offset = 0;
-            if ($sock->can('contentRange')) {
-                my $content_range = $sock->contentRange;
-                if ($content_range && $content_range =~ /^(\d+)-/) {
-                    $initial_offset = $1;
-                    $log->warn("YANDEX: HTTP Range request detected! Content-Range: $content_range. Setting yandex_offset=$initial_offset");
-                }
+            my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
+            if ($seekdata) {
+                $initial_offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
+            }
+            if ($initial_offset > 0) {
+                $log->warn("YANDEX: Range resume/seek at byte $initial_offset, initializing AES-CTR offset from seekdata");
             }
 
             if ($meta->{aes_key}) {
