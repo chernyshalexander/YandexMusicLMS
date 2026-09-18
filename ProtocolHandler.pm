@@ -360,8 +360,12 @@ sub _resolveStreamUrl {
             }
             $cached_meta->{codec}   = $codec   if $codec;
             $cached_meta->{aes_key} = $aes_key if $aes_key;
-            # Using 3600 for stream-specific metadata (AES keys etc)
-            $cache->set('yandex_meta_' . $track_id, $cached_meta, 3600);
+            # Codec and AES key are constants of the track (Deezer derives its
+            # key from the track id forever, Tidal/Qobuz cache track meta for
+            # 30-90 days) - keep them for a day instead of an hour. The CDN URL
+            # itself is the only short-lived part; updateOnStream() re-resolves
+            # it before every stream (re)open.
+            $cache->set('yandex_meta_' . $track_id, $cached_meta, 86400);
 
             # Explicitly set metadata in LMS DB for proper UI display
             my $track_url = $song->track()->url();
