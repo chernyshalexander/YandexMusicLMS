@@ -104,7 +104,16 @@ sub new {
             if ($seekdata) {
                 $initial_offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
             }
-            if ($initial_offset > 0) {
+            # For MP4-container codecs requestString() has already turned this resume
+            # into a from-byte-0 fetch (a mid-file MP4 stream cannot be demuxed) and
+            # stashed the resume offset in yandex_demux_skip. The keystream then starts
+            # at 0 and the demuxer discards decoded audio up to the resume offset.
+            my $demux_skip = ${*$sock}{yandex_demux_skip} || 0;
+            if ($demux_skip) {
+                $log->warn("YANDEX: MP4 resume: fetching from byte 0, demuxer will skip decoded audio up to byte $demux_skip");
+                $initial_offset = 0;
+            }
+            elsif ($initial_offset > 0) {
                 $log->warn("YANDEX: Range resume/seek at byte $initial_offset, initializing AES-CTR offset from seekdata");
             }
 
@@ -118,15 +127,18 @@ sub new {
                 };
                 $log->error("YANDEX: AES cipher init failed: $@") if $@;
             }
-            # Set up MP4Demux for flac-mp4 and aac-mp4 with internal demux backend
+            # Set up MP4Demux for flac-mp4 and aac-mp4. With the ffmpeg backend it is
+            # used only on resume: ffmpeg cannot start decoding mid-container (it needs
+            # ftyp/moov from byte 0), while requestString() has already switched this
+            # connection to a from-byte-0 fetch, so the internal demuxer is the only
+            # way to reach the resume position.
             if ($meta->{codec} && ($meta->{codec} eq 'flac-mp4' || $meta->{codec} =~ /-mp4$/) && ${*$sock}{yandex_cipher}) {
                 my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
-                if ($demux_backend eq 'internal') {
-                    # IMPORTANT: Disable internal demux on Range requests (resume/seek).
-                    # MP4Demux expects complete file from start (moov → moof/mdat).
-                    # Range requests deliver partial data (moof/mdat), which breaks the parser.
-                    # Fallback to ffmpeg instead (via custom-convert.conf).
-                    if ($initial_offset > 0) {
+                if ($demux_skip || $demux_backend eq 'internal') {
+                    if (!$demux_skip && $initial_offset > 0) {
+                        # Defensive: Range resume without the requestString hook.
+                        # MP4Demux expects the complete file from start (moov → moof/mdat),
+                        # partial data would break the parser. Fallback to ffmpeg.
                         $log->warn("YANDEX: Range request detected for $meta->{codec} track $track_id at offset $initial_offset. Disabling internal demux (would fail mid-stream). Fallback to ffmpeg.");
                     } else {
                         eval {
@@ -136,7 +148,8 @@ sub new {
                             if ($demux_codec eq 'aac') {
                                 $content_type = 'audio/aac';
                             }
-                            $log->info("YANDEX: MP4Demux (internal) enabled for $meta->{codec} track $track_id");
+                            $log->info("YANDEX: MP4Demux (internal) enabled for $meta->{codec} track $track_id"
+                                . ($demux_skip ? " (resume: skipping decoded audio up to byte $demux_skip)" : ""));
                         };
                         $log->error("YANDEX: MP4Demux init failed: $@") if $@;
                     }
@@ -269,6 +282,54 @@ sub canDirectStreamSong {
 # Without buffering (0), LMS reads at player speed (~32KB/s) and Yandex CDN drops
 # slow connections after ~2 minutes.
 sub canEnhanceHTTP { return 2 }
+
+# Intercept the HTTP request the core builds for our stream connection
+# (Slim::Formats::RemoteStream::request calls $sock->requestString with the song's
+# seekdata). On resume — power-on reconnect, unpause, seek — the core requests
+# "Range: bytes=N-" with N estimated mid-file. For MP4-container codecs (flac-mp4,
+# aac-mp4) the container header (ftyp/moov) sits at the start of the file, so a
+# mid-file stream cannot be demuxed at all: ffmpeg exits with "invalid data" and
+# the internal MP4Demux has no moov either. That was the "file open error" and the
+# jump to the next track on unpause/power-on resume. For those codecs force a fetch
+# from byte 0 (no Range offset) and let the internal demuxer skip decoded audio up
+# to the resume offset — see yandex_demux_skip consumed in _sysread().
+sub requestString {
+    my $self = shift;
+    my ($client, $url, $post, $seekdata) = @_;
+
+    my $skip = ($seekdata && $self->_mp4_resume_offset($seekdata)) || 0;
+    if ($skip > 0) {
+        ${*$self}{yandex_demux_skip} = $skip;
+        $log->warn("YANDEX: MP4 resume at byte $skip: requesting the stream from byte 0, suppressing Range (demuxer will skip ahead)");
+        # Rebuild the request with zeroed byte offsets so the core sends "Range: bytes=0-"
+        my $modified = { %$seekdata, restartOffset => 0, sourceStreamOffset => 0 };
+        my $request = $self->SUPER::requestString($client, $url, $post, $modified);
+        # SUPER::requestString fixes the progress bar only for non-zero offsets — redo it here
+        if (defined $seekdata->{timeOffset} && $client) {
+            $client->playingSong()->startOffset($seekdata->{timeOffset});
+            $client->master()->remoteStreamStartTime(Time::HiRes::time() - $seekdata->{timeOffset}) if $client->master();
+        }
+        return $request;
+    }
+
+    return $self->SUPER::requestString($client, $url, $post, $seekdata);
+}
+
+# Returns the resume byte offset if this connection opens an MP4-container codec
+# mid-file, else 0. Object context only: ${*$self}{'song'} is set by the base
+# HTTPS::new before the request is sent.
+sub _mp4_resume_offset {
+    my ($self, $seekdata) = @_;
+    return 0 unless ref($self) && $seekdata;
+    my $offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
+    return 0 unless $offset > 0;
+
+    my $song = ${*$self}{'song'} || return 0;
+    my $orig_url = $song->currentTrack ? $song->currentTrack->url : '';
+    return 0 unless $orig_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/;
+    my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
+    return ($meta && $meta->{codec} && $meta->{codec} =~ /-mp4$/) ? $offset : 0;
+}
 
 # 3. scanUrl 
 sub scanUrl {
@@ -438,9 +499,17 @@ sub formatOverride {
         if ($meta && $meta->{codec}) {
             my $codec = $meta->{codec};
 
+            # MP4-container codecs: the internal pure-Perl demuxer is mandatory on
+            # resume (requestString() fetches from byte 0 and skips decoded audio up
+            # to the resume offset; ffmpeg cannot start mid-container), regardless
+            # of the demux_backend pref.
+            my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
+            my $internal = ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal'
+                || ($seekdata ? int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0) : 0) > 0;
+
             # FLAC in MP4: internal pure-Perl demux or ffmpeg via custom-convert.conf ymf → flc
             if ($codec eq 'flac-mp4') {
-                if (($prefs->get('demux_backend') || 'ffmpeg') eq 'internal') {
+                if ($internal) {
                     $log->info("YANDEX: formatOverride -> flc for $url (flac-mp4, internal demux)");
                     return 'flc';
                 }
@@ -449,7 +518,7 @@ sub formatOverride {
             }
             # aac-mp4, he-aac-mp4: pure-Perl demux -> aac, ffmpeg transcoding -> yma
             if ($codec =~ /-mp4$/) {
-                if (($prefs->get('demux_backend') || 'ffmpeg') eq 'internal') {
+                if ($internal) {
                     $log->info("YANDEX: formatOverride -> aac for $url ($codec, internal demux)");
                     return 'aac';
                 }
@@ -973,7 +1042,39 @@ sub _sysread {
             my $plain = _aes_ctr_xor($cipher, $raw, $sp);
             ${*$self}{yandex_offset} = $sp + $n;
 
+            # Track how many file bytes have been fed to the demuxer while a resume
+            # skip is pending (the skip is measured in input/file bytes, not output).
+            my $skip = ${*$self}{yandex_demux_skip} || 0;
+            my $fed_before = 0;
+            my $flac_hdr_len = 0;
+            if ($skip) {
+                $fed_before = ${*$self}{yandex_demux_fed} || 0;
+                ${*$self}{yandex_demux_fed} = $fed_before + $n;
+                # The reconstructed FLAC header (fLaC + STREAMINFO) leads the first
+                # output after moov parsing — the player needs it even on resume.
+                if (($demux->{codec} || '') eq 'flac'
+                    && $demux->{flac_header} && $demux->{flac_header} ne 'SENT') {
+                    $flac_hdr_len = length($demux->{flac_header});
+                }
+            }
+
             my $demuxed = $demux->process($plain);
+
+            # Resume-in-MP4: discard decoded audio until the feed position passes the
+            # resume offset stashed by requestString(). The demuxer emits per
+            # fragment, so at most the fragment straddling the offset (~1s) is lost.
+            if ($skip && $fed_before < $skip) {
+                if (length($demuxed)) {
+                    $demuxed = $flac_hdr_len && length($demuxed) >= $flac_hdr_len
+                        ? substr($demuxed, 0, $flac_hdr_len)
+                        : '';
+                    if (!${*$self}{yandex_demux_skip_logged}++) {
+                        $log->info("YANDEX: demux skip: discarding decoded audio before byte $skip"
+                            . ($flac_hdr_len ? " (FLAC header kept)" : ""));
+                    }
+                }
+            }
+
             if (length($demuxed) > 0) {
                 if (!${*$self}{_first_chunk_logged}++) {
                     my $sizes = '';
