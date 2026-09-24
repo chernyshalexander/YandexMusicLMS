@@ -347,3 +347,33 @@ pref действует только на открытие с начала; resu
 
 Принудительный внутренний демуксер только на resume-соединение, pref — только на старт
 с начала. Одобрено пользователем 2026-09-22. Код не менялся (всё в коммите d4cb88a).
+
+## ОБНОВЛЕНИЕ 2026-09-24 (позже): откат cdd4ced + решение для Boom «рестарт трека»
+
+### Откат
+
+Коммит cdd4ced (выравнивание кадров + неблокирующий skip) на железе сломал воспроизведение
+ВООБЩЕ (причина не диагностирована — в логе пользователя снова не было момента unpause).
+Ветка experiment сброшена на e93fd9b (состояние с рабочим skip-resume на Radio), коммит
+остался в reflog. Урок: перед следующим раундом — лог с момента нажатия play.
+
+### Решение для ip3k (по решению пользователя): рестарт трека вместо resume
+
+Не-SqueezePlay плееры (Boom, SB2/SB3, Transporter, Receiver; проверка — отрицательная
+`$client->isa('Slim::Player::SqueezePlay')`, т.к. SqueezePlay наследует Squeezebox2 и
+обратная проверка не работает): на resume mp4-трека (пауза→play, power-on, seek) трек
+честно перезапускается с 0:00 по заведомо рабочему пути обычного старта:
+
+- requestString: если resume и клиент не SqueezePlay — кладёт флаг
+  `yandex_restart_from_zero` и передаёт SUPER копию seekdata с нулевыми
+  restartOffset/sourceStreamOffset/timeOffset (Range bytes=0-, startOffset 0 →
+  позиция на экране с 0:00, без skip-состояний);
+- new(): флаг заставляет игнорировать seekdata → yandex_offset=0 (keystream от нуля),
+  демуксер не включается (при pref=internal — обычный полный демуксинг с 0);
+- formatOverride: для не-SqueezePlay resume не включает принудительный 'flc'/'aac' —
+  возвращается обычный формат по pref ('ymf'/'yma');
+
+SqueezePlay-плееры (Radio/Touch) сохраняют skip-resume (проверено пользователем:
+работает, теряется 1-2 с). Следствие: seek внутри mp4-трека на ip3k тоже перезапускает
+трек. Лог-маркеры: «MP4 resume on ip3k player: restarting the track...» и
+«ip3k resume: track restarted from the beginning (position reset to 0:00)».

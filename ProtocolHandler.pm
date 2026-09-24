@@ -100,9 +100,16 @@ sub new {
             # (same approach as the Deezer plugin, which rebuilds its Blowfish
             # chunk state from $seekdata->{sourceStreamOffset}).
             my $initial_offset = 0;
-            my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
-            if ($seekdata) {
-                $initial_offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
+            if (delete ${*$sock}{yandex_restart_from_zero}) {
+                # ip3k resume: requestString() turned this into a full restart -
+                # ordinary from-byte-0 fetch, keystream from 0, no demux skip.
+                $log->warn("YANDEX: ip3k resume: track restarted from the beginning (position reset to 0:00)");
+            }
+            else {
+                my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
+                if ($seekdata) {
+                    $initial_offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
+                }
             }
             # For MP4-container codecs requestString() has already turned this resume
             # into a from-byte-0 fetch (a mid-file MP4 stream cannot be demuxed) and
@@ -299,6 +306,18 @@ sub requestString {
 
     my $skip = ($seekdata && $self->_mp4_resume_offset($seekdata)) || 0;
     if ($skip > 0) {
+        # ip3k players (Boom and other non-SqueezePlay devices) have strict FLAC
+        # decoders that stall even on a correctly frame-aligned resume stream, so
+        # for them restart the whole track from byte 0 on the ordinary fresh-start
+        # path (ffmpeg backend, no demux skip) instead of the skip-resume below.
+        if ($client && !$client->isa('Slim::Player::SqueezePlay')) {
+            ${*$self}{yandex_restart_from_zero} = 1;
+            $log->warn("YANDEX: MP4 resume on ip3k player: restarting the track from the beginning instead of skip-resume");
+            # Zero byte offsets AND timeOffset: fetch from byte 0 and make the core
+            # show the track position from 0:00 so display and feedback match audio.
+            my $modified = { %$seekdata, restartOffset => 0, sourceStreamOffset => 0, timeOffset => 0 };
+            return $self->SUPER::requestString($client, $url, $post, $modified);
+        }
         ${*$self}{yandex_demux_skip} = $skip;
         $log->warn("YANDEX: MP4 resume at byte $skip: requesting the stream from byte 0, suppressing Range (demuxer will skip ahead)");
         # Rebuild the request with zeroed byte offsets so the core sends "Range: bytes=0-"
@@ -502,10 +521,13 @@ sub formatOverride {
             # MP4-container codecs: the internal pure-Perl demuxer is mandatory on
             # resume (requestString() fetches from byte 0 and skips decoded audio up
             # to the resume offset; ffmpeg cannot start mid-container), regardless
-            # of the demux_backend pref.
+            # of the demux_backend pref. ip3k players (Boom family) restart the
+            # track instead of skip-resume - they use the plain pref-based format.
             my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
-            my $internal = ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal'
-                || ($seekdata ? int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0) : 0) > 0;
+            my $resume = ($seekdata ? int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0) : 0) > 0;
+            my $client = $song->master();
+            $resume = 0 if $resume && $client && !$client->isa('Slim::Player::SqueezePlay');
+            my $internal = ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal' || $resume;
 
             # FLAC in MP4: internal pure-Perl demux or ffmpeg via custom-convert.conf ymf → flc
             if ($codec eq 'flac-mp4') {
