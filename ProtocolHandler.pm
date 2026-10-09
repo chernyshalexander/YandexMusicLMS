@@ -782,9 +782,17 @@ sub explodePlaylist {
 			? [split /,/, ($settings{seeds} // '')]
 			: $station_id;
 
+		my @wheel_seeds;
 		if ($station_id eq '_vibe_') {
+			@wheel_seeds = @$station_or_seeds;
 			$log->info("YANDEX VIBE: Exploding session for seeds: " . join(', ', @$station_or_seeds));
+
+			# Record CLICK feedback for the selected vibe wheel seeds
+			foreach my $seed (@wheel_seeds) {
+				Plugins::yandex::Plugin::add_wheel_feedback($client, 'CLICK', $seed);
+			}
 		} else {
+			@wheel_seeds = ($station_id);
 			$log->info("YANDEX NEW ROTOR: Exploding session for station $station_id, settings: " .
 				join(', ', map { "$_=$settings{$_}" } keys %settings) . ", queue: " . scalar(@$seen_tracks_prev) . " tracks");
 		}
@@ -800,6 +808,32 @@ sub explodePlaylist {
 			require Plugins::yandex::ProtocolHandler; # for timestamp
 			my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
 			$yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'radioStarted', $station_id, 0, $timestamp, sub {}, sub {});
+
+			# 2b. Rebuild the wheel around the launched wave (reference: POST wheel/new with the same seeds + accumulated wheel feedbacks).
+			# Fire-and-forget: playback must not wait for the wheel response.
+			if (@wheel_seeds) {
+				my $wheel_feedbacks = Plugins::yandex::Plugin::take_wheel_feedbacks($client);
+				$yandex_client->wheel_new_with_seeds(
+					$client,
+					\@wheel_seeds,
+					sub {
+						my $wheel = shift;
+						if ($wheel && $wheel->{wheelId}) {
+							Plugins::yandex::Plugin::set_wheel_state($client, {
+								wheel_id => $wheel->{wheelId},
+								seeds    => \@wheel_seeds,
+							});
+						}
+						$log->info("VIBE WHEEL: Rebuilt for seeds [" . join(',', @wheel_seeds) . "], wheelId=" . (($wheel && $wheel->{wheelId}) ? $wheel->{wheelId} : 'none'));
+					},
+					sub {
+						my $err = shift;
+						# Non-fatal: playback already started, the wheel is a separate feature.
+						$log->warn("VIBE WHEEL: Rebuild failed for seeds [" . join(',', @wheel_seeds) . "]: $err");
+					},
+					$wheel_feedbacks,
+				);
+			}
 
 			# 3. Process tracks
 			my @tracks;

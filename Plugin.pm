@@ -66,6 +66,9 @@ sub initPlugin {
         wizard_cat_diversity => 1,
         wizard_cat_mood      => 1,
         wizard_cat_language  => 1,
+        yandex_wheel_id      => undef,
+        yandex_wheel_seeds   => [],
+        yandex_wheel_feedbacks => [],
     });
 
     # Preserve compatibility with the old single-token preference by moving
@@ -587,6 +590,73 @@ sub _getUserIdForClient {
 sub getClient {
     my $userId = _getUserIdForClient(undef);
     return $userId ? $api_clients{$userId} : undef;
+}
+
+# Vibe Wheel state and feedback management (per-player)
+sub get_wheel_state {
+    my $client = shift;
+    return unless $client;
+
+    my $wheel_id = $prefs->client($client)->get('yandex_wheel_id');
+    my $seeds    = $prefs->client($client)->get('yandex_wheel_seeds') || [];
+
+    return {
+        wheel_id => $wheel_id,
+        seeds    => $seeds,
+    };
+}
+
+sub set_wheel_state {
+    my ($client, $state) = @_;
+    return unless $client && ref $state eq 'HASH';
+
+    my $wheel_id = $state->{wheel_id} // $state->{wheelId};
+    $prefs->client($client)->set('yandex_wheel_id', $wheel_id);
+    if (exists $state->{seeds}) {
+        $prefs->client($client)->set('yandex_wheel_seeds', $state->{seeds} || []);
+    }
+}
+
+sub add_wheel_feedback {
+    my ($client, $event_type, $item_id, $position) = @_;
+    return unless $client && $event_type && $item_id;
+
+    my $wheel_id = $prefs->client($client)->get('yandex_wheel_id');
+    return unless $wheel_id;
+
+    require Time::HiRes;
+    my $timestamp = int(Time::HiRes::time() * 1000);
+
+    my $feedback = {
+        wheelId   => $wheel_id,
+        timestamp => $timestamp,
+        eventType => $event_type,
+        item      => {
+            type => 'WAVE',
+            id   => $item_id,
+        },
+        position  => defined $position ? int($position) : 0,
+    };
+
+    my $feedbacks = $prefs->client($client)->get('yandex_wheel_feedbacks') || [];
+    push @$feedbacks, $feedback;
+
+    if (scalar(@$feedbacks) > 50) {
+        shift @$feedbacks while scalar(@$feedbacks) > 50;
+    }
+
+    $prefs->client($client)->set('yandex_wheel_feedbacks', $feedbacks);
+}
+
+sub take_wheel_feedbacks {
+    my $client = shift;
+    return [] unless $client;
+
+    my $feedbacks = $prefs->client($client)->get('yandex_wheel_feedbacks') || [];
+    if (@$feedbacks) {
+        $prefs->client($client)->set('yandex_wheel_feedbacks', []);
+    }
+    return $feedbacks;
 }
 
 sub _format_account_name {
