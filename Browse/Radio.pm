@@ -110,17 +110,43 @@ sub handleRadioCategories {
     $cb->(\@items);
 }
 
+sub handleVibeWaveSelect {
+    my ($client, $cb, $args, $yandex_client, $wave_seed, $url) = @_;
+
+    if ($client && $url) {
+        $log->info("VIBE WHEEL: Selecting wave '" . ($wave_seed // 'default') . "', playing URL '$url'");
+        if ($wave_seed) {
+            foreach my $seed (split /,/, $wave_seed) {
+                Plugins::yandex::Plugin::add_wheel_feedback($client, 'CLICK', $seed);
+            }
+        }
+        $client->execute(['playlist', 'play', $url]);
+    }
+
+    handleVibeWheel($client, $cb, $args, $yandex_client, $wave_seed);
+}
+
 sub handleVibeWheel {
     my ($client, $cb, $args, $yandex_client, $initial_seeds) = @_;
 
     my $seeds = $initial_seeds || 'user:onyourwave';
-    my $is_reshuffle_view = defined $initial_seeds;
+    my $is_custom_view = defined $initial_seeds && $initial_seeds ne 'user:onyourwave';
 
-    $log->debug("VIBE WHEEL: Loading with initial_seeds='$seeds', is_reshuffle=" . ($is_reshuffle_view ? 'true' : 'false'));
+    $log->debug("VIBE WHEEL: Loading with initial_seeds='$seeds', is_custom=" . ($is_custom_view ? 'true' : 'false'));
+
+    my @seeds_array = (ref $initial_seeds eq 'ARRAY') ? @$initial_seeds : split(/,/, $seeds);
+
+    # Record pending seed and timestamp to avoid duplicate background fetch in explodePlaylist
+    if ($client) {
+        $prefs->client($client)->set('yandex_wheel_pending_seed', join(',', @seeds_array));
+        $prefs->client($client)->set('yandex_wheel_pending_time', time());
+    }
+
+    my $feedbacks = Plugins::yandex::Plugin::take_wheel_feedbacks($client);
 
     $yandex_client->wheel_new_with_seeds(
         $client,
-        [$seeds],
+        \@seeds_array,
         sub {
             my $wheel = shift;
             my (@regular_waves, @controls);
@@ -130,7 +156,7 @@ sub handleVibeWheel {
             if ($wheel->{wheelId}) {
                 Plugins::yandex::Plugin::set_wheel_state($client, {
                     wheel_id => $wheel->{wheelId},
-                    seeds    => [$seeds],
+                    seeds    => \@seeds_array,
                 });
             }
 
@@ -173,30 +199,32 @@ sub handleVibeWheel {
                             passthrough => [$yandex_client, $control_seed],
                             image     => $cover || 'plugins/yandex/html/images/radio.png',
                         };
-                    } elsif ($control_seed eq 'user:onyourwave' && $is_reshuffle_view) {
+                    } elsif ($control_seed eq 'user:onyourwave' && $is_custom_view) {
                         $log->debug("VIBE WHEEL: Adding back to usual control");
+                        my $url = "yandexmusic://rotor_session/_vibe_?seeds=user:onyourwave";
                         push @controls, {
-                            name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
-                            type      => 'link',
-                            url       => \&handleVibeWheel,
-                            passthrough => [$yandex_client],
-                            image     => $cover || 'plugins/yandex/html/images/back_to_usual.png',
+                            name        => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
+                            type        => 'link',
+                            url         => \&handleVibeWaveSelect,
+                            passthrough => [$yandex_client, 'user:onyourwave', $url],
+                            play        => $url,
+                            image       => $cover || 'plugins/yandex/html/images/back_to_usual.png',
                         };
                     }
                 } else {
                     my $name = $wave->{name} || $item->{id};
-                    my $seeds_param = uri_escape_utf8(join(',', @$wave_seeds));
-                    my $url = "yandexmusic://rotor_session/_vibe_?seeds=$seeds_param";
+                    my $seeds_param = join(',', @$wave_seeds);
+                    my $url = "yandexmusic://rotor_session/_vibe_?seeds=" . uri_escape_utf8($seeds_param);
 
-                    $log->debug("VIBE WHEEL: Adding wave - name='$name', seeds='" . join(',', @$wave_seeds) . "', url='$url'");
+                    $log->debug("VIBE WHEEL: Adding wave - name='$name', seeds='$seeds_param', url='$url'");
 
                     push @regular_waves, {
-                        name      => $name,
-                        type      => 'audio',
-                        url       => $url,
-                        play      => $url,
-                        on_select => 'play',
-                        image     => $cover || 'plugins/yandex/html/images/radio.png',
+                        name        => $name,
+                        type        => 'link',
+                        url         => \&handleVibeWaveSelect,
+                        passthrough => [$yandex_client, $seeds_param, $url],
+                        play        => $url,
+                        image       => $cover || 'plugins/yandex/html/images/radio.png',
                     };
                 }
             }
@@ -214,7 +242,8 @@ sub handleVibeWheel {
             my $error = shift;
             $log->error("VIBE WHEEL: Failed to fetch: $error");
             $cb->([{ name => "Error: $error", type => 'text' }]);
-        }
+        },
+        $feedbacks,
     );
 }
 
