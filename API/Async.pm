@@ -89,7 +89,7 @@ sub _create_http_object {
 }
 
 sub get {
-    my ($self, $url, $params, $callback, $error_callback) = @_;
+    my ($self, $url, $params, $callback, $error_callback, $extra_headers) = @_;
 
     my $uri = URI->new($url);
     $uri->query_form($params) if $params;
@@ -114,11 +114,15 @@ sub get {
         },
     );
 
-    my %headers = %{$self->{default_headers}};
+    my %headers = (%{$self->{default_headers}}, %{$extra_headers // {}});
     my $accept_lang = $headers{'Accept-Language'} || 'unknown';
     $log->info("GET: url=" . $uri->as_string . ", Accept-Language=$accept_lang");
     foreach my $key (sort keys %headers) {
-        $log->info("  Header: $key => " . $headers{$key});
+        my $val = $headers{$key};
+        if ($key =~ /authorization/i && $val =~ /OAuth\s+(.+)/) {
+            $val = 'OAuth [HIDDEN]';
+        }
+        $log->info("  Header: $key => " . $val);
     }
 
     $http->get($uri, %headers);
@@ -152,7 +156,7 @@ sub _cached_get {
 }
 
 sub post {
-    my ($self, $url, $data, $callback, $error_callback, $params) = @_;
+    my ($self, $url, $data, $callback, $error_callback, $params, $extra_headers) = @_;
 
     my $uri = URI->new($url);
     $uri->query_form($params) if $params;
@@ -174,13 +178,17 @@ sub post {
         },
     );
 
-    my %headers = %{$self->{default_headers}};
+    my %headers = (%{$self->{default_headers}}, %{$extra_headers // {}});
     my $accept_lang = $headers{'Accept-Language'} || 'unknown';
     my $user_agent = $headers{'User-Agent'} || 'unknown';
     $log->info("POST: url=" . $uri->as_string . ", Accept-Language=$accept_lang, User-Agent=$user_agent");
 
     foreach my $key (sort keys %headers) {
-        $log->info("  Header: $key => " . $headers{$key});
+        my $val = $headers{$key};
+        if ($key =~ /authorization/i && $val =~ /OAuth\s+(.+)/) {
+            $val = 'OAuth [HIDDEN]';
+        }
+        $log->info("  Header: $key => " . $val);
     }
 
     $log->info("POST: Calling \$http->post() with URL and headers");
@@ -493,12 +501,14 @@ sub get_playlist {
 }
 
 sub wheel_new {
-    my ($self, $client, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/wheel/new';
+    my ($self, $client, $callback, $error_callback, $feedbacks, $extra_headers) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/wheel/new';
 
     my $lang = Plugins::yandex::API::Common::get_api_language($client);
     my $body_data = { context => { type => 'WAVE' } };
-    $log->info("WHEEL_NEW: Requesting default wheel, language=$lang");
+    $body_data->{feedbacks} = $feedbacks if $feedbacks && ref $feedbacks eq 'ARRAY' && @$feedbacks;
+
+    $log->info("WHEEL_NEW: Requesting default wheel, language=$lang, feedbacks=" . ($feedbacks ? scalar(@$feedbacks) : 0));
     $log->info("WHEEL_NEW: POST body=" . JSON::XS->new->encode($body_data));
 
     $self->post(
@@ -521,17 +531,20 @@ sub wheel_new {
         },
         $error_callback,
         { language => $lang },
+        $extra_headers,
     );
 }
 
 sub wheel_new_with_seeds {
-    my ($self, $client, $seeds, $callback, $error_callback) = @_;
-    my $url = 'https://api.music.yandex.net/wheel/new';
+    my ($self, $client, $seeds, $callback, $error_callback, $feedbacks, $extra_headers) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/wheel/new';
 
     my $seeds_str = join(',', @$seeds);
     my $lang = Plugins::yandex::API::Common::get_api_language($client);
     my $body_data = { context => { type => 'WAVE', data => { seeds => $seeds } } };
-    $log->info("WHEEL_NEW_WITH_SEEDS: Requesting with seeds=[$seeds_str], language=$lang");
+    $body_data->{feedbacks} = $feedbacks if $feedbacks && ref $feedbacks eq 'ARRAY' && @$feedbacks;
+
+    $log->info("WHEEL_NEW_WITH_SEEDS: Requesting with seeds=[$seeds_str], language=$lang, feedbacks=" . ($feedbacks ? scalar(@$feedbacks) : 0));
     $log->info("WHEEL_NEW_WITH_SEEDS: POST body=" . JSON::XS->new->encode($body_data));
 
     $self->post(
@@ -554,6 +567,7 @@ sub wheel_new_with_seeds {
         },
         $error_callback,
         { language => $lang },
+        $extra_headers,
     );
 }
 
@@ -587,7 +601,8 @@ sub rotor_session_new {
             if (exists $result->{result} && exists $result->{result}->{radioSessionId}) {
                 $callback->($result->{result}); 
             } else {
-                $error_callback->("Failed to create new rotor session for station $station_id");
+                my $target_desc = ref $station_id eq 'ARRAY' ? join(',', @$station_id) : ($station_id // 'unknown');
+                $error_callback->("Failed to create new rotor session for station $target_desc");
             }
         },
         $error_callback,

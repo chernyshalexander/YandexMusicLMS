@@ -142,9 +142,18 @@ sub handleVibeWheel {
             my $wheel = shift;
             my (@regular_waves, @controls);
 
-            $log->debug("VIBE WHEEL: Received wheel with " . scalar(@{$wheel->{items}}) . " items");
+            $log->debug("VIBE WHEEL: Received wheel with " . scalar(@{$wheel->{items}}) . " items, wheelId=" . ($wheel->{wheelId} // 'none'));
 
-            foreach my $item (@{ $wheel->{items} }) {
+            if ($wheel->{wheelId}) {
+                Plugins::yandex::Plugin::set_wheel_state($client, {
+                    wheel_id => $wheel->{wheelId},
+                    seeds    => [$seeds],
+                });
+            }
+
+            my $pos = 0;
+            foreach my $item (@{ $wheel->{items} // [] }) {
+                my $item_pos = $pos++;
                 next unless $item->{type} && $item->{type} eq 'WAVE';
 
                 my $wave  = $item->{data}{wave}  // {};
@@ -154,6 +163,9 @@ sub handleVibeWheel {
 
                 my $is_control = ($item->{style} // '') eq 'CONTROL_ACCENT';
                 my $control_seed = $wave_seeds->[0];
+                my $item_id = $item->{id} || $control_seed;
+
+                Plugins::yandex::Plugin::add_wheel_feedback($client, 'VIEW', $item_id, $item_pos);
 
                 my $cover = '';
                 if ($agent->{cover} && $agent->{cover}{uri}) {
