@@ -812,27 +812,35 @@ sub explodePlaylist {
 			# 2b. Rebuild the wheel around the launched wave (reference: POST wheel/new with the same seeds + accumulated wheel feedbacks).
 			# Fire-and-forget: playback must not wait for the wheel response.
 			if (@wheel_seeds) {
-				my $wheel_feedbacks = Plugins::yandex::Plugin::take_wheel_feedbacks($client);
-				$yandex_client->wheel_new_with_seeds(
-					$client,
-					\@wheel_seeds,
-					sub {
-						my $wheel = shift;
-						if ($wheel && $wheel->{wheelId}) {
-							Plugins::yandex::Plugin::set_wheel_state($client, {
-								wheel_id => $wheel->{wheelId},
-								seeds    => \@wheel_seeds,
-							});
-						}
-						$log->info("VIBE WHEEL: Rebuilt for seeds [" . join(',', @wheel_seeds) . "], wheelId=" . (($wheel && $wheel->{wheelId}) ? $wheel->{wheelId} : 'none'));
-					},
-					sub {
-						my $err = shift;
-						# Non-fatal: playback already started, the wheel is a separate feature.
-						$log->warn("VIBE WHEEL: Rebuild failed for seeds [" . join(',', @wheel_seeds) . "]: $err");
-					},
-					$wheel_feedbacks,
-				);
+				my $pending_seed = $client ? $prefs->client($client)->get('yandex_wheel_pending_seed') : undef;
+				my $pending_time = $client ? ($prefs->client($client)->get('yandex_wheel_pending_time') || 0) : 0;
+				my $current_seeds_str = join(',', @wheel_seeds);
+
+				if ($pending_seed && $pending_seed eq $current_seeds_str && (time() - $pending_time) < 5) {
+					$log->debug("VIBE WHEEL: Wheel rebuild already initiated from UI for seeds [$current_seeds_str], skipping duplicate background call");
+				} else {
+					my $wheel_feedbacks = Plugins::yandex::Plugin::take_wheel_feedbacks($client);
+					$yandex_client->wheel_new_with_seeds(
+						$client,
+						\@wheel_seeds,
+						sub {
+							my $wheel = shift;
+							if ($wheel && $wheel->{wheelId}) {
+								Plugins::yandex::Plugin::set_wheel_state($client, {
+									wheel_id => $wheel->{wheelId},
+									seeds    => \@wheel_seeds,
+								});
+							}
+							$log->info("VIBE WHEEL: Rebuilt for seeds [" . join(',', @wheel_seeds) . "], wheelId=" . (($wheel && $wheel->{wheelId}) ? $wheel->{wheelId} : 'none'));
+						},
+						sub {
+							my $err = shift;
+							# Non-fatal: playback already started, the wheel is a separate feature.
+							$log->warn("VIBE WHEEL: Rebuild failed for seeds [" . join(',', @wheel_seeds) . "]: $err");
+						},
+						$wheel_feedbacks,
+					);
+				}
 			}
 
 			# 3. Process tracks
