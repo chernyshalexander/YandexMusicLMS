@@ -344,4 +344,42 @@ sub keystream_xor {
     return $data ^ substr($keystream, $start_off, $len);
 }
 
+# General AES-CTR stream decryption helper.
+# Decrypts $data starting at $stream_pos using $cipher (either Decode::AES128 or Crypt::Rijndael).
+# Uses optimized keystream_xor when available, otherwise falls back to block-by-block ECB encrypt.
+sub ctr_decrypt {
+    use bytes;
+    my ($cipher, $data, $stream_pos) = @_;
+
+    return $cipher->keystream_xor($data, $stream_pos)
+        if $cipher->can('keystream_xor');
+
+    # Fallback: Crypt::Rijndael or any other ECB cipher without keystream_xor.
+    # Reuse a single 16-byte counter buffer; update only the last 4 bytes per block.
+    # >> 4 and & 15 replace int()/% — bit-ops are ~3× faster on ARM.
+    my $len     = length($data);
+    my $out     = '';
+    my $i       = 0;
+    my $blk_num = $stream_pos >> 4;
+    my $counter = "\x00" x 12 . pack('N', $blk_num);
+
+    while ($i < $len) {
+        my $abs     = $stream_pos + $i;
+        my $new_blk = $abs >> 4;
+        my $blk_off = $abs & 15;
+
+        if ($new_blk != $blk_num) {
+            $blk_num = $new_blk;
+            substr($counter, 12, 4) = pack('N', $blk_num);
+        }
+
+        my $keystream = $cipher->encrypt($counter);
+        my $take      = 16 - $blk_off;
+        $take = $len - $i if $len - $i < $take;
+        $out .= substr($data, $i, $take) ^ substr($keystream, $blk_off, $take);
+        $i   += $take;
+    }
+    return $out;
+}
+
 1;
