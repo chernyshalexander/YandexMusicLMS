@@ -85,4 +85,12 @@ sub get_api_language {
     return ($lang && $lang =~ /^ru/i) ? 'ru' : 'en';
 }
 
+# Return ISO 8601 UTC timestamp string (e.g. 2026-10-12T15:20:00Z)
+sub get_iso_timestamp {
+    my ($t) = @_;
+    $t //= time();
+    my ($sec, $min, $hour, $mday, $mon, $year) = gmtime($t);
+    return sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", $year + 1900, $mon + 1, $mday, $hour, $min, $sec);
+}
+
 1;

@@ -260,10 +260,11 @@ sub _init_api_client {
     );
 }
 
-# Start Ynison for all players assigned to a given userId (if enabled)
-sub _maybe_init_ynison {
-    my $userId = shift;
+sub _start_ynison_for_player {
+    my ($player, $userId) = @_;
+    return unless $player && $userId;
     return unless $prefs->get('enable_ynison');
+    return $ynison_instances{$player->id()} if exists $ynison_instances{$player->id()};
     return unless exists $api_clients{$userId};
 
     my $accounts = $prefs->get('accounts') || {};
@@ -271,23 +272,28 @@ sub _maybe_init_ynison {
     my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
 
     require Plugins::yandex::Ynison;
+    my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
+    $ynison_instances{$player->id()} = $ynison;
+
+    $ynison->on_state(sub {
+        _handle_yandex_state_update($player, @_);
+    });
+    $ynison->connect();
+
+    $log->info("YANDEX: Ynison started for player " . $player->name() . " (userId=$userId)");
+    return $ynison;
+}
+
+# Start Ynison for all players assigned to a given userId (if enabled)
+sub _maybe_init_ynison {
+    my $userId = shift;
+    return unless $prefs->get('enable_ynison');
+    return unless exists $api_clients{$userId};
+
     foreach my $player (Slim::Player::Client::clients()) {
         my $playerUserId = _getUserIdForClient($player);
         next unless defined $playerUserId && $playerUserId eq $userId;
-        next if exists $ynison_instances{$player->id()};
-
-        my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
-        $ynison_instances{$player->id()} = $ynison;
-
-        # Register listener for incoming Yandex state updates
-        $ynison->on_state(sub {
-            _handle_yandex_state_update($player, @_);
-        });
-
-        # Start connection
-        $ynison->connect();
-
-        $log->info("YANDEX: Ynison started for player " . $player->name() . " (userId=$userId)");
+        _start_ynison_for_player($player, $userId);
     }
 }
 
@@ -495,23 +501,9 @@ sub _on_enable_ynison_change {
     # for existing players or tearing down active Ynison sessions.
     if ($new_value && !$old_value) {
         # Ynison enabled - initialize for all players
-        require Plugins::yandex::Ynison;
         foreach my $player (Slim::Player::Client::clients()) {
-            next if exists $ynison_instances{$player->id()};
             my $userId = _getUserIdForClient($player);
-            next unless $userId && exists $api_clients{$userId};
-            my $accounts = $prefs->get('accounts') || {};
-            my $token    = $accounts->{$userId}{token} || next;
-            my $uid      = $api_clients{$userId}->get_me()->{uid} || next;
-
-            my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
-            $ynison->on_state(sub {
-                _handle_yandex_state_update($player, @_);
-            });
-            $ynison->connect();
-            $ynison_instances{$player->id()} = $ynison;
-
-            $log->info("YANDEX: Ynison enabled for " . $player->name());
+            _start_ynison_for_player($player, $userId) if $userId;
         }
     } elsif (!$new_value && $old_value) {
         # Ynison disabled - cleanup all instances
@@ -537,24 +529,8 @@ sub playerEventCallback {
     if ($command eq 'client') {
         my $sub_command = $request->getRequest(2);
         if ($sub_command eq 'new' || $sub_command eq 'reconnect') {
-            if ($prefs->get('enable_ynison')) {
-                my $userId = _getUserIdForClient($client);
-                if ($userId && exists $api_clients{$userId}) {
-                    require Plugins::yandex::Ynison;
-                    if (!exists $ynison_instances{$client->id()}) {
-                        my $accounts = $prefs->get('accounts') || {};
-                        my $token    = $accounts->{$userId}{token} || return;
-                        my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
-
-                        my $ynison = Plugins::yandex::Ynison->new($client, $token, $uid);
-                        $ynison->on_state(sub {
-                            _handle_yandex_state_update($client, @_);
-                        });
-                        $ynison->connect();
-                        $ynison_instances{$client->id()} = $ynison;
-                    }
-                }
-            }
+            my $userId = _getUserIdForClient($client);
+            _start_ynison_for_player($client, $userId) if $userId;
         }
         elsif ($sub_command eq 'disconnect' || $sub_command eq 'forget') {
             if (exists $ynison_instances{$client->id()}) {
@@ -589,24 +565,9 @@ sub playerEventCallback {
     # Ynison state sync
     if ($prefs->get('enable_ynison')) {
         my $ynison = $ynison_instances{$client->id()};
-
         if (!$ynison) {
-            # Try to initialize if not yet done
             my $userId = _getUserIdForClient($client);
-            if ($userId && exists $api_clients{$userId}) {
-                require Plugins::yandex::Ynison;
-                my $accounts = $prefs->get('accounts') || {};
-                my $token    = $accounts->{$userId}{token};
-                my $uid      = $api_clients{$userId}->get_me()->{uid};
-                if ($token && $uid) {
-                    $ynison = Plugins::yandex::Ynison->new($client, $token, $uid);
-                    $ynison->on_state(sub {
-                        _handle_yandex_state_update($client, @_);
-                    });
-                    $ynison->connect();
-                    $ynison_instances{$client->id()} = $ynison;
-                }
-            }
+            $ynison = _start_ynison_for_player($client, $userId) if $userId;
         }
 
         if ($ynison && !$ynison->{syncing_from_yandex}) {
@@ -667,11 +628,8 @@ sub _handleRotorFeedback {
 
             return unless $track_id;
 
-            require Plugins::yandex::ProtocolHandler;
-            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
-
             $log->info("YANDEX NEW ROTOR SESSION: Track started. batch: " . ($batch_id||'none') . ", track: $track_id");
-            $yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'trackStarted', $track_id, 0, $timestamp, sub {}, sub {});
+            $yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'trackStarted', $track_id, 0, undef, sub {}, sub {});
         }
     }
     elsif ($action eq 'natural_finish' || $action eq 'manual_skip_or_stop') {
@@ -717,10 +675,8 @@ sub _handleRotorFeedback {
                 return;
             }
 
-            require Plugins::yandex::ProtocolHandler;
-            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
             $log->info("YANDEX ROTOR SESSION: Sending '$type' feedback. Played: $played_seconds s. batch: " . ($batch_id||'none') . ", track: $track_id");
-            $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, $timestamp, sub {}, sub {});
+            $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, undef, sub {}, sub {});
 
             $client->pluginData('yandex_track_active', 0);
         }
@@ -910,14 +866,7 @@ sub _switchAccount {
         delete $ynison_instances{$client->id()};
     }
 
-    if ($prefs->get('enable_ynison') && exists $api_clients{$userId}) {
-        my $token = $accounts->{$userId}{token};
-        my $uid   = $api_clients{$userId}->get_me()->{uid};
-        if ($token && $uid) {
-            require Plugins::yandex::Ynison;
-            $ynison_instances{$client->id()} = Plugins::yandex::Ynison->new($client, $token, $uid);
-        }
-    }
+    _start_ynison_for_player($client, $userId);
 
     # Return to main menu
     handleFeed($client, $cb, $args);

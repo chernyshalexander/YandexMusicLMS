@@ -33,6 +33,19 @@ use Slim::Utils::Strings qw(cstring);
 
 my $log = logger('plugin.yandex');
 
+sub format_cover_url {
+    my ($uri, $size) = @_;
+    return 'plugins/yandex/html/images/foundbroadcast1_svg.png' unless $uri;
+    $size //= '200x200';
+    $uri =~ s/%%/$size/;
+    if ($uri =~ /^\/\//) {
+        return 'https:' . $uri;
+    } elsif ($uri !~ /^https?:\/\//) {
+        return 'https://' . $uri;
+    }
+    return $uri;
+}
+
 # Build an LMS OPML item list from an array of Yandex track objects and call $cb.
 # Covers art is resolved from several possible API fields (coverUri, ogImage,
 # albums[0].coverUri) and normalised to a full https:// URL at 200×200px.
@@ -54,9 +67,7 @@ sub renderTrackList {
 
          my $track_id = $track_object->{id};
          my $track_url = 'yandexmusic://' . $track_id;
-         
-         my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
-         
+
          my $cover_uri;
          if ($track_object->{coverUri}) {
              $cover_uri = $track_object->{coverUri};
@@ -67,12 +78,8 @@ sub renderTrackList {
          } elsif ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && $track_object->{albums}[0]->{coverUri}) {
              $cover_uri = $track_object->{albums}[0]->{coverUri};
          }
-         
-         if ($cover_uri) {
-             $icon = $cover_uri;
-             $icon =~ s/%%/200x200/;
-             $icon = "https://$icon";
-         }
+
+         my $icon = format_cover_url($cover_uri, '200x200');
 
          my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
@@ -124,7 +131,6 @@ sub cache_track_metadata {
         $artist_name = $track_object->{artists}[0]->{name};
     }
 
-    my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
     my $cover_uri;
     if ($track_object->{coverUri}) {
         $cover_uri = $track_object->{coverUri};
@@ -135,12 +141,8 @@ sub cache_track_metadata {
     } elsif ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && @{$track_object->{albums}} && $track_object->{albums}[0]->{coverUri}) {
         $cover_uri = $track_object->{albums}[0]->{coverUri};
     }
-    
-    if ($cover_uri) {
-        $icon = $cover_uri;
-        $icon =~ s/%%/200x200/;
-        $icon = "https://$icon";
-    }
+
+    my $icon = format_cover_url($cover_uri, '200x200');
 
     my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
@@ -186,12 +188,7 @@ sub renderAlbumList {
             $artist_name = $album->{artists}[0]->{name};
         }
 
-        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
-        if ($album->{coverUri}) {
-            $icon = $album->{coverUri};
-            $icon =~ s/%%/200x200/;
-            $icon = "https://$icon";
-        }
+        my $icon = format_cover_url($album->{coverUri}, '200x200');
 
         push @items, {
             name  => $album_title . ' (' . $artist_name . ')',
@@ -224,12 +221,7 @@ sub renderPlaylistList {
             $owner_name = $playlist->{owner}->{name};
         }
 
-        my $icon = 'plugins/yandex/html/images/foundbroadcast1_svg.png';
-        if ($playlist->{cover} && $playlist->{cover}->{uri}) {
-            $icon = $playlist->{cover}->{uri};
-            $icon =~ s/%%/200x200/;
-            $icon = "https://$icon";
-        }
+        my $icon = format_cover_url($playlist->{cover} ? $playlist->{cover}->{uri} : undef, '200x200');
 
         push @items, {
             name => $playlist_title . ' (' . $owner_name . ')',

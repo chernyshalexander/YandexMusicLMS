@@ -318,8 +318,8 @@ sub disconnect {
     $self->_disconnect_socket();
     $self->{async} = undef;  # Clean up async reference
     # Cancel any pending timers
-    Slim::Utils::Timers::killTimers($self, 'keepalive');
-    Slim::Utils::Timers::killTimers($self, 'reconnect');
+    Slim::Utils::Timers::killTimers($self, \&_send_ping);
+    Slim::Utils::Timers::killTimers($self, \&connect);
 }
 
 sub _disconnect_socket {
