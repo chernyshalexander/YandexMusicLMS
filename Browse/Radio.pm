@@ -111,7 +111,7 @@ sub handleRadioCategories {
 }
 
 sub handleVibeWheel {
-    my ($client, $cb, $args, $yandex_client, $initial_seeds) = @_;
+    my ($client, $cb, $args, $yandex_client, $initial_seeds, $trigger_now_playing) = @_;
 
     my $saved_state = Plugins::yandex::Plugin::get_wheel_state($client);
     my $seeds = $initial_seeds;
@@ -126,8 +126,8 @@ sub handleVibeWheel {
 
     my $is_reshuffle = defined $initial_seeds && ($initial_seeds =~ /^diversity:reshuffle/);
 
-    # If this is not an explicit reshuffle, check snapshot cache for matching client and seeds
-    if (!$is_reshuffle && $client) {
+    # If this is not an explicit reshuffle or rebuild-on-play, check snapshot cache for matching client and seeds
+    if (!$is_reshuffle && !$trigger_now_playing && $client) {
         my $snap = Plugins::yandex::Plugin::get_wheel_snapshot($client, $seeds);
         if ($snap && $snap->{menu_result}) {
             $log->info("VIBE WHEEL: Cache hit for seeds='$seeds' on player " . ($client->name || $client->id) . " (" . scalar(@{$snap->{menu_result}{items}}) . " items)");
@@ -202,14 +202,26 @@ sub handleVibeWheel {
                     } elsif ($control_seed eq 'user:onyourwave' && $is_custom_view) {
                         $log->debug("VIBE WHEEL: Adding back to usual control");
                         my $url = "yandexmusic://rotor_session/_vibe_?seeds=user:onyourwave";
-                        push @controls, {
-                            name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
-                            type      => 'audio',
-                            url       => $url,
-                            play      => $url,
-                            on_select => 'play',
-                            image     => $cover || 'plugins/yandex/html/images/back_to_usual.png',
-                        };
+                        my $rebuild_on_play = $prefs->get('vibe_wheel_rebuild_on_play') // 1;
+                        if ($rebuild_on_play) {
+                            push @controls, {
+                                name        => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
+                                type        => 'link',
+                                url         => \&handleVibeWaveSelect,
+                                passthrough => [$yandex_client, 'user:onyourwave', $url],
+                                play        => $url,
+                                image       => $cover || 'plugins/yandex/html/images/back_to_usual.png',
+                            };
+                        } else {
+                            push @controls, {
+                                name      => cstring($client, 'PLUGIN_YANDEX_BACK_TO_USUAL'),
+                                type      => 'audio',
+                                url       => $url,
+                                play      => $url,
+                                on_select => 'play',
+                                image     => $cover || 'plugins/yandex/html/images/back_to_usual.png',
+                            };
+                        }
                     }
                 } else {
                     my $name = $wave->{name} || $item->{id};
@@ -218,14 +230,26 @@ sub handleVibeWheel {
 
                     $log->debug("VIBE WHEEL: Adding wave - name='$name', seeds='$seeds_param', url='$url'");
 
-                    push @regular_waves, {
-                        name      => $name,
-                        type      => 'audio',
-                        url       => $url,
-                        play      => $url,
-                        on_select => 'play',
-                        image     => $cover || 'plugins/yandex/html/images/radio.png',
-                    };
+                    my $rebuild_on_play = $prefs->get('vibe_wheel_rebuild_on_play') // 1;
+                    if ($rebuild_on_play) {
+                        push @regular_waves, {
+                            name        => $name,
+                            type        => 'link',
+                            url         => \&handleVibeWaveSelect,
+                            passthrough => [$yandex_client, $seeds_param, $url],
+                            play        => $url,
+                            image       => $cover || 'plugins/yandex/html/images/radio.png',
+                        };
+                    } else {
+                        push @regular_waves, {
+                            name      => $name,
+                            type      => 'audio',
+                            url       => $url,
+                            play      => $url,
+                            on_select => 'play',
+                            image     => $cover || 'plugins/yandex/html/images/radio.png',
+                        };
+                    }
                 }
             }
 
@@ -248,7 +272,17 @@ sub handleVibeWheel {
                 });
             }
 
-            $cb->($menu_result);
+            if ($trigger_now_playing && @items) {
+                # Shallow copy items and set nowPlaying on the first item so LMS XMLBrowser triggers goNow => 'nowPlaying'
+                my @response_items = map { { %$_ } } @items;
+                $response_items[0]->{nowPlaying} = 1;
+                $cb->({
+                    items => \@response_items,
+                    title => $menu_result->{title},
+                });
+            } else {
+                $cb->($menu_result);
+            }
         },
         sub {
             my $error = shift;
@@ -257,6 +291,30 @@ sub handleVibeWheel {
         },
         $feedbacks,
     );
+}
+
+sub handleVibeWaveSelect {
+    my ($client, $cb, $args, $yandex_client, $wave_seed, $wave_url) = @_;
+
+    $log->info("VIBE WHEEL: Wave selected with seed='$wave_seed', url='$wave_url'");
+
+    # Send CLICK feedback
+    Plugins::yandex::Plugin::add_wheel_feedback($client, 'CLICK', $wave_seed, 0);
+
+    # Record pending seed to prevent duplicate rebuild in ProtocolHandler::explodePlaylist
+    if ($client) {
+        $prefs->client($client)->set('yandex_wheel_pending_seed', $wave_seed);
+        $prefs->client($client)->set('yandex_wheel_pending_time', time());
+    }
+
+    # Start playback immediately on the client
+    if ($client && $wave_url) {
+        $log->info("VIBE WHEEL: Starting playback of '$wave_url'");
+        $client->execute(['playlist', 'play', $wave_url]);
+    }
+
+    # Rebuild the wheel for the selected seed and trigger transition to Now Playing
+    handleVibeWheel($client, $cb, $args, $yandex_client, $wave_seed, 1);
 }
 
 sub handleVibeWheelReshuffle {

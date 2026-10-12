@@ -275,6 +275,13 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 <hr>
 
+[% WRAPPER setting title="PLUGIN_YANDEX_VIBE_WHEEL_REBUILD_ON_PLAY" desc="PLUGIN_YANDEX_VIBE_WHEEL_REBUILD_ON_PLAY_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_vibe_wheel_rebuild_on_play" id="pref_vibe_wheel_rebuild_on_play"
+        [% IF prefs.vibe_wheel_rebuild_on_play %]checked[% END %]>
+</div>
+[% END %]
+<hr>
 <script type="text/javascript">
 (function () {
     var toggle  = document.getElementById('pref_show_wave_wizard');
