@@ -191,11 +191,18 @@ sub post {
         $log->info("  Header: $key => " . $val);
     }
 
+    my $encoded = eval { encode_json($data) };
+    if ($@ || !defined $encoded) {
+        $log->error("Yandex API (POST): JSON encode failed: $@");
+        $error_callback->($@ || "Failed to encode JSON body");
+        return;
+    }
+
     $log->info("POST: Calling \$http->post() with URL and headers");
     $http->post(
         $uri,
         %headers,
-        encode_json($data),
+        $encoded,
     );
     $log->info("POST: HTTP request sent");
 }
@@ -627,7 +634,9 @@ sub rotor_session_new {
 sub rotor_session_feedback {
     my ($self, $radio_session_id, $batch_id, $event_type, $track_id, $total_played_seconds, $timestamp, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/rotor/session/' . uri_escape_utf8($radio_session_id) . '/feedback';
-    
+
+    $timestamp ||= Plugins::yandex::API::Common::get_iso_timestamp();
+
     my $event = {
         'type' => $event_type,
         'timestamp' => $timestamp,

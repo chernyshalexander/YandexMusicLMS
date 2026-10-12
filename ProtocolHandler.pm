@@ -805,9 +805,7 @@ sub explodePlaylist {
 			my $sequence = $session_result->{sequence}; # This is an array of items with { track => { ... } }
 
 			# 2. Send radioStarted feedback
-			require Plugins::yandex::ProtocolHandler; # for timestamp
-			my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
-			$yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'radioStarted', $station_id, 0, $timestamp, sub {}, sub {});
+			$yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'radioStarted', $station_id, 0, undef, sub {}, sub {});
 
 			# 2b. Rebuild the wheel around the launched wave (reference: POST wheel/new with the same seeds + accumulated wheel feedbacks).
 			# Fire-and-forget: playback must not wait for the wheel response.
@@ -1047,13 +1045,6 @@ sub canDoAction {
     return 0;
 }
 
-sub _get_current_timestamp {
-    my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = gmtime(time);
-    $year += 1900;
-    $mon += 1;
-    return sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", $year, $mon, $mday, $hour, $min, $sec);
-}
-
 # AES-CTR streaming decryption for encrypted FLAC streams (encraw transport).
 # Called by LMS for every chunk read from the remote URL.
 sub _sysread {
@@ -1264,7 +1255,7 @@ sub _parse_flac_streaminfo {
     $log->info("YANDEX FLAC: samplerate=$sample_rate bps=$bits_per_sample ch=$channels"
         . " samples=$total_samples duration=${duration}s bitrate=$avg_bitrate");
 
-    my $song  = ${*$sock}{yandex_song};
+    my $song  = delete ${*$sock}{yandex_song};
     my $track = $song ? $song->track() : undef;
     return unless $track;
 

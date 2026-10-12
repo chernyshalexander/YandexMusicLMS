@@ -111,6 +111,7 @@ sub handler {
 		$params->{pref_wizard_cat_diversity}           ||= 0;
 		$params->{pref_wizard_cat_mood}                ||= 0;
 		$params->{pref_wizard_cat_language}            ||= 0;
+		$params->{pref_vibe_wheel_rebuild_on_play}     ||= 0;
 
 		# Handle adding a new account via token field
 		my $newToken = $params->{new_account_token};

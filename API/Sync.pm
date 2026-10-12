@@ -12,6 +12,7 @@ use Slim::Utils::Prefs;
 use URI;
 use URI::Escape qw(uri_escape_utf8);
 use Digest::MD5 qw(md5_hex);
+use Time::HiRes qw(time);
 use Plugins::yandex::API::Common;
 
 my $cache = Slim::Utils::Cache->new();
