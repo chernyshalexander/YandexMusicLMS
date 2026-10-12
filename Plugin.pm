@@ -75,6 +75,9 @@ sub initPlugin {
         yandex_wheel_id      => undef,
         yandex_wheel_seeds   => [],
         yandex_wheel_feedbacks => [],
+        vibe_wheel_rebuild_on_play => 1,
+        yandex_wheel_pending_seed  => undef,
+        yandex_wheel_pending_time  => 0,
     });
 
     # Preserve compatibility with the old single-token preference by moving

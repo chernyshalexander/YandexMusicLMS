@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 9;
+use Test::More tests => 20;
 
 # Mock Slim framework and environment
 BEGIN {
@@ -31,10 +31,14 @@ use Plugins::yandex::Browse::Radio;
 
 # Mock Client
 package MockClient;
-sub new { bless { id => '00:04:20:11:22:33', name => 'TestSqueezebox' }, shift }
+sub new { bless { id => '00:04:20:11:22:33', name => 'TestSqueezebox', executed => [] }, shift }
 sub id { shift->{id} }
 sub name { shift->{name} }
 sub string { return $_[1] }
+sub execute {
+    my ($self, $cmd) = @_;
+    push @{ $self->{executed} }, $cmd;
+}
 
 package main;
 
@@ -110,3 +114,80 @@ my $reshuffle_api_called = 0;
 Plugins::yandex::Browse::Radio::handleVibeWheelReshuffle($client, sub {}, {}, $mock_yandex_client, 'diversity:reshuffle_123');
 is($reshuffle_api_called, 1, "Reshuffle bypassed snapshot cache and called API");
 is(Plugins::yandex::Plugin::get_wheel_state($client)->{wheel_id}, 'reshuffled-wheel', "Wheel state updated with new wheelId");
+
+# 8. vibe_wheel_rebuild_on_play = 1 (default): wave items are links with play attribute
+my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+$prefs->set('vibe_wheel_rebuild_on_play', 1);
+Plugins::yandex::Plugin::clear_wheel_snapshot($client);
+
+my $raw_wheel_items = {
+    wheelId => 'wheel-rebuild-1',
+    items => [
+        {
+            type => 'WAVE',
+            data => {
+                wave => { name => 'Рок волна', seeds => ['genre:rock'] },
+                agent => { cover => { uri => 'http://cover.jpg/%%' } },
+            },
+        },
+        {
+            type => 'WAVE',
+            style => 'CONTROL_ACCENT',
+            data => {
+                wave => { seeds => ['user:onyourwave'] },
+                agent => { cover => { uri => 'http://cover.jpg/%%' } },
+            },
+        },
+    ],
+};
+
+{
+    no warnings 'redefine';
+    *MockYandexClient::wheel_new_with_seeds = sub {
+        my ($self, $cl, $seeds, $cb) = @_;
+        $cb->($raw_wheel_items);
+    };
+}
+
+my $menu_rebuild_on;
+Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $menu_rebuild_on = shift; }, {}, $mock_yandex_client, 'genre:rock');
+my $item0 = $menu_rebuild_on->{items}->[0];
+is($item0->{type}, 'link', "When rebuild_on_play=1, regular wave item type is 'link'");
+is($item0->{url}, \&Plugins::yandex::Browse::Radio::handleVibeWaveSelect, "Item url points to handleVibeWaveSelect");
+ok($item0->{play}, "Item has play URL attribute for direct play");
+
+# 9. handleVibeWaveSelect executes playlist play, records pending seed, and transitions to nowPlaying
+my $play_cb_called = 0;
+my $rebuilt_menu_result;
+Plugins::yandex::Browse::Radio::handleVibeWaveSelect(
+    $client,
+    sub {
+        $play_cb_called++;
+        $rebuilt_menu_result = shift;
+    },
+    {},
+    $mock_yandex_client,
+    'genre:rock',
+    $item0->{play}
+);
+
+is(scalar(@{ $client->{executed} }), 1, "Player executed playlist play command");
+is($client->{executed}->[0]->[1], 'play', "Playlist play command executed");
+is($prefs->client($client)->get('yandex_wheel_pending_seed'), 'genre:rock', "Pending seed stored in client prefs");
+is($rebuilt_menu_result->{items}->[0]->{nowPlaying}, 1, "Returned menu has nowPlaying => 1 for LMS XMLBrowser goNow transition");
+
+# 10. Cached snapshot retains clean items without nowPlaying flag
+my $snap_after_play = Plugins::yandex::Plugin::get_wheel_snapshot($client, 'genre:rock');
+ok($snap_after_play, "Snapshot was saved after rebuild on play");
+is($snap_after_play->{menu_result}->{items}->[0]->{nowPlaying}, undef, "Stored snapshot has clean item without nowPlaying flag");
+
+# 11. vibe_wheel_rebuild_on_play = 0: wave items are audio items with on_select => play
+$prefs->set('vibe_wheel_rebuild_on_play', 0);
+Plugins::yandex::Plugin::clear_wheel_snapshot($client);
+
+my $menu_rebuild_off;
+Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $menu_rebuild_off = shift; }, {}, $mock_yandex_client, 'genre:rock');
+my $item_off = $menu_rebuild_off->{items}->[0];
+is($item_off->{type}, 'audio', "When rebuild_on_play=0, regular wave item type is 'audio'");
+is($item_off->{on_select}, 'play', "When rebuild_on_play=0, on_select is 'play'");
+

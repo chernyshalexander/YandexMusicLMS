@@ -691,6 +691,14 @@ PLUGIN_YANDEX_BACK_TO_USUAL
 	EN	Back to usual
 	RU	Назад к привычному
 
+PLUGIN_YANDEX_VIBE_WHEEL_REBUILD_ON_PLAY
+	EN	Rebuild Vibe Wheel on play
+	RU	Перестраивать колесо при проигрывании
+
+PLUGIN_YANDEX_VIBE_WHEEL_REBUILD_ON_PLAY_DESC
+	EN	When playing a wave from Vibe Wheel, rebuild the wheel menu around the launched wave and transition to Now Playing. If disabled, wave items directly play without wheel rebuild.
+	RU	При запуске волны из Колеса перестраивать меню рекомендаций вокруг выбранной волны и переходить в Сейчас играет. Если отключено, волна просто запускается без перестроения колеса.
+
 PLUGIN_YANDEX_TAG_IN_THE_MOOD
 	EN	In the mood
 	RU	В настроении

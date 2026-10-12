@@ -35,7 +35,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language aes_backend demux_backend));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play aes_backend demux_backend));
 }
 
 sub handler {
