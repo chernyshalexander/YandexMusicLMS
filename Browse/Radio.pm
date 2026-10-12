@@ -124,6 +124,18 @@ sub handleVibeWheel {
         }
     }
 
+    my $is_reshuffle = defined $initial_seeds && ($initial_seeds =~ /^diversity:reshuffle/);
+
+    # If this is not an explicit reshuffle, check snapshot cache for matching client and seeds
+    if (!$is_reshuffle && $client) {
+        my $snap = Plugins::yandex::Plugin::get_wheel_snapshot($client, $seeds);
+        if ($snap && $snap->{menu_result}) {
+            $log->info("VIBE WHEEL: Cache hit for seeds='$seeds' on player " . ($client->name || $client->id) . " (" . scalar(@{$snap->{menu_result}{items}}) . " items)");
+            $cb->($snap->{menu_result});
+            return;
+        }
+    }
+
     my $is_custom_view = ($seeds ne 'user:onyourwave');
 
     $log->debug("VIBE WHEEL: Loading with initial_seeds='$seeds', is_custom=" . ($is_custom_view ? 'true' : 'false'));
@@ -221,10 +233,22 @@ sub handleVibeWheel {
 
             $log->info("VIBE WHEEL: Loaded " . scalar(@regular_waves) . " waves, " . scalar(@controls) . " controls");
 
-            $cb->({
+            my $menu_result = {
                 items => \@items,
                 title => cstring($client, 'PLUGIN_YANDEX_MY_VIBE_WHEEL'),
-            });
+            };
+
+            # Save snapshot for this client and seeds
+            if ($client) {
+                Plugins::yandex::Plugin::set_wheel_snapshot($client, {
+                    menu_result => $menu_result,
+                    wheel_id    => $wheel->{wheelId},
+                    seeds_str   => $seeds,
+                    timestamp   => time(),
+                });
+            }
+
+            $cb->($menu_result);
         },
         sub {
             my $error = shift;

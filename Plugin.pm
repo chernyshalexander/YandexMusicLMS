@@ -43,6 +43,8 @@ my $prefs = preferences('plugin.yandex');
 
 # Cache of API client objects keyed by Yandex user ID.
 my %api_clients;
+# In-memory snapshot of rendered Vibe Wheel menus keyed by client id
+our %wheel_snapshots;
 
 # Main LMS plugin lifecycle hook. Sets up preferences, compatibility handling,
 # and integration with both the LMS menu system and Yandex API clients.
@@ -264,6 +266,8 @@ sub shutdownPlugin {
     # Unsubscribe from player events
     # before the plugin is unloaded.
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
+
+    %wheel_snapshots = ();
 }
 
 # Player event handler
@@ -592,7 +596,48 @@ sub getClient {
     return $userId ? $api_clients{$userId} : undef;
 }
 
-# Vibe Wheel state and feedback management (per-player)
+# Vibe Wheel state, feedback, and snapshot management (per-player)
+sub get_wheel_snapshot {
+    my ($client, $expected_seeds_str) = @_;
+    return unless $client;
+
+    my $id = ref $client ? $client->id : $client;
+    my $snap = $wheel_snapshots{$id};
+    return unless $snap;
+
+    # Invalidate if older than 10 minutes (600s)
+    if (time() - ($snap->{timestamp} || 0) > 600) {
+        delete $wheel_snapshots{$id};
+        return;
+    }
+
+    # Invalidate if seeds do not match
+    if (defined $expected_seeds_str) {
+        if (($snap->{seeds_str} // '') ne $expected_seeds_str) {
+            return;
+        }
+    }
+
+    return $snap;
+}
+
+sub set_wheel_snapshot {
+    my ($client, $snapshot) = @_;
+    return unless $client && ref $snapshot eq 'HASH';
+
+    my $id = ref $client ? $client->id : $client;
+    $snapshot->{timestamp} ||= time();
+    $wheel_snapshots{$id} = $snapshot;
+}
+
+sub clear_wheel_snapshot {
+    my $client = shift;
+    return unless $client;
+
+    my $id = ref $client ? $client->id : $client;
+    delete $wheel_snapshots{$id};
+}
+
 sub get_wheel_state {
     my $client = shift;
     return unless $client;

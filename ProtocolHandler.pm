@@ -823,6 +823,7 @@ sub explodePlaylist {
 								wheel_id => $wheel->{wheelId},
 								seeds    => \@wheel_seeds,
 							});
+							Plugins::yandex::Plugin::clear_wheel_snapshot($client);
 						}
 						$log->info("VIBE WHEEL: Rebuilt for seeds [" . join(',', @wheel_seeds) . "], wheelId=" . (($wheel && $wheel->{wheelId}) ? $wheel->{wheelId} : 'none'));
 					},
