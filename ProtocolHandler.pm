@@ -44,6 +44,7 @@ use Time::HiRes;
 require Slim::Player::Playlist;
 require Slim::Player::Source;
 require Slim::Control::Request;
+require Plugins::yandex::Decode::AES128;
 
 
 my $log = logger('plugin.yandex');
