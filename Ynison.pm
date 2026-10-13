@@ -61,6 +61,7 @@ use constant {
     AUTH_ERROR_MAX_RETRIES  => 3,       # max attempts
 
     KEEPALIVE_INTERVAL   => 20,     # seconds
+    PROGRESS_INTERVAL    => 5,      # seconds - playback progress heartbeat
     RID_TIMEOUT          => 10,     # seconds - cleanup old RID entries
 
     # Queue buffering and frame management
@@ -320,6 +321,7 @@ sub disconnect {
     $self->{async} = undef;  # Clean up async reference
     # Cancel any pending timers
     Slim::Utils::Timers::killTimers($self, \&_send_ping);
+    Slim::Utils::Timers::killTimers($self, \&_send_progress_tick);
     Slim::Utils::Timers::killTimers($self, \&connect);
 }
 
@@ -600,6 +602,18 @@ sub _handle_state_service_upgrade {
 
     $self->_send_register_device();
     $self->_schedule_keepalive();
+    $self->_schedule_progress();
+
+    # Best-effort: ask server not to forward peer events while we are passive
+    $self->send_command({
+        rid => _generate_request_id(),
+        player_action_timestamp_ms => "" . _get_timestamp(),
+        activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+        update_session_params => { mute_events_if_passive => \1 },
+    });
+
+    # Settle window (2s) to ignore stale retransmitted state after reconnect
+    $self->{settle_until} = time() + 2.0;
 
     $self->_process_state_frames() if length $self->{read_buffer};
 }
@@ -753,6 +767,13 @@ sub _on_message_received {
         return;
     }
 
+    # Settle window check: discard stale retransmitted state right after reconnect
+    if ($self->{settle_until} && time() < $self->{settle_until}) {
+        $log->debug(sprintf('Ynison [%s]: Discarding state during post-reconnect settle window (%.1fs remaining)',
+            $self->{client}->name(), $self->{settle_until} - time()));
+        return;
+    }
+
     # Data update
     $self->{last_state} = $msg;
 
@@ -822,6 +843,46 @@ sub _on_readable {
 sub _schedule_keepalive {
     my ($self) = @_;
     Slim::Utils::Timers::setTimer($self, \&_send_ping, KEEPALIVE_INTERVAL(), 'keepalive');
+}
+
+sub _schedule_progress {
+    my ($self) = @_;
+    Slim::Utils::Timers::setTimer($self, \&_send_progress_tick, PROGRESS_INTERVAL(), 'progress');
+}
+
+sub _send_progress_tick {
+    my ($self) = @_;
+    return unless $self->{state} == STATE_ACTIVE;
+
+    my $client = $self->{client};
+    if (!$self->{syncing_from_yandex} && $client && $client->isPlaying()) {
+        my $song = $client->playingSong();
+        if ($song && $song->track() && $song->track()->url() =~ /^yandexmusic:/) {
+            my $dur_ms = int(($song->duration() || 0) * 1000);
+            my $prog_ms = 0;
+            eval { $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000) };
+            $prog_ms = $dur_ms if $dur_ms > 0 && $prog_ms > $dur_ms;
+
+            if ($dur_ms > 0) {
+                $self->send_command({
+                    rid                        => _generate_request_id(),
+                    player_action_timestamp_ms => "" . _get_timestamp(),
+                    activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+                    update_playing_status => {
+                        playing_status => {
+                            progress_ms    => "$prog_ms",
+                            duration_ms    => "$dur_ms",
+                            paused         => $client->isPaused() ? \1 : \0,
+                            playback_speed => 1.0,
+                            version        => $self->_new_version(),
+                        },
+                    },
+                });
+            }
+        }
+    }
+
+    $self->_schedule_progress();
 }
 
 sub _send_ping {

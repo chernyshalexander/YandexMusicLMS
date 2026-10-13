@@ -344,7 +344,22 @@ sub _handle_yandex_state_update {
     _ynison_sync_volume($client, $ynison, $state->{devices}) if $state->{devices};
 
     my $active_device_id = $state->{active_device_id_optional} // '';
-    return unless $active_device_id eq $ynison->device_id;
+    my $was_active       = $ynison->{we_are_active} // 0;
+    my $is_active        = ($active_device_id eq $ynison->device_id) ? 1 : 0;
+    $ynison->{we_are_active} = $is_active;
+
+    # Scenario: Playback taken over by another device (e.g. user pressed Play on phone)
+    if ($was_active && !$is_active) {
+        my $song = $client->playingSong();
+        if ($song && $song->track() && $song->track()->url() =~ /^yandexmusic:/ && $client->isPlaying()) {
+            $log->info("YANDEX: Playback taken over by another device ($active_device_id) — pausing LMS player");
+            $ynison->{syncing_from_yandex} = 1;
+            $client->execute(['pause', 1]);
+            $ynison->{syncing_from_yandex} = 0;
+        }
+    }
+
+    return unless $is_active;
 
     my $player_state = $state->{player_state};
     return unless $player_state;
