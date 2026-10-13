@@ -126,7 +126,7 @@ sub initPlugin {
     # Subscription to player status changes
     Slim::Control::Request::subscribe(
         \&playerEventCallback,
-        [['playlist', 'mixer', 'play', 'pause'], ['newsong', 'jump', 'stop', 'clear', 'volume', 'pause', 'client']]
+        [['playlist', 'mixer', 'play', 'pause', 'time'], ['newsong', 'jump', 'stop', 'clear', 'volume', 'pause', 'client']]
     );
 
     $class->SUPER::initPlugin(
@@ -422,14 +422,29 @@ sub _apply_yandex_state {
         $same_queue, $remote_track, $lms_track, $remote_paused));
 
     if ($same_queue && $remote_track eq $lms_track) {
+        # Check for remote seek from mobile app
+        my $remote_pos_ms = $status->{progress_ms} // 0;
+        $remote_pos_ms =~ s/[^\d]//g;
+        my $remote_pos = int(($remote_pos_ms || 0) / 1000);
+        my $local_pos  = int(Slim::Player::Source::songTime($client) || 0);
+        my $now        = time();
+
+        if ($now >= ($ynison->{seek_grace_until} // 0) && abs($remote_pos - $local_pos) >= 5) {
+            $log->info("YANDEX: Incoming seek from app: $local_pos -> $remote_pos s");
+            $ynison->{seek_grace_until} = $now + 3.0;
+            $client->execute(['time', $remote_pos]);
+        }
+
         _ynison_sync_play_pause($client, $remote_paused);
     } elsif ($same_queue) {
         $log->info("YANDEX: NEXT/PREV to index $remote_idx (track=$remote_track)");
+        $ynison->{seek_grace_until} = time() + 3.0;
         $client->execute(['playlist', 'index', $remote_idx]);
         _ynison_sync_play_pause($client, $remote_paused);
     } else {
         $log->info(sprintf('YANDEX: Cast: entity=%s tracks=%d idx=%d track=%s',
             $remote_entity || '(none)', scalar(@$remote_list), $remote_idx, $remote_track));
+        $ynison->{seek_grace_until} = time() + 3.0;
         _rebuild_lms_queue_from_yandex($client, $ynison, $queue, $remote_paused);
     }
 
@@ -506,6 +521,99 @@ sub _rebuild_lms_queue_from_yandex {
         $client->execute(['playlist', 'index', $current_index, 'noplay', 1]) if $start_paused;
         $client->execute(['playlist', 'index', $current_index]) unless $start_paused;
     }
+}
+
+# Auto-replenish radio / My Vibe queues when near the end of playable_list
+sub _ynison_maybe_replenish_radio {
+    my ($client, $ynison) = @_;
+    return unless $client && $ynison;
+    return if $ynison->{prefetch_inflight};
+
+    my $queue = $ynison->{yandex_queue} // {};
+    my $entity_type = $queue->{entity_type} // '';
+    return unless $entity_type =~ /^(?:RADIO|WAVE)$/i;
+
+    my $list = $queue->{playable_list} // [];
+    my $total = scalar(@$list);
+    return if $total == 0;
+
+    my $cur_idx = $queue->{current_playable_index} // 0;
+    return unless $cur_idx >= $total - 2;  # Trigger prefetch on penultimate or last track
+
+    my $radio_session_id = $queue->{entity_id};
+    return unless $radio_session_id;
+
+    my $last_track = $list->[-1];
+    my $last_track_id = $last_track->{playable_id} // return;
+
+    my $api_client = getAPIForClient($client) // return;
+
+    $ynison->{prefetch_inflight} = 1;
+    $log->info(sprintf('YANDEX: Pre-fetching radio tracks for session %s (current idx %d of %d)',
+        $radio_session_id, $cur_idx, $total));
+
+    $api_client->rotor_session_tracks(
+        $radio_session_id,
+        $last_track_id,
+        sub {
+            my $res = shift;
+            $ynison->{prefetch_inflight} = 0;
+            my $new_tracks = $res->{tracks} // [];
+            return unless @$new_tracks;
+
+            $log->info(sprintf('YANDEX: Received %d new tracks for radio session %s',
+                scalar(@$new_tracks), $radio_session_id));
+
+            my $from_field = $last_track->{from} // '';
+            my @added_items;
+
+            for my $t (@$new_tracks) {
+                my $tid = $t->{id} // next;
+                my $album_id = ($t->{albums} && @{$t->{albums}} && $t->{albums}[0]{id})
+                    ? ("" . $t->{albums}[0]{id}) : "";
+
+                push @added_items, {
+                    playable_id        => "" . $tid,
+                    album_id_optional  => $album_id,
+                    playable_type      => 'TRACK',
+                    from               => $from_field,
+                    title              => $t->{title} // '',
+                    cover_url_optional => $t->{coverUri} // '',
+                };
+
+                # Append to LMS playlist without triggering new Yandex Cast
+                $ynison->{syncing_from_yandex} = 1;
+                $client->execute(['playlist', 'add', 'yandexmusic://' . $tid]);
+                $ynison->{syncing_from_yandex} = 0;
+            }
+
+            return unless @added_items;
+
+            # Clone existing queue and push new items to update Ynison
+            my %updated_queue = %$queue;
+            my @updated_list = (@$list, @added_items);
+            $updated_queue{playable_list} = \@updated_list;
+            $updated_queue{version}       = $ynison->_new_version();
+
+            $ynison->{yandex_queue} = \%updated_queue;
+
+            my $state = eval { $ynison->_build_player_state() };
+            if ($state) {
+                $state->{player_queue} = \%updated_queue;
+                $ynison->send_command({
+                    update_player_state        => { player_state => $state },
+                    rid                        => Plugins::yandex::Ynison::_generate_request_id(),
+                    player_action_timestamp_ms => "" . Plugins::yandex::Ynison::_get_timestamp(),
+                    activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+                });
+            }
+        },
+        sub {
+            my $err = shift;
+            $ynison->{prefetch_inflight} = 0;
+            $log->warn("YANDEX: Failed to replenish radio tracks: $err");
+        }
+    );
 }
 
 sub _on_enable_ynison_change {
@@ -597,6 +705,11 @@ sub playerEventCallback {
                 # We are playing Yandex Music, so we reflect local playback events to the Yandex app.
                 if ($command eq 'pause' || $command eq 'play' || $command eq 'newsong') {
                     $ynison->{sent_paused} = $client->isPaused() ? 1 : 0;
+                    $ynison->update_state();
+                    _ynison_maybe_replenish_radio($client, $ynison) if $command eq 'newsong';
+                }
+                elsif ($command eq 'time') {
+                    $ynison->{seek_grace_until} = time() + 3.0;
                     $ynison->update_state();
                 }
                 elsif ($command eq 'jump') {
