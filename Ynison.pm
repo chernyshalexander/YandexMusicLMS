@@ -233,6 +233,7 @@ sub _build_player_state {
     my $dur_ms  = $song ? int(($song->duration() || 0) * 1000) : 0;
     my $prog_ms = 0;
     eval { $prog_ms = int((Slim::Player::Source::songTime($client) || 0) * 1000) };
+    $prog_ms = $dur_ms if $dur_ms > 0 && $prog_ms > $dur_ms;
 
     my $status = {
         duration_ms    => "$dur_ms",
@@ -730,6 +731,23 @@ sub _on_message_received {
         return $self->_handle_redirect($msg);
     }
 
+    # Handle server errors and rebalancing
+    if (my $err = $msg->{error}) {
+        my $err_msg = $err->{message} // 'Unknown error';
+        my $code = eval { $err->{details}{'ynison-error-code'} } // '';
+        $log->warn(sprintf('Ynison [%s]: Server error received: %s (code=%s)',
+            $self->{client}->name(), $err_msg, $code || 'none'));
+
+        # Immediate reconnect on rebalance error codes
+        if ($code =~ /^(?:REDIRECT_REQUIRED|REBALANCE|SESSION_EXPIRED|UNKNOWN_SESSION)$/i || $code ne '') {
+            $log->info(sprintf('Ynison [%s]: Server rebalance / session error (%s), scheduling reconnect',
+                $self->{client}->name(), $code));
+            $self->_schedule_reconnect('rebalance');
+            return;
+        }
+        return;
+    }
+
     if ($msg->{ping}) {
         $self->_send_pong();
         return;
@@ -874,9 +892,9 @@ sub _encode_ws_text_frame {
     $d[$_] ^= $m[$_ % 4] for 0..$#d;
 
     my $header;
-    if    ($len <= 125)   { $header = pack('CC',  0x81, 0x80 | $len); }
-    elsif ($len <= 65535) { $header = pack('CCn', 0x81, 0x80 | 126, $len); }
-    else                  { return undef; }
+    if    ($len <= 125)   { $header = pack('CC',   0x81, 0x80 | $len); }
+    elsif ($len <= 65535) { $header = pack('CCn',  0x81, 0x80 | 126, $len); }
+    else                  { $header = pack('CCNN', 0x81, 0x80 | 127, 0, $len); }
 
     return $header . $mask . pack('C*', @d);
 }
@@ -920,10 +938,12 @@ sub _send_frame {
 
 sub _new_version {
     my ($self) = @_;
+    my $v  = int(rand(10**18));
+    my $ts = _get_timestamp();
     return {
         device_id    => $self->{device_id},
-        version      => int(rand(10**18)),
-        timestamp_ms => _get_timestamp(),
+        version      => "$v",
+        timestamp_ms => "$ts",
     };
 }
 
@@ -979,14 +999,20 @@ Returns:
 sub build_pause_request {
     my ($self, $current_status, $paused) = @_;
 
+    my $prog_ms = $current_status->{progress_ms} // 0;
+    my $dur_ms  = $current_status->{duration_ms} // 0;
+    $prog_ms = "$prog_ms";
+    $dur_ms  = "$dur_ms";
+    $prog_ms = $dur_ms if $dur_ms ne "0" && int($prog_ms) > int($dur_ms);
+
     return {
         rid                         => _generate_request_id(),
-        player_action_timestamp_ms  => _get_timestamp(),
+        player_action_timestamp_ms  => "" . _get_timestamp(),
         activity_interception_type  => 'DO_NOT_INTERCEPT_BY_DEFAULT',
         update_playing_status => {
             playing_status => {
-                progress_ms    => $current_status->{progress_ms} // 0,
-                duration_ms    => $current_status->{duration_ms} // 0,
+                progress_ms    => "$prog_ms",
+                duration_ms    => "$dur_ms",
                 paused         => $paused ? \1 : \0,
                 playback_speed => $current_status->{playback_speed} // 1.0,
                 version        => $self->_new_version(),
@@ -999,7 +1025,8 @@ sub build_pause_request {
 
 Build UpdatePlayerState request to change track index by delta.
 
-Clones current PlayerQueue, changes only current_playable_index and version.
+Clones current PlayerQueue (preserving queue.wave_queue and other metadata),
+changes only current_playable_index and version.
 Resets playback progress but preserves paused flag.
 
 Args:
@@ -1027,25 +1054,21 @@ sub build_change_track_request {
     $new_idx = 0 if $new_idx < 0 && $total > 0;
     $new_idx = $total - 1 if $new_idx >= $total && $total > 0;
 
+    # Clone queue to preserve embedded objects (like queue.wave_queue)
+    my %new_queue = %$queue;
+    $new_queue{current_playable_index} = $new_idx;
+    $new_queue{version}                = $self->_new_version();
+
     return {
         rid                         => _generate_request_id(),
-        player_action_timestamp_ms  => _get_timestamp(),
+        player_action_timestamp_ms  => "" . _get_timestamp(),
         activity_interception_type  => 'DO_NOT_INTERCEPT_BY_DEFAULT',
         update_player_state => {
             player_state => {
-                player_queue => {
-                    current_playable_index => $new_idx,
-                    playable_list          => $queue->{playable_list} // [],
-                    options                => $queue->{options} // {repeat_mode => 'NONE'},
-                    entity_id              => $queue->{entity_id} // '',
-                    entity_type            => $queue->{entity_type} // 'VARIOUS',
-                    entity_context         => $queue->{entity_context} // 'BASED_ON_ENTITY_BY_DEFAULT',
-                    from_optional          => $queue->{from_optional} // '',
-                    version                => $self->_new_version(),
-                },
+                player_queue => \%new_queue,
                 status => {
-                    progress_ms    => 0,
-                    duration_ms    => 0,
+                    progress_ms    => "0",
+                    duration_ms    => "0",
                     paused         => $status->{paused} // \1,
                     playback_speed => $status->{playback_speed} // 1.0,
                     version        => $self->_new_version(),
@@ -1196,6 +1219,9 @@ sub _get_reconnect_strategy {
 
     if ($reason eq 'auth_error') {
         return (undef, undef, $error_count < AUTH_ERROR_MAX_RETRIES());
+    }
+    elsif ($reason eq 'rebalance') {
+        return (1, 5, 1);
     }
     elsif ($reason eq 'timeout') {
         return (TIMEOUT_RECONNECT_MIN(), TIMEOUT_RECONNECT_MAX(), 1);

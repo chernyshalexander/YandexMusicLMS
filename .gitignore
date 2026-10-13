@@ -2,6 +2,9 @@
 .vscode/
 token.token
 test/token.txt
+test/*.token*
+*.token
+*.token*
 CLAUDE.MD
 DEV_REPORT.md
 FLAC_RESEARCH.md

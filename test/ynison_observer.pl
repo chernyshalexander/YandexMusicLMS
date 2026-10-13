@@ -102,6 +102,31 @@ sub cyan   { color("36", $_[0]) }
 sub bold   { color("1",  $_[0]) }
 sub dim    { color("2",  $_[0]) }
 
+# --- Anonymization helper ---
+sub anonymize_data {
+    my ($data) = @_;
+    return $data unless defined $data;
+
+    if (ref($data) eq 'HASH') {
+        my %copy;
+        for my $k (keys %$data) {
+            if ($k =~ /^(?:token|authorization|secret|password|access_token|refresh_token)$/i) {
+                $copy{$k} = '<REDACTED_SECRET>';
+            } elsif ($k =~ /^(?:uid|user_id|session_id)$/i) {
+                $copy{$k} = '<REDACTED_ID>';
+            } elsif ($k =~ /^(?:login|email|fullName|firstName|secondName|displayName|birthday)$/i) {
+                $copy{$k} = '<REDACTED_USER_INFO>';
+            } else {
+                $copy{$k} = anonymize_data($data->{$k});
+            }
+        }
+        return \%copy;
+    } elsif (ref($data) eq 'ARRAY') {
+        return [ map { anonymize_data($_) } @$data ];
+    }
+    return $data;
+}
+
 # --- Message analysis ---
 sub analyze_message {
     my ($msg, $raw_json) = @_;
@@ -112,12 +137,13 @@ sub analyze_message {
     print "\n" . ("─" x 70) . "\n";
     print bold("[$ts] MSG #$msg_count") . "\n";
 
-    # Log to file
+    # Log to file (with sensitive data anonymization)
     if ($log_fh) {
+        my $clean_msg = anonymize_data($msg);
         my $log_entry = {
             ts  => $ts,
             num => $msg_count,
-            msg => $msg,
+            msg => $clean_msg,
         };
         print $log_fh encode_json($log_entry) . "\n";
     }

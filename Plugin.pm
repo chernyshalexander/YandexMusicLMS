@@ -349,19 +349,18 @@ sub _handle_yandex_state_update {
     my $player_state = $state->{player_state};
     return unless $player_state;
 
-    # Echo filter: skip our own state updates echoed back by server.
-    # Only filter if paused status also matches what we last sent — otherwise
-    # it's a real play/pause command from another device (e.g. phone).
-    my $q_author = ($player_state->{player_queue}{version} // {})->{device_id} // '';
-    if ($q_author eq $ynison->device_id) {
-        my $remote_paused = (($player_state->{status} // {})->{paused} ? 1 : 0);
-        my $sent_paused   = $ynison->{sent_paused};
-        if (defined($sent_paused) && $sent_paused == $remote_paused) {
-            $log->debug('YANDEX: Skipping own echo');
-            return;
-        }
-        $log->info(sprintf('YANDEX: Version ours but status changed (sent=%s remote=%d) — processing',
-            defined($sent_paused) ? $sent_paused : 'undef', $remote_paused));
+    # Echo filter:
+    # A state update is our own echo if and only if BOTH player_queue version
+    # and status version were authored by our device_id.
+    # If another device sends play/pause or next, queue_author might remain ours
+    # while status_author becomes the remote device.
+    my $our_id   = $ynison->device_id;
+    my $q_author = (($player_state->{player_queue} // {})->{version} // {})->{device_id} // '';
+    my $s_author = (($player_state->{status}       // {})->{version} // {})->{device_id} // '';
+
+    if ($q_author eq $our_id && $s_author eq $our_id) {
+        $log->debug('YANDEX: Skipping own echo (both player_queue and status versions belong to this device)');
+        return;
     }
 
     $ynison->{syncing_from_yandex} = 1;
