@@ -148,6 +148,19 @@ sub analyze_message {
         print $log_fh encode_json($log_entry) . "\n";
     }
 
+    # --- Server Error ---
+    if (my $err = $msg->{error}) {
+        my $err_msg = $err->{message} // 'Unknown error';
+        my $details = (ref $err->{details} eq 'HASH') ? $err->{details} : {};
+        my $code    = $details->{'ynison-error-code'} // '';
+        my $http    = $err->{http_code} // $err->{http_status} // '';
+        print red("  [SERVER ERROR] ") . bold($err_msg) . " (code=$code, http=$http)\n";
+        for my $k (sort keys %$details) {
+            print dim("    $k: $details->{$k}") . "\n";
+        }
+        return;
+    }
+
     # --- Active device ---
     my $active_id = $msg->{active_device_id_optional} // '';
     if ($active_id ne $prev_state->{active_device_id}) {

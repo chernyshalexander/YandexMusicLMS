@@ -186,6 +186,11 @@ sub is_active {
     return $self->{state} == STATE_ACTIVE();
 }
 
+sub is_connected {
+    my ($self) = @_;
+    return $self->is_active();
+}
+
 sub device_id {
     my ($self) = @_;
     return $self->{device_id};
@@ -322,6 +327,7 @@ sub disconnect {
     # Cancel any pending timers
     Slim::Utils::Timers::killTimers($self, \&_send_ping);
     Slim::Utils::Timers::killTimers($self, \&_send_progress_tick);
+    Slim::Utils::Timers::killTimers($self, \&_send_volume_tick);
     Slim::Utils::Timers::killTimers($self, \&connect);
 }
 
@@ -747,18 +753,58 @@ sub _on_message_received {
 
     # Handle server errors and rebalancing
     if (my $err = $msg->{error}) {
-        my $err_msg = $err->{message} // 'Unknown error';
-        my $code = eval { $err->{details}{'ynison-error-code'} } // '';
-        $log->warn(sprintf('Ynison [%s]: Server error received: %s (code=%s)',
-            $self->{client}->name(), $err_msg, $code || 'none'));
+        my $err_msg   = $err->{message} // 'Unknown error';
+        my $details   = (ref $err->{details} eq 'HASH') ? $err->{details}
+                      : (ref $err->{extra_headers} eq 'HASH') ? $err->{extra_headers}
+                      : {};
+        my $code      = $details->{'ynison-error-code'} // '';
+        my $http_code = $err->{http_code} // $err->{http_status} // '';
 
-        # Immediate reconnect on rebalance error codes
-        if ($code =~ /^(?:REDIRECT_REQUIRED|REBALANCE|SESSION_EXPIRED|UNKNOWN_SESSION)$/i || $code ne '') {
+        $log->warn(sprintf('Ynison [%s]: Server error received: %s (code=%s, http=%s)',
+            $self->{client}->name(), $err_msg, $code || 'none', $http_code || 'none'));
+
+        # 1. Queue boundary reached (400030002) - normal user navigation boundary (e.g. next on last track)
+        if ($code eq '400030002') {
+            $log->info(sprintf('Ynison [%s]: Queue boundary reached (code=400030002), ignoring gracefully',
+                $self->{client}->name()));
+            return;
+        }
+
+        # 2. Progress out of range (400030001) - clamped or non-fatal
+        if ($code eq '400030001') {
+            $log->warn(sprintf('Ynison [%s]: Progress out of range (code=400030001): %s',
+                $self->{client}->name(), $err_msg));
+            return;
+        }
+
+        # 3. Device displaced (400090001) - another client connected with this device_id
+        if ($code eq '400090001') {
+            $log->error(sprintf('Ynison [%s]: Device displaced by another connection (code=400090001)',
+                $self->{client}->name()));
+            $self->_schedule_reconnect('displaced');
+            return;
+        }
+
+        # 4. Server rebalance / redirect / session expired - immediate reconnect
+        if ($code =~ /^(?:REDIRECT_REQUIRED|REBALANCE|SESSION_EXPIRED|UNKNOWN_SESSION)$/i) {
             $log->info(sprintf('Ynison [%s]: Server rebalance / session error (%s), scheduling reconnect',
                 $self->{client}->name(), $code));
             $self->_schedule_reconnect('rebalance');
             return;
         }
+
+        # 5. Check if server requested go_away cooldown (cap at 60s max to prevent hour-long freeze during transient outages)
+        if (my $go_away = $details->{'ynison-go-away-for-seconds'}) {
+            my $delay = int($go_away);
+            $delay = 60 if $delay > 60;
+            $delay = 5  if $delay < 5;
+            $log->warn(sprintf('Ynison [%s]: Server requested cooldown (header=%ds), retrying in %ds',
+                $self->{client}->name(), $go_away, $delay));
+            $self->{reconnect_delay} = $delay;
+            $self->_schedule_reconnect('server_go_away');
+            return;
+        }
+
         return;
     }
 
@@ -917,12 +963,14 @@ sub _schedule_reconnect {
         return;
     }
 
-    # Calculate next delay using strategy bounds
-    if ($self->{reconnect_delay} < $min_delay) {
-        $self->{reconnect_delay} = $min_delay;
-    } elsif ($self->{reconnect_delay} < $max_delay) {
-        $self->{reconnect_delay} = int($self->{reconnect_delay} * 1.5);
-        $self->{reconnect_delay} = $max_delay if $self->{reconnect_delay} > $max_delay;
+    # Calculate next delay using strategy bounds (unless explicitly set by server_go_away)
+    if ($reason ne 'server_go_away') {
+        if ($self->{reconnect_delay} < $min_delay) {
+            $self->{reconnect_delay} = $min_delay;
+        } elsif ($self->{reconnect_delay} < $max_delay) {
+            $self->{reconnect_delay} = int($self->{reconnect_delay} * 1.5);
+            $self->{reconnect_delay} = $max_delay if $self->{reconnect_delay} > $max_delay;
+        }
     }
 
     $self->{reconnection_stats}->{total_attempts}++;
@@ -1107,13 +1155,17 @@ sub build_change_track_request {
     my $status = $current_state->{status} // {};
 
     my $total = scalar(@{$queue->{playable_list} // []});
-    my $new_idx = $total > 0
-        ? ($queue->{current_playable_index} // 0) + $delta
-        : -1;
+    return undef if $total == 0;
 
-    # Basic range protection only
-    $new_idx = 0 if $new_idx < 0 && $total > 0;
-    $new_idx = $total - 1 if $new_idx >= $total && $total > 0;
+    my $cur_idx = $queue->{current_playable_index} // 0;
+    my $new_idx = $cur_idx + $delta;
+
+    # Gracefully avoid sending requests beyond queue boundaries
+    if ($new_idx < 0 || $new_idx >= $total) {
+        $log->debug(sprintf('Ynison: Change track delta=%d out of bounds (current=%d, total=%d), skipping request',
+            $delta, $cur_idx, $total));
+        return undef;
+    }
 
     # Clone queue to preserve embedded objects (like queue.wave_queue)
     my %new_queue = %$queue;
@@ -1173,6 +1225,114 @@ Returns:
 sub build_prev_track_request {
     my ($self, $current_state) = @_;
     return $self->build_change_track_request($current_state, -1);
+}
+
+=head2 build_set_volume_request($volume, $target_device_id)
+
+Build request to update device volume in Ynison.
+
+Args:
+  $volume - Normalized volume float [0.0; 1.0]
+  $target_device_id - Device ID to update (defaults to self device_id)
+
+Returns:
+  Hash suitable for send_command()
+
+=cut
+
+sub build_set_volume_request {
+    my ($self, $volume, $target_device_id) = @_;
+    $target_device_id //= $self->{device_id};
+
+    $volume = 0.0 if !defined $volume || $volume < 0.0;
+    $volume = 1.0 if $volume > 1.0;
+
+    return {
+        rid                         => _generate_request_id(),
+        player_action_timestamp_ms  => "" . _get_timestamp(),
+        activity_interception_type  => 'DO_NOT_INTERCEPT_BY_DEFAULT',
+        update_volume_info => {
+            device_id   => $target_device_id,
+            volume_info => {
+                volume  => $volume,
+                version => $self->_new_version(),
+            },
+        },
+    };
+}
+
+sub send_volume_update {
+    my ($self) = @_;
+    return unless $self->is_connected();
+
+    Slim::Utils::Timers::killTimers($self, \&_send_volume_tick);
+    Slim::Utils::Timers::setTimer($self, \&_send_volume_tick, 0.2, 'volume');
+}
+
+sub _send_volume_tick {
+    my ($self) = @_;
+    return unless $self->is_connected() && $self->{client};
+
+    my $cur_vol = $self->{client}->volume();
+    return unless defined $cur_vol;
+
+    my $vol_norm = $cur_vol / 100.0;
+    $vol_norm = 0.0 if $vol_norm < 0.0;
+    $vol_norm = 1.0 if $vol_norm > 1.0;
+
+    $log->debug(sprintf('Ynison [%s]: Sending volume update: %.2f (LMS=%d)',
+        $self->{client}->name(), $vol_norm, $cur_vol));
+
+    my $cmd = $self->build_set_volume_request($vol_norm);
+    $self->send_command($cmd) if $cmd;
+}
+
+=head2 get_current_progress_ms($status, $now_ms)
+
+Calculate actual playback progress in milliseconds taking elapsed time into account.
+If playing, adds (now_ms - timestamp_ms) * speed to progress_ms, clamped to duration_ms.
+
+Args:
+  $status - PlayingStatus hash
+  $now_ms - Optional current unix timestamp in milliseconds
+
+Returns:
+  Progress in milliseconds as integer
+
+=cut
+
+sub get_current_progress_ms {
+    my ($self, $status, $now_ms) = @_;
+    return 0 unless ref $status eq 'HASH';
+
+    my $progress_ms = $status->{progress_ms} // 0;
+    $progress_ms =~ s/[^\d]//g;
+    $progress_ms = int($progress_ms || 0);
+
+    my $timestamp_ms = ($status->{version} // {})->{timestamp_ms} // 0;
+    $timestamp_ms =~ s/[^\d]//g;
+    $timestamp_ms = int($timestamp_ms || 0);
+
+    my $is_paused = $status->{paused} ? 1 : 0;
+
+    if (!$is_paused && $timestamp_ms > 0) {
+        $now_ms //= int(Time::HiRes::time() * 1000);
+        my $elapsed = $now_ms - $timestamp_ms;
+        $elapsed = 0 if $elapsed < 0;
+        my $speed = $status->{playback_speed} || 1.0;
+        $speed = 1.0 if $speed <= 0;
+        $progress_ms += int($elapsed * $speed);
+    }
+
+    my $duration_ms = $status->{duration_ms} // 0;
+    $duration_ms =~ s/[^\d]//g;
+    $duration_ms = int($duration_ms || 0);
+
+    if ($duration_ms > 0 && $progress_ms > $duration_ms) {
+        $progress_ms = $duration_ms;
+    }
+
+    return $progress_ms;
 }
 
 # WebSocket frame helpers (simplified)
@@ -1258,6 +1418,8 @@ sub _detect_command_type {
     return 'update_player_state' if $msg->{update_player_state};
     return 'update_playing_status' if $msg->{update_playing_status};
     return 'update_device' if $msg->{update_device};
+    return 'update_session_params' if $msg->{update_session_params};
+    return 'update_volume_info' if $msg->{update_volume_info};
     return 'unknown';
 }
 

@@ -422,15 +422,14 @@ sub _apply_yandex_state {
         $same_queue, $remote_track, $lms_track, $remote_paused));
 
     if ($same_queue && $remote_track eq $lms_track) {
-        # Check for remote seek from mobile app
-        my $remote_pos_ms = $status->{progress_ms} // 0;
-        $remote_pos_ms =~ s/[^\d]//g;
+        # Check for remote seek from mobile app (with dynamic progress interpolation)
+        my $remote_pos_ms = $ynison->get_current_progress_ms($status);
         my $remote_pos = int(($remote_pos_ms || 0) / 1000);
         my $local_pos  = int(Slim::Player::Source::songTime($client) || 0);
         my $now        = time();
 
         if ($now >= ($ynison->{seek_grace_until} // 0) && abs($remote_pos - $local_pos) >= 5) {
-            $log->info("YANDEX: Incoming seek from app: $local_pos -> $remote_pos s");
+            $log->info("YANDEX: Incoming seek from app: $local_pos -> $remote_pos s (interpolated from ${remote_pos_ms}ms)");
             $ynison->{seek_grace_until} = $now + 3.0;
             $client->execute(['time', $remote_pos]);
         }
@@ -445,7 +444,9 @@ sub _apply_yandex_state {
         $log->info(sprintf('YANDEX: Cast: entity=%s tracks=%d idx=%d track=%s',
             $remote_entity || '(none)', scalar(@$remote_list), $remote_idx, $remote_track));
         $ynison->{seek_grace_until} = time() + 3.0;
-        _rebuild_lms_queue_from_yandex($client, $ynison, $queue, $remote_paused);
+        my $remote_pos_ms = $ynison->get_current_progress_ms($status);
+        my $remote_pos = int(($remote_pos_ms || 0) / 1000);
+        _rebuild_lms_queue_from_yandex($client, $ynison, $queue, $remote_paused, $remote_pos);
     }
 
     $ynison->update_cached_queue($player_state);
@@ -500,14 +501,15 @@ sub _ynison_sync_volume {
 }
 
 sub _rebuild_lms_queue_from_yandex {
-    my ($client, $ynison, $queue, $start_paused) = @_;
+    my ($client, $ynison, $queue, $start_paused, $initial_pos) = @_;
+    $initial_pos //= 0;
 
     my @playable_list = @{$queue->{playable_list} // []};
     my $current_index = $queue->{current_playable_index} // 0;
     return unless @playable_list;
 
-    $log->info(sprintf('YANDEX: Rebuilding queue: %d tracks idx=%d paused=%d',
-        scalar(@playable_list), $current_index, $start_paused ? 1 : 0));
+    $log->info(sprintf('YANDEX: Rebuilding queue: %d tracks idx=%d paused=%d pos=%ds',
+        scalar(@playable_list), $current_index, $start_paused ? 1 : 0, $initial_pos));
 
     $client->execute(['playlist', 'clear']);
 
@@ -520,6 +522,9 @@ sub _rebuild_lms_queue_from_yandex {
     if ($current_index >= 0 && $current_index < @playable_list) {
         $client->execute(['playlist', 'index', $current_index, 'noplay', 1]) if $start_paused;
         $client->execute(['playlist', 'index', $current_index]) unless $start_paused;
+        if ($initial_pos >= 2) {
+            $client->execute(['time', $initial_pos]);
+        }
     }
 }
 
@@ -693,6 +698,11 @@ sub playerEventCallback {
         }
 
         if ($ynison && !$ynison->{syncing_from_yandex}) {
+            if ($command eq 'volume') {
+                $ynison->send_volume_update();
+                return;
+            }
+
             # Check if current content is Yandex Music
             my $song = $client->playingSong();
             my $is_yandex = 0;
