@@ -142,12 +142,13 @@ sub handleVibeWheel {
     if ($is_intermediate && $client) {
         my $delivered = Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client);
         if ($delivered && $delivered->{menu_result}) {
-            $log->debug("VIBE WHEEL: Intermediate index resolution - serving last delivered menu");
+            $log->info("VIBE WHEEL: Intermediate index resolution (qty=1) - serving last delivered menu (" . scalar(@{ $delivered->{menu_result}{items} || [] }) . " items)");
             $cb->($delivered->{menu_result});
             return;
         }
         # No delivered copy (e.g. server restarted while the client kept its
         # view) - fall through and resolve against the current snapshot.
+        $log->info("VIBE WHEEL: Intermediate index resolution (qty=1) - no delivered snapshot, falling through");
     }
 
     my $saved_state = Plugins::yandex::Plugin::get_wheel_state($client);
@@ -168,6 +169,9 @@ sub handleVibeWheel {
         my $snap = Plugins::yandex::Plugin::get_wheel_snapshot($client, $seeds);
         if ($snap && $snap->{menu_result}) {
             $log->info("VIBE WHEEL: Cache hit for seeds='$seeds' on player " . ($client->name || $client->id) . " (" . scalar(@{$snap->{menu_result}{items}}) . " items)");
+            # The client renders this cached list as the wheel level now, so
+            # it becomes the reference for subsequent intermediate resolutions.
+            Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, $snap->{menu_result});
             $cb->($snap->{menu_result});
             return;
         }
@@ -307,12 +311,11 @@ sub handleVibeWheel {
                     seeds_str   => $seeds,
                     timestamp   => time(),
                 });
-                # A plain menu open (no explicit seeds, no rebuild-on-play)
-                # delivers this list as the wheel level - remember it as the
+                # Every non-intermediate fetch of this level (menu open,
+                # cache-hit open, reshuffle, rebuild-on-play) renders its
+                # result to the client as the wheel level - it becomes the
                 # reference for subsequent intermediate index resolutions.
-                if (!defined $initial_seeds && !$trigger_now_playing) {
-                    Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, $menu_result);
-                }
+                Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, $menu_result) if $client;
             }
 
             if ($trigger_now_playing && @items) {
@@ -345,7 +348,7 @@ sub handleVibeWaveSelect {
     if ($args && defined $args->{quantity} && $args->{quantity} == 1) {
         my $snap = $client && Plugins::yandex::Plugin::get_wheel_snapshot($client, undef);
         if ($snap && $snap->{menu_result}) {
-            $log->debug("VIBE WHEEL: Intermediate descent through wave '$wave_seed' - serving current wheel without playback");
+            $log->info("VIBE WHEEL: Intermediate descent through wave '$wave_seed' - serving current wheel without playback");
             $cb->($snap->{menu_result});
             return;
         }

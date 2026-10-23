@@ -1,7 +1,7 @@
 # Расследование: «сдвиг» выбора волны в Колесе вибраций
 
-Статус: **фикс реализован, юнит-тесты проходят (31/31), ожидает деплоя и ручной проверки на живом сервере (v0.79)**.
-Дата: 2026-10-23. Ветка: `experiment`.
+Статус: **фикс v0.80 — полный (delivered обновляется на КАЖДОЙ отдаче меню клиенту); 34/34 юнит-теста зелёные; ожидает деплоя и ручной проверки**.
+Дата: 2026-10-23/24. Ветка: `experiment`.
 
 ## Симптом
 
@@ -76,15 +76,29 @@ Rebuild'ы (UI и фоновый в `ProtocolHandler::explodePlaylist`) пишу
 
 ## Статус реализации
 
-- [x] `Plugin.pm`: `%wheel_delivered_snapshots`, get/set, очистка при shutdown.
-- [x] `Radio.pm`: intermediate-ветка в `handleVibeWheel`, пометка delivered,
-      guard в `handleVibeWaveSelect`.
-- [x] Версия поднята 0.789 → **0.79** (план в ранней версии документа говорил
-      «0.84 → 0.85» — устарел: версия была вручную сменена на 0.789).
-- [x] `test/test_wheel_snapshot.pl` работает и дополнен тестами фикса
-      (31/31 зелёные, включая ynison-регрессию). Причина прежних падений —
-      НЕ моки, а порядок путей: системный `JSON::XS` .so (2.34) конфликтовал с
-      LMS (2.3). Правильный запуск (арх-каталоги LMS раньше CPAN):
+- [x] `Plugin.pm`: `%wheel_delivered_snapshots`, get/set/**clear**, очистка при shutdown.
+- [x] `Radio.pm`: intermediate-ветка в `handleVibeWheel`, guard в `handleVibeWaveSelect`.
+- [x] **v0.80 — закрыта дыра v0.79**: delivered обновлялся только при «чистом»
+      открытии меню (API-путь), из-за чего после rebuild-on-play клиент видел
+      перестроенный список, а эталон оставался старым → сдвиг возвращался на
+      сценарии «выбрал волну → назад → выбрал другую» (те же «первые 2–3 клика
+      ок»). Теперь delivered обновляется на КАЖДОЙ отдаче меню клиенту:
+      cache-hit открытие, reshuffle, rebuild-on-play select. Промежуточные
+      резолюции (qty=1) по-прежнему только читают delivered и не пишут его.
+- [x] Диагностическое логирование на INFO (видно без debug):
+      `Intermediate index resolution (qty=1) - serving last delivered menu (N items)`
+      / `- no delivered snapshot, falling through`;
+      `Intermediate descent through wave '...' - serving current wheel without playback`.
+- [x] **Урок деплоя (инцидент 23.10 вечера)**: файлы 0.79 были установлены,
+      но LMS не перезагружен — Perl-модули грузятся один раз при старте, в
+      логе при этом видны СТАРЫЕ номера строк (158/316 вместо 178/354) — по
+      ним однозначно определяется, какой код исполняется. После рестарта LMS
+      фикс v0.79 работал. Проверка перед тестом: (а) версия в настройках
+      плагина; (б) номера строк в логе соответствуют актуальному файлу.
+- [x] Версия: 0.789 → 0.79 → **0.80**.
+- [x] `test/test_wheel_snapshot.pl`: 34/34 зелёные (11 тестов v0.79 + тест 30
+      флипнут: rebuild-on-play ДОЛЖЕН обновлять delivered; +cache-hit маркирует
+      delivered; +reshuffle маркирует delivered; +clear_delivered). Запуск:
 
 ```sh
 A=/usr/share/squeezeboxserver/CPAN/arch
@@ -92,11 +106,11 @@ PERL5LIB="$A/5.38/x86_64-linux-thread-multi:$A/5.38/x86_64-linux-thread-multi/au
   perl test/test_wheel_snapshot.pl
 ```
 
-- [ ] Ручная проверка на сервере (v0.79): открыть колесо → 4–5 подряд выборов
-      разных волн (с BACK между ними) → в логе «Wave selected» совпадает с
-      кликнутой волной КАЖДЫЙ раз; в debug-логе видна строка
-      «Intermediate index resolution - serving last delivered menu»;
-      «Колесо следует за волной» при открытии меню сохранено.
+- [ ] Ручная проверка v0.80 (обязательно ПЕРЕЗАГРУЗИТЬ LMS после деплоя):
+      сценарий «выбрать волну → назад → выбрать другую → назад → …» 4–5 раз —
+      seed в `Wave selected with seed='...'` совпадает с кликнутой волной
+      каждый раз; в логе на каждый клик видна строка
+      `Intermediate index resolution (qty=1) - serving last delivered menu`.
 
 ## Остаточные ограничения (осознанные, не чиним)
 

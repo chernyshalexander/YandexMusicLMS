@@ -1120,6 +1120,14 @@ sub set_delivered_wheel_snapshot {
     };
 }
 
+sub clear_delivered_wheel_snapshot {
+    my $client = shift;
+    return unless $client;
+
+    my $id = ref $client ? $client->id : $client;
+    delete $wheel_delivered_snapshots{$id};
+}
+
 sub get_wheel_state {
     my $client = shift;
     return unless $client;

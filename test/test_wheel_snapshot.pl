@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 31;
+use Test::More tests => 34;
 
 # Mock Slim framework and environment
 BEGIN {
@@ -200,8 +200,9 @@ is($item_off->{on_select}, 'play', "When rebuild_on_play=0, on_select is 'play'"
 # ---------------------------------------------------------------------------
 $prefs->set('vibe_wheel_rebuild_on_play', 1);
 
-# 12. Delivered snapshot is initially empty
-is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client), undef, "Delivered snapshot is initially empty");
+# 12. Delivered snapshot clears (any earlier API-path wheel build marks it)
+Plugins::yandex::Plugin::clear_delivered_wheel_snapshot($client);
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client), undef, "Delivered snapshot cleared");
 
 # 13. set/get roundtrip
 my $delivered_menu = {
@@ -274,7 +275,15 @@ is(scalar @{ $client->{executed} }, $executed_before, "Intermediate wave descent
 is($prefs->client($client)->get('yandex_wheel_pending_seed'), 'old-seed', "Intermediate wave descent did NOT touch pending seed");
 is($guard_menu->{items}->[0]->{name}, 'НОВАЯ волна A', "Intermediate wave descent served current wheel snapshot");
 
-# 17. A real wave select (rebuild-on-play) must NOT overwrite delivered
+# 17. A real wave select (rebuild-on-play) renders the rebuilt wheel to the
+# client, so delivered MUST be updated to the rebuilt list
+{
+    no warnings 'redefine';
+    *MockYandexClient::wheel_new_with_seeds = sub {
+        my ($self, $cl, $seeds, $cb) = @_;
+        $cb->($raw_wheel_items);
+    };
+}
 Plugins::yandex::Browse::Radio::handleVibeWaveSelect(
     $client,
     sub {},
@@ -283,17 +292,44 @@ Plugins::yandex::Browse::Radio::handleVibeWaveSelect(
     'genre:rock',
     'yandexmusic://rotor_session/_vibe_?seeds=genre%3Arock',
 );
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
+   'Рок волна', "Rebuild-on-play select updates delivered to the rebuilt (rendered) list");
+
+# 18. A cache-hit menu open also marks delivered (client renders the cached list)
+Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, {
+    items => [ { name => 'УСТАРЕВШИЙ список' } ], title => 'stale',
+});
+my $cachehit_api_calls = 0;
+{
+    no warnings 'redefine';
+    *MockYandexClient::wheel_new_with_seeds = sub { $cachehit_api_calls++; };
+}
+my $cachehit_menu;
+Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $cachehit_menu = shift; }, {}, $mock_yandex_client);
+is($cachehit_api_calls, 0, "Cache-hit open did not call the API");
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
+   'Рок волна', "Cache-hit open refreshes delivered snapshot");
+
+# 19. Reshuffle renders a new wheel to the client and marks delivered
+my $reshuf_wheel = {
+    wheelId => 'reshuf-wheel-1',
+    items => [
+        { type => 'WAVE', data => { wave => { name => 'Рестартая волна Y', seeds => ['genre:blues'] },
+                                    agent => { cover => { uri => 'http://cover.jpg/%%' } } } },
+    ],
+};
 {
     no warnings 'redefine';
     *MockYandexClient::wheel_new_with_seeds = sub {
         my ($self, $cl, $seeds, $cb) = @_;
-        $cb->($raw_wheel_items);
+        $cb->($reshuf_wheel);
     };
 }
+Plugins::yandex::Browse::Radio::handleVibeWheelReshuffle($client, sub {}, {}, $mock_yandex_client, 'diversity:reshuffle_777');
 is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
-   'Открытая волна X', "Rebuild-on-play select did NOT overwrite delivered snapshot");
+   'Рестартая волна Y', "Reshuffle updates delivered snapshot");
 
-# 18. Delivered snapshot expires after TTL (3600s)
+# 20. Delivered snapshot expires after TTL (3600s)
 my $snap_id = $client->id;
 {
     no strict 'refs';
