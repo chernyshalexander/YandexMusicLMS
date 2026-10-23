@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test::More tests => 20;
+use Test::More tests => 31;
 
 # Mock Slim framework and environment
 BEGIN {
@@ -190,4 +190,114 @@ Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $menu_rebuild_off
 my $item_off = $menu_rebuild_off->{items}->[0];
 is($item_off->{type}, 'audio', "When rebuild_on_play=0, regular wave item type is 'audio'");
 is($item_off->{on_select}, 'play', "When rebuild_on_play=0, on_select is 'play'");
+
+# ---------------------------------------------------------------------------
+# 12+. Delivered-snapshot fix for the index shift bug:
+# XMLBrowser re-fetches the wheel level (args{quantity}==1) on every wave
+# click and resolves the clicked index against that fresh list. After a
+# rebuild-on-play the fresh list is reordered, so intermediate resolution
+# must be served from the list last DELIVERED to the client.
+# ---------------------------------------------------------------------------
+$prefs->set('vibe_wheel_rebuild_on_play', 1);
+
+# 12. Delivered snapshot is initially empty
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client), undef, "Delivered snapshot is initially empty");
+
+# 13. set/get roundtrip
+my $delivered_menu = {
+    items => [ { name => 'Тест доставки', url => 'yandexmusic://rotor_session/_vibe_?seeds=genre:test' } ],
+    title => 'Delivered',
+};
+Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, $delivered_menu);
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
+   'Тест доставки', "Delivered snapshot roundtrip");
+
+# 14. A real menu open (no initial_seeds, no trigger_now_playing) marks delivered
+Plugins::yandex::Plugin::clear_wheel_snapshot($client);
+Plugins::yandex::Plugin::set_wheel_state($client, { wheel_id => 'state-open', seeds => ['user:onyourwave'] });
+
+my $open_wheel = {
+    wheelId => 'open-wheel-1',
+    items => [
+        { type => 'WAVE', data => { wave => { name => 'Открытая волна X', seeds => ['genre:classical'] },
+                                    agent => { cover => { uri => 'http://cover.jpg/%%' } } } },
+    ],
+};
+my $open_api_calls = 0;
+{
+    no warnings 'redefine';
+    *MockYandexClient::wheel_new_with_seeds = sub {
+        my ($self, $cl, $seeds, $cb) = @_;
+        $open_api_calls++;
+        $cb->($open_wheel);
+    };
+}
+
+my $menu_open;
+Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $menu_open = shift; }, {}, $mock_yandex_client);
+is($open_api_calls, 1, "Real menu open fetched the wheel from API");
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
+   'Открытая волна X', "Real menu open marked its list as delivered");
+
+# 15. Intermediate resolution (quantity==1) serves the delivered list and does
+# NOT hit the API, even when the current snapshot has drifted (reordered)
+Plugins::yandex::Plugin::set_wheel_snapshot($client, {
+    menu_result => {
+        items => [ { name => 'НОВАЯ волна A' }, { name => 'НОВАЯ волна B' } ],
+        title => 'Drifted',
+    },
+    wheel_id    => 'drift-wheel',
+    seeds_str   => 'genre:rock',
+    timestamp   => time(),
+});
+
+my $inter_cb_menu;
+Plugins::yandex::Browse::Radio::handleVibeWheel($client, sub { $inter_cb_menu = shift; }, { quantity => 1 }, $mock_yandex_client);
+is($open_api_calls, 1, "Intermediate resolution did NOT call the API");
+is($inter_cb_menu->{items}->[0]->{name}, 'Открытая волна X',
+   "Intermediate resolution served the delivered list, not the drifted snapshot");
+
+# 16. handleVibeWaveSelect intermediate descent: no playback, no pending overwrite
+$prefs->client($client)->set('yandex_wheel_pending_seed', 'old-seed');
+my $executed_before = scalar @{ $client->{executed} };
+my $guard_cb_called = 0;
+my $guard_menu;
+Plugins::yandex::Browse::Radio::handleVibeWaveSelect(
+    $client,
+    sub { $guard_cb_called++; $guard_menu = shift; },
+    { quantity => 1 },
+    $mock_yandex_client,
+    'genre:rock',
+    'yandexmusic://rotor_session/_vibe_?seeds=genre%3Arock',
+);
+is(scalar @{ $client->{executed} }, $executed_before, "Intermediate wave descent did NOT start playback");
+is($prefs->client($client)->get('yandex_wheel_pending_seed'), 'old-seed', "Intermediate wave descent did NOT touch pending seed");
+is($guard_menu->{items}->[0]->{name}, 'НОВАЯ волна A', "Intermediate wave descent served current wheel snapshot");
+
+# 17. A real wave select (rebuild-on-play) must NOT overwrite delivered
+Plugins::yandex::Browse::Radio::handleVibeWaveSelect(
+    $client,
+    sub {},
+    {},
+    $mock_yandex_client,
+    'genre:rock',
+    'yandexmusic://rotor_session/_vibe_?seeds=genre%3Arock',
+);
+{
+    no warnings 'redefine';
+    *MockYandexClient::wheel_new_with_seeds = sub {
+        my ($self, $cl, $seeds, $cb) = @_;
+        $cb->($raw_wheel_items);
+    };
+}
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client)->{menu_result}->{items}->[0]->{name},
+   'Открытая волна X', "Rebuild-on-play select did NOT overwrite delivered snapshot");
+
+# 18. Delivered snapshot expires after TTL (3600s)
+my $snap_id = $client->id;
+{
+    no strict 'refs';
+    $Plugins::yandex::Plugin::wheel_delivered_snapshots{$snap_id}{timestamp} = time() - 3601;
+}
+is(Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client), undef, "Delivered snapshot expires after TTL");
 
