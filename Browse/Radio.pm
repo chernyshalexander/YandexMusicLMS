@@ -130,6 +130,26 @@ sub handleRadioCategories {
 sub handleVibeWheel {
     my ($client, $cb, $args, $yandex_client, $initial_seeds, $trigger_now_playing) = @_;
 
+    # XMLBrowser descends the menu tree on every wave click and re-fetches the
+    # wheel level as an intermediate step (quantity == 1, XMLBrowser.pm passes
+    # index/quantity=1 for levels below the clicked one). That fetch must
+    # return the list the client is currently displaying, otherwise the
+    # clicked index resolves into a reordered wheel (fresh API fetch or
+    # post-rebuild snapshot) and the wrong wave's seed is used. Real menu
+    # opens always come with a real quantity (or undef on the web UI).
+    my $is_intermediate = ($args && defined $args->{quantity} && $args->{quantity} == 1) ? 1 : 0;
+
+    if ($is_intermediate && $client) {
+        my $delivered = Plugins::yandex::Plugin::get_delivered_wheel_snapshot($client);
+        if ($delivered && $delivered->{menu_result}) {
+            $log->debug("VIBE WHEEL: Intermediate index resolution - serving last delivered menu");
+            $cb->($delivered->{menu_result});
+            return;
+        }
+        # No delivered copy (e.g. server restarted while the client kept its
+        # view) - fall through and resolve against the current snapshot.
+    }
+
     my $saved_state = Plugins::yandex::Plugin::get_wheel_state($client);
     my $seeds = $initial_seeds;
     if (!defined $seeds) {
@@ -287,6 +307,12 @@ sub handleVibeWheel {
                     seeds_str   => $seeds,
                     timestamp   => time(),
                 });
+                # A plain menu open (no explicit seeds, no rebuild-on-play)
+                # delivers this list as the wheel level - remember it as the
+                # reference for subsequent intermediate index resolutions.
+                if (!defined $initial_seeds && !$trigger_now_playing) {
+                    Plugins::yandex::Plugin::set_delivered_wheel_snapshot($client, $menu_result);
+                }
             }
 
             if ($trigger_now_playing && @items) {
@@ -312,6 +338,18 @@ sub handleVibeWheel {
 
 sub handleVibeWaveSelect {
     my ($client, $cb, $args, $yandex_client, $wave_seed, $wave_url) = @_;
+
+    # Intermediate descent through this wave item (quantity == 1): the click
+    # targets a deeper level, so this call only materializes the child list
+    # for index resolution. Do not restart playback or rebuild the wheel.
+    if ($args && defined $args->{quantity} && $args->{quantity} == 1) {
+        my $snap = $client && Plugins::yandex::Plugin::get_wheel_snapshot($client, undef);
+        if ($snap && $snap->{menu_result}) {
+            $log->debug("VIBE WHEEL: Intermediate descent through wave '$wave_seed' - serving current wheel without playback");
+            $cb->($snap->{menu_result});
+            return;
+        }
+    }
 
     $log->info("VIBE WHEEL: Wave selected with seed='$wave_seed', url='$wave_url'");
 

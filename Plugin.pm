@@ -47,6 +47,12 @@ my %api_clients;
 my %ynison_instances;
 # In-memory snapshot of rendered Vibe Wheel menus keyed by client id
 our %wheel_snapshots;
+# Last menu list actually DELIVERED to a client as the Vibe Wheel level.
+# LMS XMLBrowser re-resolves clicked item indexes against a freshly fetched
+# wheel level on every click; that fresh list can have a different wave order
+# (rebuild-on-play, snapshot TTL refetch) than what the client still displays.
+# Intermediate resolutions must therefore be served from this delivered copy.
+our %wheel_delivered_snapshots;
 
 # Main LMS plugin lifecycle hook. Sets up preferences, compatibility handling,
 # and integration with both the LMS menu system and Yandex API clients.
@@ -328,6 +334,7 @@ sub shutdownPlugin {
     }
     %ynison_instances = ();
     %wheel_snapshots = ();
+    %wheel_delivered_snapshots = ();
 }
 
 # Handle incoming state updates from Yandex Ynison
@@ -1080,6 +1087,37 @@ sub clear_wheel_snapshot {
 
     my $id = ref $client ? $client->id : $client;
     delete $wheel_snapshots{$id};
+}
+
+# The list last delivered to this client as the wheel menu level. Used to
+# resolve clicked item indexes: XMLBrowser resolves the click against a fresh
+# fetch of the level, which may be reordered relative to what the client
+# still displays. TTL 3600s matches XMLBrowser's browse session cache.
+sub get_delivered_wheel_snapshot {
+    my $client = shift;
+    return unless $client;
+
+    my $id = ref $client ? $client->id : $client;
+    my $snap = $wheel_delivered_snapshots{$id};
+    return unless $snap;
+
+    if (time() - ($snap->{timestamp} || 0) > 3600) {
+        delete $wheel_delivered_snapshots{$id};
+        return;
+    }
+
+    return $snap;
+}
+
+sub set_delivered_wheel_snapshot {
+    my ($client, $menu_result) = @_;
+    return unless $client && $menu_result;
+
+    my $id = ref $client ? $client->id : $client;
+    $wheel_delivered_snapshots{$id} = {
+        menu_result => $menu_result,
+        timestamp   => time(),
+    };
 }
 
 sub get_wheel_state {
