@@ -173,7 +173,15 @@ sub post {
             }
         },
         sub {
-            my ($http, $error) = @_;
+            my ($http, $error, $response) = @_;
+            my $resp_content = '';
+            if ($response && eval { $response->can('content') }) {
+                $resp_content = eval { $response->content() } // '';
+            }
+            if (!$resp_content && $http && eval { $http->can('content') }) {
+                $resp_content = eval { $http->content() } // '';
+            }
+            $log->error("POST error: $error - Response: $resp_content") if $resp_content;
             $error_callback->($error);
         },
     );
@@ -421,11 +429,28 @@ sub tracks {
 }
 
 sub get_album_with_tracks {
-    my ($self, $album_id, $callback, $error_callback) = @_;
+    my ($self, $album_id, $callback, $error_callback, $params) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/albums/' . $album_id . '/with-tracks';
-    my $cacheKey = 'yandex_album_tracks_' . $album_id;
 
-    $self->_cached_get($cacheKey, SEARCH_TTL, $url, undef, $callback, $error_callback);
+    # When resuming an audiobook or podcast, do not use SEARCH_TTL cache so position stays fresh
+    if ($params && ($params->{resumeStream} || $params->{no_cache})) {
+        $self->get(
+            $url,
+            $params,
+            sub {
+                my $res = shift;
+                if (ref $res eq 'HASH' && exists $res->{result}) {
+                    $callback->($res->{result});
+                } else {
+                    $callback->($res);
+                }
+            },
+            $error_callback
+        );
+    } else {
+        my $cacheKey = 'yandex_album_tracks_' . $album_id;
+        $self->_cached_get($cacheKey, SEARCH_TTL, $url, $params, $callback, $error_callback);
+    }
 }
 
 sub get_artist_tracks {
@@ -1268,6 +1293,254 @@ sub albums {
             }
         },
         $error_callback,
+    );
+}
+
+# --- Music & Audiobooks Listening History & Progress Endpoints ---
+
+# Fetch music listening history
+# GET /music-history?fullModelsCount=50
+sub get_music_history {
+    my ($self, $full_models_count, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/music-history';
+    my $params = {
+        fullModelsCount => ($full_models_count // 50),
+    };
+
+    $self->get(
+        $url,
+        $params,
+        sub {
+            my $res = shift;
+            if (ref $res eq 'HASH' && exists $res->{result}) {
+                $callback->($res->{result}) if $callback;
+            } else {
+                $callback->($res) if $callback;
+            }
+        },
+        $error_callback
+    );
+}
+
+# Lazy loading / batch fetch history items
+# POST /music-history/items
+sub post_music_history_items {
+    my ($self, $items, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/music-history/items';
+    my $body = (ref $items eq 'HASH') ? $items : { shortModels => $items, items => $items };
+    $self->post(
+        $url,
+        $body,
+        sub {
+            my $res = shift;
+            if (ref $res eq 'HASH' && exists $res->{result}) {
+                $callback->($res->{result}) if $callback;
+            } else {
+                $callback->($res) if $callback;
+            }
+        },
+        $error_callback
+    );
+}
+
+# Report music play event (when played >= 30s)
+# POST /plays?clientNow={ISO8601}
+sub send_play {
+    my ($self, $play_data, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/plays';
+    my $client_now = Plugins::yandex::API::Common::get_iso_timestamp();
+
+    my @raw_plays = ref $play_data eq 'ARRAY' ? @$play_data : ($play_data);
+    my @plays;
+    for my $p (@raw_plays) {
+        next unless ref $p eq 'HASH' && $p->{trackId};
+        my $uuid = $p->{playId} || sprintf("%04x%04x-%04x-%04x-%04x-%04x%04x%04x",
+            rand(0xffff), rand(0xffff), rand(0xffff),
+            rand(0x0fff) | 0x4000,
+            rand(0x3fff) | 0x8000,
+            rand(0xffff), rand(0xffff), rand(0xffff)
+        );
+        my $album_id = defined $p->{albumId} ? int($p->{albumId}) : 0;
+        my $ctx = $p->{context} || ($album_id ? 'album' : 'radio');
+        my $ctx_item = "" . ($p->{contextItem} // $album_id // '');
+        push @plays, {
+            playId             => $uuid,
+            trackId            => "" . $p->{trackId},
+            albumId            => $album_id,
+            from               => $p->{from} || 'android-app',
+            context            => $ctx,
+            contextItem        => $ctx_item,
+            totalPlayedSeconds => int($p->{totalPlayedSeconds} || 0),
+            endPositionSeconds => int($p->{endPositionSeconds} || $p->{totalPlayedSeconds} || 0),
+            trackLengthSeconds => int($p->{trackLengthSeconds} || 0),
+            timestamp          => $p->{timestamp} || $client_now,
+            changeReason       => $p->{changeReason} || 'other_track',
+            audioOutputName    => 'Speaker',
+            audioOutputType    => 'Speaker',
+            isRestored         => \0,
+            pause              => \0,
+            seek               => \0,
+        };
+    }
+
+    return unless @plays;
+
+    $self->post(
+        $url,
+        { plays => \@plays },
+        sub {
+            my $res = shift;
+            $callback->($res) if $callback;
+        },
+        $error_callback || sub {},
+        { clientNow => $client_now, 'client-now' => $client_now },
+    );
+}
+
+# Fetch bookshelf of recently played audiobooks and podcasts
+# GET /non-music/bookshelf/recently-played?page=0&pageSize=20
+sub get_bookshelf_recently_played {
+    my ($self, $page, $page_size, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/non-music/bookshelf/recently-played';
+    my $params = {
+        page     => ($page // 0),
+        pageSize => ($page_size // 20),
+    };
+
+    $self->get(
+        $url,
+        $params,
+        sub {
+            my $res = shift;
+            if (ref $res eq 'HASH' && exists $res->{result}) {
+                $callback->($res->{result}) if $callback;
+            } else {
+                $callback->($res) if $callback;
+            }
+        },
+        $error_callback
+    );
+}
+
+# Save audiobook/podcast listening progress
+# POST /streams/progress/sync
+sub save_stream_progress {
+    my ($self, $track_id, $position_sec, $track_length_sec, $finished, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync';
+    my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
+
+    my $body = {
+        lastSyncTimestamp => $iso_timestamp,
+        trackStreams      => [
+            {
+                trackId        => "$track_id",
+                positionSec    => 0 + int($position_sec || 0),
+                trackLengthSec => 0 + int($track_length_sec || 0),
+                finished       => $finished ? \1 : \0,
+                timestamp      => $iso_timestamp,
+            }
+        ],
+    };
+
+    $self->post(
+        $url,
+        $body,
+        sub {
+            my $res = shift;
+            if (ref $res eq 'HASH' && exists $res->{result}) {
+                $callback->($res->{result}) if $callback;
+            } else {
+                $callback->($res) if $callback;
+            }
+        },
+        $error_callback || sub {}
+    );
+}
+
+# Mark audiobook/podcast track as finished
+# POST /streams/progress/sync
+sub mark_stream_finished {
+    my ($self, $track_id, $callback, $error_callback, $track_length_sec) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync';
+    my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
+    my $len = 0 + int($track_length_sec || 0);
+
+    my $body = {
+        lastSyncTimestamp => $iso_timestamp,
+        trackStreams      => [
+            {
+                trackId        => "$track_id",
+                positionSec    => $len,
+                trackLengthSec => $len,
+                finished       => \1,
+                timestamp      => $iso_timestamp,
+            }
+        ],
+    };
+
+    $self->post(
+        $url,
+        $body,
+        sub {
+            my $res = shift;
+            if (ref $res eq 'HASH' && exists $res->{result}) {
+                $callback->($res->{result}) if $callback;
+            } else {
+                $callback->($res) if $callback;
+            }
+        },
+        $error_callback || sub {}
+    );
+}
+
+# Mark entire audiobook/podcast album as finished
+# POST /streams/progress/sync (all album chapters)
+sub mark_album_finished {
+    my ($self, $album_id, $callback, $error_callback) = @_;
+
+    $self->get_album_with_tracks(
+        $album_id,
+        sub {
+            my $album = shift;
+            my @tracks = Plugins::yandex::Browse::History::_flatten_album_tracks($album);
+            if (!@tracks) {
+                $callback->() if $callback;
+                return;
+            }
+            my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
+            my @track_streams = map {
+                my $tid = $_->{id};
+                my $dur = 0 + ($_->{durationMs} ? int($_->{durationMs} / 1000) : ($_->{durationSec} || 0));
+                {
+                    trackId        => "$tid",
+                    positionSec    => $dur,
+                    trackLengthSec => $dur,
+                    finished       => \1,
+                    timestamp      => $iso_timestamp,
+                }
+            } @tracks;
+
+            my $body = {
+                lastSyncTimestamp => $iso_timestamp,
+                trackStreams      => \@track_streams,
+            };
+
+            $self->post(
+                Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync',
+                $body,
+                sub {
+                    my $res = shift;
+                    if (ref $res eq 'HASH' && exists $res->{result}) {
+                        $callback->($res->{result}) if $callback;
+                    } else {
+                        $callback->($res) if $callback;
+                    }
+                },
+                $error_callback || sub {}
+            );
+        },
+        $error_callback || sub {},
+        { resumeStream => 0, no_cache => 1 }
     );
 }
 

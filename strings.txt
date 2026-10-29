@@ -190,17 +190,33 @@ PLUGIN_YANDEX_TRACKS
 	EN	Tracks
 	RU	Треки
 
+PLUGIN_YANDEX_ALBUM
+	EN	Album
+	RU	Альбом
+
 PLUGIN_YANDEX_ALBUMS
 	EN	Albums
 	RU	Альбомы
+
+PLUGIN_YANDEX_ARTIST
+	EN	Artist
+	RU	Исполнитель
 
 PLUGIN_YANDEX_ARTISTS
 	EN	Artists
 	RU	Исполнители
 
+PLUGIN_YANDEX_PLAYLIST
+	EN	Playlist
+	RU	Плейлист
+
 PLUGIN_YANDEX_PLAYLISTS
 	EN	Playlists
 	RU	Плейлисты
+
+PLUGIN_YANDEX_RADIO
+	EN	Radio
+	RU	Радио
 
 PLUGIN_YANDEX_AUDIOBOOKS
 	EN	Audiobooks
@@ -834,3 +850,92 @@ PLUGIN_YANDEX_ARTISTS_PROGRESS
 PLUGIN_YANDEX_PLAYLISTS_PROGRESS
 	EN	Yandex Music Playlists
 	RU	Плейлисты Яндекс Музыки
+
+PLUGIN_YANDEX_HISTORY
+	EN	Listening History
+	RU	История прослушивания
+
+PLUGIN_YANDEX_HISTORY_MUSIC
+	EN	Music
+	RU	Музыка
+
+PLUGIN_YANDEX_HISTORY_AUDIOBOOKS
+	EN	Audiobooks & Podcasts
+	RU	Аудиокниги и подкасты
+
+PLUGIN_YANDEX_QUICK_RESUME
+	EN	[▶] Resume: %s
+	RU	[▶] Продолжить: %s
+
+PLUGIN_YANDEX_RESUME_CHAPTER_AT
+	EN	Resume: Chapter %s (at %s)
+	RU	Продолжить: Глава %s (с %s)
+
+PLUGIN_YANDEX_PLAY_FROM_START
+	EN	Listen from beginning (Chapter 1)
+	RU	Слушать с начала (Глава 1)
+
+PLUGIN_YANDEX_TABLE_OF_CONTENTS
+	EN	Table of contents (Chapters)
+	RU	Оглавление (Список глав)
+
+PLUGIN_YANDEX_MARK_FINISHED
+	EN	Mark as finished
+	RU	Отметить как прочитанное
+
+PLUGIN_YANDEX_MARKED_FINISHED
+	EN	Marked as finished
+	RU	Отмечено как прочитанное
+
+PLUGIN_YANDEX_PLAYING
+	EN	Playing...
+	RU	Воспроизведение...
+
+PLUGIN_YANDEX_CHAPTER
+	EN	Chapter %s
+	RU	Глава %s
+
+PLUGIN_YANDEX_TODAY
+	EN	Today
+	RU	Сегодня
+
+PLUGIN_YANDEX_YESTERDAY
+	EN	Yesterday
+	RU	Вчера
+
+PLUGIN_YANDEX_TRACKS_COUNT
+	EN	%d tracks
+	RU	%d треков
+
+PLUGIN_YANDEX_NO_HISTORY
+	EN	History is empty
+	RU	История пуста
+
+PLUGIN_YANDEX_NO_AUDIOBOOKS
+	EN	No audiobooks or podcasts recently played
+	RU	Нет недавно прослушанных аудиокниг и подкастов
+
+PLUGIN_YANDEX_SHOW_HISTORY
+	EN	Show listening history in main menu
+	RU	Показывать историю прослушивания в главном меню
+
+PLUGIN_YANDEX_SHOW_HISTORY_DESC
+	EN	Show 'Listening History' item in the main plugin menu.
+	RU	Отображать пункт «История прослушивания» в главном меню плагина.
+
+PLUGIN_YANDEX_SHOW_RESUME_QUICK_ITEM
+	EN	Show quick resume item in main menu
+	RU	Показывать кнопку быстрого возобновления в главном меню
+
+PLUGIN_YANDEX_SHOW_RESUME_QUICK_ITEM_DESC
+	EN	Show '[▶] Resume: <Book>' at the top of the main menu for 1-click continuation.
+	RU	Отображать пункт «[▶] Продолжить: <Книга>» вверху главного меню для возобновления в 1 клик.
+
+PLUGIN_YANDEX_PROGRESS_SAVE_INTERVAL
+	EN	Progress save interval (seconds)
+	RU	Интервал сохранения прогресса (сек)
+
+PLUGIN_YANDEX_PROGRESS_SAVE_INTERVAL_DESC
+	EN	How often to save listening progress for audiobooks and podcasts (default: 30 seconds).
+	RU	Как часто сохранять прогресс прослушивания аудиокниг и подкастов (по умолчанию: 30 сек).
+

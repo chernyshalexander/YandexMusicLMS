@@ -147,9 +147,15 @@ sub cache_track_metadata {
     my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || ($track_object->{raw} ? $track_object->{raw}->{durationMs} : 0);
 
     my $album_name = 'Unknown';
+    my $album_id;
+    my $album_type;
     if ($track_object->{albums} && ref $track_object->{albums} eq 'ARRAY' && @{$track_object->{albums}}) {
         $album_name = $track_object->{albums}[0]->{title};
+        $album_id   = $track_object->{albums}[0]->{id};
+        $album_type = $track_object->{albums}[0]->{type} || $track_object->{albums}[0]->{metaType};
     }
+    my $track_type = $track_object->{type} || '';
+    my $is_podcast = (($album_type && $album_type =~ /podcast|audiobook/i) || ($track_type =~ /podcast|audiobook/i)) ? 1 : 0;
 
     my $cache = Slim::Utils::Cache->new();
 
@@ -158,13 +164,16 @@ sub cache_track_metadata {
 
     my $meta = {
         %$existing,                                                         # preserve all old fields
-        title    => $track_title,
-        artist   => $artist_name,
-        album    => $album_name,
-        duration => $duration_ms ? int($duration_ms / 1000) : 0,
-        cover    => $icon,
-        bitrate  => $existing->{bitrate} || 192000,                        # keep real bitrate if available
-        _complete => 1,                                                     # mark as complete (full metadata)
+        title      => $track_title,
+        artist     => $artist_name,
+        album      => $album_name,
+        album_id   => $album_id // $existing->{album_id},
+        album_type => $album_type // $existing->{album_type},
+        is_podcast => $is_podcast || $existing->{is_podcast} || 0,
+        duration   => $duration_ms ? int($duration_ms / 1000) : ($existing->{duration} || 0),
+        cover      => $icon,
+        bitrate    => $existing->{bitrate} || 192000,                        # keep real bitrate if available
+        _complete  => 1,                                                     # mark as complete (full metadata)
     };
 
     $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days 

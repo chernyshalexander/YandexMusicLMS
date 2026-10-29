@@ -35,7 +35,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play aes_backend demux_backend));
+    return ($prefs, qw(menuLocation streamingQuality translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection show_history show_resume_quick_item progress_save_interval search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play aes_backend demux_backend));
 }
 
 sub handler {
@@ -114,6 +114,9 @@ sub handler {
 		$params->{pref_wizard_cat_mood}                ||= 0;
 		$params->{pref_wizard_cat_language}            ||= 0;
 		$params->{pref_vibe_wheel_rebuild_on_play}     ||= 0;
+		$params->{pref_show_history}                   ||= 0;
+		$params->{pref_show_resume_quick_item}         ||= 0;
+		$params->{pref_progress_save_interval}         = int($params->{pref_progress_save_interval} || 30);
 
 		# Handle adding a new account via token field
 		my $newToken = $params->{new_account_token};

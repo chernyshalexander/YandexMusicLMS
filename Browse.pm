@@ -34,6 +34,7 @@ use Plugins::yandex::Browse::Search;
 use Plugins::yandex::Browse::Favorites;
 use Plugins::yandex::Browse::Radio;
 use Plugins::yandex::Browse::Collection;
+use Plugins::yandex::Browse::History;
 
 my $log = logger('plugin.yandex');
 
@@ -70,6 +71,16 @@ sub _handleSmartPlaylists { Plugins::yandex::Browse::Collection::handleSmartPlay
 sub _handlePicks          { Plugins::yandex::Browse::Collection::handlePicks(@_) }
 sub _handleMixes          { Plugins::yandex::Browse::Collection::handleMixes(@_) }
 sub _handleTagPlaylists   { Plugins::yandex::Browse::Collection::handleTagPlaylists(@_) }
+
+# History & Bookshelf
+sub _handleHistory            { Plugins::yandex::Browse::History::handleHistory(@_) }
+sub _handleMusicHistory       { Plugins::yandex::Browse::History::handleMusicHistory(@_) }
+sub _handleAudiobooksHistory  { Plugins::yandex::Browse::History::handleAudiobooksHistory(@_) }
+sub _handleBookMenu           { Plugins::yandex::Browse::History::handleBookMenu(@_) }
+sub _handleQuickResumeBook    { Plugins::yandex::Browse::History::handleQuickResumeBook(@_) }
+sub _handleResumeBookAction   { Plugins::yandex::Browse::History::handleResumeBookAction(@_) }
+sub _handleBookChaptersList   { Plugins::yandex::Browse::History::handleBookChaptersList(@_) }
+sub _handleMarkBookFinished   { Plugins::yandex::Browse::History::handleMarkBookFinished(@_) }
 
 # Individual Items
 sub _handleAlbum {
