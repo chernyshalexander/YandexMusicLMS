@@ -80,6 +80,9 @@ sub initPlugin {
         vibe_wheel_rebuild_on_play => 1,
         yandex_wheel_pending_seed  => undef,
         yandex_wheel_pending_time  => 0,
+        show_history               => 1,
+        show_resume_quick_item     => 1,
+        progress_save_interval     => 30,
     });
 
     # Preserve compatibility with the old single-token preference by moving
@@ -123,7 +126,7 @@ sub initPlugin {
     # Subscription to player status changes
     Slim::Control::Request::subscribe(
         \&playerEventCallback,
-        [['playlist', 'mixer', 'play', 'pause'], ['newsong', 'jump', 'stop', 'clear', 'volume', 'pause', 'client']]
+        [['playlist', 'mixer', 'play', 'pause', 'time', 'power'], ['newsong', 'jump', 'stop', 'clear', 'volume', 'pause', 'client', 'power']]
     );
 
     $class->SUPER::initPlugin(
@@ -276,6 +279,9 @@ sub shutdownPlugin {
     # before the plugin is unloaded.
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
 
+    foreach my $client (Slim::Player::Client::clients()) {
+        _stop_progress_timer($client);
+    }
     %wheel_snapshots = ();
     %wheel_delivered_snapshots = ();
 }
@@ -288,10 +294,25 @@ sub playerEventCallback {
     # Respond to LMS player events relevant to Yandex Music.
     # This includes radio feedback and volume
     # synchronization between the local player and Yandex.
-    my $command = $request->getRequest(1);
+    my $cmd0    = $request->getRequest(0) || '';
+    my $command = $request->getRequest(1) || '';
+
+    # Handle power events directly
+    if ($cmd0 eq 'power' || $command eq 'power') {
+        if (!$client->power() || (defined $request->getRequest(1) && $request->getRequest(1) eq '0')) {
+            _handle_pause_or_stop($client);
+            $client->pluginData('yandex_curr_track_id', undef);
+            _stop_progress_timer($client);
+        }
+    }
 
     if ($command eq 'client') {
         my $sub_command = $request->getRequest(2);
+        if ($sub_command eq 'disconnect' || $sub_command eq 'forget') {
+            _handle_pause_or_stop($client);
+            $client->pluginData('yandex_curr_track_id', undef);
+            _stop_progress_timer($client);
+        }
     }
 
     if ($client->isSynced()) {
@@ -300,6 +321,7 @@ sub playerEventCallback {
 
     if ($command eq 'newsong') {
         _handleRotorFeedback($client, 'natural_finish');
+        _handleTrackSwitch($client);
 
         my $song = $client->playingSong();
         if ($song && $song->track() && $song->track()->url() =~ /rotor_(station|session)=/) {
@@ -312,8 +334,18 @@ sub playerEventCallback {
             $client->pluginData('yandex_track_active', 0);
         }
     }
-    elsif ($command eq 'jump' || $command eq 'stop' || $command eq 'clear') {
+    elsif ($command eq 'jump' || $command eq 'stop' || $cmd0 eq 'stop' || $command eq 'clear' || $cmd0 eq 'clear') {
         _handleRotorFeedback($client, 'manual_skip_or_stop');
+        _handle_pause_or_stop($client);
+        $client->pluginData('yandex_curr_track_id', undef);
+        _stop_progress_timer($client);
+    }
+    elsif ($command eq 'pause' || $cmd0 eq 'pause' || $command eq 'play' || $cmd0 eq 'play') {
+        if ($client->isPaused()) {
+            _handle_pause_or_stop($client);
+        } elsif ($client->isPlaying() && $client->pluginData('yandex_curr_track_id')) {
+            _start_progress_timer($client);
+        }
     }
 
 }
@@ -399,6 +431,198 @@ sub _handleRotorFeedback {
     }
 }
 
+# --- Audiobooks/Podcasts Progress & Music Play Reporting ---
+
+sub _handleTrackSwitch {
+    my $client = shift;
+
+    # 1. Process previous track finish
+    my $prev_track_id   = $client->pluginData('yandex_curr_track_id');
+    my $prev_album_id   = $client->pluginData('yandex_curr_album_id');
+    my $prev_is_chapter = $client->pluginData('yandex_curr_is_chapter');
+    my $prev_dur        = $client->pluginData('yandex_curr_duration') || 0;
+    my $prev_start_time = $client->pluginData('yandex_curr_start_time') || 0;
+    my $prev_play_sent  = $client->pluginData('yandex_curr_play_sent') || 0;
+
+    if ($prev_track_id) {
+        if ($prev_is_chapter) {
+            # Chapter completed naturally
+            _mark_chapter_finished($client, $prev_track_id);
+            _save_current_progress($client, $prev_track_id, $prev_dur, $prev_dur, 1);
+        } else {
+            # Music track
+            my $played_seconds = $prev_dur > 0 ? $prev_dur : (time() - $prev_start_time);
+            if ($played_seconds >= 30 && !$prev_play_sent) {
+                _send_music_play($client, $prev_track_id, $prev_album_id, $played_seconds, $prev_dur);
+            }
+        }
+    }
+
+    # 2. Inspect new playing song
+    my $song = $client->playingSong();
+    if ($song && $song->track() && $song->track()->url() =~ /^yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $new_track_id = $1;
+        my $url = $song->track()->url();
+        my $new_album_id;
+        if ($url =~ /[?&]album_id=(\d+)/) {
+            $new_album_id = $1;
+        }
+        my $cache = Slim::Utils::Cache->new();
+        my $meta = $cache->get('yandex_meta_' . $new_track_id);
+        if ($meta) {
+            $new_album_id ||= $meta->{album_id};
+        }
+        my $is_chapter = 0;
+        if (($meta && $meta->{is_podcast}) || ($meta && $meta->{album_type} && $meta->{album_type} =~ /podcast|audiobook/i) || ($url =~ /podcast|audiobook/i)) {
+            $is_chapter = 1;
+        }
+        my $duration = ($meta && $meta->{duration}) || $song->duration() || 0;
+
+        $client->pluginData('yandex_curr_track_id', $new_track_id);
+        $client->pluginData('yandex_curr_album_id', $new_album_id);
+        $client->pluginData('yandex_curr_is_chapter', $is_chapter);
+        $client->pluginData('yandex_curr_duration', $duration);
+        $client->pluginData('yandex_curr_start_time', time());
+        $client->pluginData('yandex_curr_play_sent', 0);
+
+        _start_progress_timer($client);
+    } else {
+        $client->pluginData('yandex_curr_track_id', undef);
+        _stop_progress_timer($client);
+    }
+}
+
+sub _handle_pause_or_stop {
+    my $client = shift;
+    my $track_id   = $client->pluginData('yandex_curr_track_id') or return;
+    my $album_id   = $client->pluginData('yandex_curr_album_id');
+    my $is_chapter = $client->pluginData('yandex_curr_is_chapter');
+    my $dur        = $client->pluginData('yandex_curr_duration') || 0;
+    my $pos        = Slim::Player::Source::songTime($client) || 0;
+
+    if ($is_chapter) {
+        _save_current_progress($client, $track_id, $pos, $dur, 0);
+    } else {
+        if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+            $client->pluginData('yandex_curr_play_sent', 1);
+            _send_music_play($client, $track_id, $album_id, $pos, $dur);
+        }
+    }
+    _stop_progress_timer($client);
+}
+
+sub _progress_timer_tick {
+    my $client = shift;
+    return unless $client && $client->isPlaying();
+
+    my $track_id   = $client->pluginData('yandex_curr_track_id');
+    return unless $track_id;
+
+    my $album_id   = $client->pluginData('yandex_curr_album_id');
+    my $is_chapter = $client->pluginData('yandex_curr_is_chapter');
+    my $dur        = $client->pluginData('yandex_curr_duration') || 0;
+    my $pos        = Slim::Player::Source::songTime($client) || 0;
+
+    if ($is_chapter) {
+        _save_current_progress($client, $track_id, $pos, $dur, 0);
+    } else {
+        if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+            $client->pluginData('yandex_curr_play_sent', 1);
+            _send_music_play($client, $track_id, $album_id, $pos, $dur);
+        }
+    }
+
+    my $interval = $prefs->get('progress_save_interval') || 30;
+    Slim::Utils::Timers::setTimer($client, Time::HiRes::time() + $interval, \&_progress_timer_tick);
+}
+
+sub _start_progress_timer {
+    my $client = shift;
+    _stop_progress_timer($client);
+    my $interval = $prefs->get('progress_save_interval') || 30;
+    Slim::Utils::Timers::setTimer($client, Time::HiRes::time() + $interval, \&_progress_timer_tick);
+}
+
+sub _stop_progress_timer {
+    my $client = shift;
+    Slim::Utils::Timers::killTimers($client, \&_progress_timer_tick);
+}
+
+sub _save_current_progress {
+    my ($client, $track_id, $pos, $dur, $finished) = @_;
+    return unless $track_id;
+
+    my $api = getAPIForClient($client);
+    return unless $api;
+
+    $api->save_stream_progress(
+        $track_id,
+        $pos,
+        $dur,
+        $finished,
+        sub {
+            $log->debug("YANDEX: Saved progress for track $track_id: pos=$pos, dur=$dur, finished=$finished");
+        },
+        sub {
+            my $err = shift;
+            $log->warn("YANDEX: Failed to save progress for track $track_id: $err");
+        }
+    );
+}
+
+sub _mark_chapter_finished {
+    my ($client, $track_id) = @_;
+    return unless $track_id;
+
+    my $api = getAPIForClient($client);
+    return unless $api;
+
+    $api->mark_stream_finished(
+        $track_id,
+        sub {
+            $log->info("YANDEX: Marked track $track_id finished");
+        },
+        sub {
+            my $err = shift;
+            $log->warn("YANDEX: Failed to mark track $track_id finished: $err");
+        }
+    );
+}
+
+sub _send_music_play {
+    my ($client, $track_id, $album_id, $played_sec, $dur) = @_;
+    return unless $track_id;
+
+    my $api = getAPIForClient($client);
+    return unless $api;
+
+    my $tid = $track_id;
+    if ($album_id && $tid !~ /:/) {
+        $tid = "$track_id:$album_id";
+    }
+
+    my $play_obj = {
+        trackId            => $tid,
+        totalPlayedSeconds => int($played_sec || 0),
+        trackLengthSeconds => int($dur || 0),
+        endPositionSeconds => int($played_sec || 0),
+        timestamp          => Plugins::yandex::API::Common::get_iso_timestamp(),
+    };
+    $play_obj->{albumId} = int($album_id) if $album_id;
+
+    $log->info("YANDEX: Reporting music play >= 30s for track $tid (played " . int($played_sec) . "s)");
+    $api->send_play(
+        $play_obj,
+        sub {
+            $log->info("YANDEX: Music play reported successfully for track $tid");
+        },
+        sub {
+            my $err = shift;
+            $log->warn("YANDEX: Failed to report music play for track $tid: $err");
+        }
+    );
+}
+
 sub getDisplayName { 'Yandex Music' }
 
 sub handleFeed {
@@ -446,88 +670,150 @@ sub handleFeed {
 sub _renderRootMenu {
     my ($client, $cb, $client_instance) = @_;
 
-    # Compose the top-level plugin menu based on enabled features and
-    # user preferences for the current account.
-    my @items;
+    my $render = sub {
+        my $quick_item = shift;
+        my @items;
 
-    if ($prefs->get('show_chart')) {
-        push @items, {
-            name => cstring($client, 'PLUGIN_YANDEX_CHART'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleChart,
-            passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/focus_svg.png',
-        };
+        push @items, $quick_item if $quick_item;
+
+        if ($prefs->get('show_chart')) {
+            push @items, {
+                name => cstring($client, 'PLUGIN_YANDEX_CHART'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleChart,
+                passthrough => [$client_instance],
+                image => 'plugins/yandex/html/images/focus_svg.png',
+            };
+        }
+
+        if ($prefs->get('show_new_releases')) {
+            push @items, {
+                name => cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleNewReleases,
+                passthrough => [$client_instance],
+                image => 'html/images/albums.png',
+            };
+        }
+
+        if ($prefs->get('show_new_playlists')) {
+            push @items, {
+                name => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleNewPlaylists,
+                passthrough => [$client_instance],
+                image => 'html/images/playlists.png',
+            };
+        }
+
+        push @items, (
+            {
+                name => cstring($client, 'PLUGIN_YANDEX_FOR_YOU'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleForYou,
+                passthrough => [$client_instance],
+                image => 'plugins/yandex/html/images/personal_svg.png',
+            },
+            {
+                name => cstring($client, 'PLUGIN_YANDEX_MY_COLLECTION'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleFavorites,
+                passthrough => [$client_instance],
+                image => 'plugins/yandex/html/images/favorites.png',
+            },
+        );
+
+        if ($prefs->get('show_history')) {
+            push @items, {
+                name => cstring($client, 'PLUGIN_YANDEX_HISTORY'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleHistory,
+                passthrough => [$client_instance],
+                image => 'plugins/yandex/html/images/history_svg.png',
+            };
+        }
+
+        push @items, (
+            {
+                name => cstring($client, 'PLUGIN_YANDEX_RADIOSTATIONS'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleRadioCategories,
+                passthrough => [$client_instance],
+                image => 'plugins/yandex/html/images/radio.png',
+            },
+            {
+                name => cstring($client, 'PLUGIN_YANDEX_SEARCH'),
+                type => 'link',
+                url  => \&Plugins::yandex::Browse::_handleRecentSearches,
+                passthrough => [$client_instance],
+                image => 'html/images/search.png',
+            },
+        );
+
+        # Account switcher — show if more than one account exists
+        my $accounts = $prefs->get('accounts') || {};
+        my @userIds  = grep { $_ ne 'migrating' } keys %$accounts;
+        if (scalar(@userIds) > 1) {
+            my $currentUserId = _getUserIdForClient($client);
+            my $currentAccount = $accounts->{$currentUserId} || {};
+            my $currentName = $currentAccount->{name} || $currentAccount->{login} || 'Account';
+
+            push @items, {
+                name  => cstring($client, 'PLUGIN_YANDEX_SWITCH_ACCOUNT') . ': ' . $currentName,
+                type  => 'link',
+                url   => \&selectAccount,
+                image => 'plugins/yandex/html/images/accnts_svg.png',
+            };
+        }
+
+        $cb->(\@items);
+    };
+
+    if ($prefs->get('show_resume_quick_item')) {
+        $client_instance->get_bookshelf_recently_played(
+            0,
+            1,
+            sub {
+                my $res = shift;
+                my @raw;
+                if (ref $res eq 'ARRAY') {
+                    @raw = @$res;
+                } elsif (ref $res eq 'HASH') {
+                    for my $k (qw(entities items books albums history)) {
+                        if ($res->{$k} && ref $res->{$k} eq 'ARRAY') {
+                            @raw = @{$res->{$k}};
+                            last;
+                        }
+                    }
+                }
+                my $quick_item;
+                if (@raw && $raw[0]) {
+                    my $item = $raw[0];
+                    my $album = $item->{album} // (exists $item->{volumes} || exists $item->{trackCount} ? $item : {});
+                    my $album_id = $album->{id} // $item->{id} // $item->{albumId};
+                    my $title = $album->{title} // $item->{title} // $item->{name};
+                    if ($album_id && $title) {
+                        my $cover_uri = $album->{coverUri} // $item->{coverUri} // $album->{ogImage} // $item->{ogImage};
+                        my $icon = Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200');
+                        $quick_item = {
+                            name        => sprintf(cstring($client, 'PLUGIN_YANDEX_QUICK_RESUME'), $title),
+                            type        => 'action',
+                            url         => \&Plugins::yandex::Browse::_handleQuickResumeBook,
+                            passthrough => [$client_instance, $album_id],
+                            image       => $icon,
+                            nextWindow  => 'nowPlaying',
+                        };
+                    }
+                }
+                $render->($quick_item);
+            },
+            sub {
+                $render->(undef);
+            }
+        );
+    } else {
+        $render->(undef);
     }
-
-    if ($prefs->get('show_new_releases')) {
-        push @items, {
-            name => cstring($client, 'PLUGIN_YANDEX_NEW_RELEASES'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleNewReleases,
-            passthrough => [$client_instance],
-            image => 'html/images/albums.png',
-        };
-    }
-
-    if ($prefs->get('show_new_playlists')) {
-        push @items, {
-            name => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleNewPlaylists,
-            passthrough => [$client_instance],
-            image => 'html/images/playlists.png',
-        };
-    }
-
-    push @items, (
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_FOR_YOU'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleForYou,
-            passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/personal_svg.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_MY_COLLECTION'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleFavorites,
-            passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/favorites.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_RADIOSTATIONS'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleRadioCategories,
-            passthrough => [$client_instance],
-            image => 'plugins/yandex/html/images/radio.png',
-        },
-        {
-            name => cstring($client, 'PLUGIN_YANDEX_SEARCH'),
-            type => 'link',
-            url  => \&Plugins::yandex::Browse::_handleRecentSearches,
-            passthrough => [$client_instance],
-            image => 'html/images/search.png',
-        },
-    );
-
-    # Account switcher — show if more than one account exists
-    my $accounts = $prefs->get('accounts') || {};
-    my @userIds  = grep { $_ ne 'migrating' } keys %$accounts;
-    if (scalar(@userIds) > 1) {
-        my $currentUserId = _getUserIdForClient($client);
-        my $currentAccount = $accounts->{$currentUserId} || {};
-        my $currentName = $currentAccount->{name} || $currentAccount->{login} || 'Account';
-
-        push @items, {
-            name  => cstring($client, 'PLUGIN_YANDEX_SWITCH_ACCOUNT') . ': ' . $currentName,
-            type  => 'link',
-            url   => \&selectAccount,
-            image => 'plugins/yandex/html/images/accnts_svg.png',
-        };
-    }
-
-    $cb->(\@items);
 }
 
 # Menu: list accounts for switching (per player)

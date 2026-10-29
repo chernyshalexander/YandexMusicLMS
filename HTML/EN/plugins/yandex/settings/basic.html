@@ -220,6 +220,24 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_HISTORY" desc="PLUGIN_YANDEX_SHOW_HISTORY_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_history" id="pref_show_history" [% IF prefs.show_history %]checked[% END %]>
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_SHOW_RESUME_QUICK_ITEM" desc="PLUGIN_YANDEX_SHOW_RESUME_QUICK_ITEM_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_show_resume_quick_item" id="pref_show_resume_quick_item" [% IF prefs.show_resume_quick_item %]checked[% END %]>
+</div>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_PROGRESS_SAVE_INTERVAL" desc="PLUGIN_YANDEX_PROGRESS_SAVE_INTERVAL_DESC" %]
+<div class="prefDesc">
+    <input type="text" name="pref_progress_save_interval" id="pref_progress_save_interval" class="stdedit" size="4" value="[% prefs.progress_save_interval %]">
+</div>
+[% END %]
+
 <hr>
 
 [% WRAPPER setting title="PLUGIN_YANDEX_SHOW_WAVE_WIZARD" desc="PLUGIN_YANDEX_SHOW_WAVE_WIZARD_DESC" %]

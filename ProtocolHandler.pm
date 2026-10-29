@@ -109,6 +109,12 @@ sub new {
             else {
                 my $seekdata = $song->can('seekdata') ? $song->seekdata : $song->{'seekdata'};
                 if ($seekdata) {
+                    if ($seekdata->{timeOffset}) {
+                        my $calc = $class->getSeekData($client, $song, $seekdata->{timeOffset});
+                        if ($calc && $calc->{sourceStreamOffset}) {
+                            $seekdata->{sourceStreamOffset} = $calc->{sourceStreamOffset};
+                        }
+                    }
                     $initial_offset = int($seekdata->{restartOffset} || $seekdata->{sourceStreamOffset} || 0);
                 }
             }
@@ -291,6 +297,30 @@ sub canDirectStreamSong {
 # slow connections after ~2 minutes.
 sub canEnhanceHTTP { return 2 }
 
+# Intercept open / request to ensure initialAudioBlock is defined on seeking remote streams.
+# Without this, Slim::Player::Protocols::HTTP::request passes $track->initial_block_fn
+# (which is undef for remote streams) into Slim::Formats::MP3::getInitialAudioBlock,
+# crashing with: "Can't use an undefined value as filehandle reference at Slim/Formats/MP3.pm line 191".
+# Defining initialAudioBlock as '' tells HTTP::request that no initial audio header block
+# is needed and avoids attempting to read frame boundaries from an undef filehandle.
+sub open {
+    my ($self, $args) = @_;
+    my $song = ($args && $args->{'song'}) || (ref $self ? ${*$self}{'song'} : undef);
+    if ($song && $song->can('initialAudioBlock') && !defined $song->initialAudioBlock) {
+        $song->initialAudioBlock('');
+    }
+    return $self->SUPER::open($args);
+}
+
+sub request {
+    my ($self, $args) = @_;
+    my $song = ($args && $args->{'song'}) || (ref $self ? ${*$self}{'song'} : undef);
+    if ($song && $song->can('initialAudioBlock') && !defined $song->initialAudioBlock) {
+        $song->initialAudioBlock('');
+    }
+    return $self->SUPER::request($args);
+}
+
 # Intercept the HTTP request the core builds for our stream connection
 # (Slim::Formats::RemoteStream::request calls $sock->requestString with the song's
 # seekdata). On resume — power-on reconnect, unpause, seek — the core requests
@@ -304,6 +334,16 @@ sub canEnhanceHTTP { return 2 }
 sub requestString {
     my $self = shift;
     my ($client, $url, $post, $seekdata) = @_;
+
+    if ($seekdata && $seekdata->{timeOffset}) {
+        my $song = ${*$self}{'song'};
+        if ($song) {
+            my $calc = $self->getSeekData($client, $song, $seekdata->{timeOffset});
+            if ($calc && $calc->{sourceStreamOffset}) {
+                $seekdata->{sourceStreamOffset} = $calc->{sourceStreamOffset};
+            }
+        }
+    }
 
     my $skip = ($seekdata && $self->_mp4_resume_offset($seekdata)) || 0;
     if ($skip > 0) {
@@ -351,6 +391,47 @@ sub _mp4_resume_offset {
     return ($meta && $meta->{codec} && $meta->{codec} =~ /-mp4$/) ? $offset : 0;
 }
 
+sub canSeek {
+    my ($class, $client, $song) = @_;
+    return 0 unless $song;
+    my $seconds = $song->duration();
+    if (!$seconds && $song->can('currentTrack') && $song->currentTrack) {
+        $seconds = $song->currentTrack->duration();
+    }
+    if (!$seconds) {
+        my $url = ($song->can('currentTrack') && $song->currentTrack) ? $song->currentTrack->url : '';
+        if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+            my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
+            $seconds = $meta->{duration} if $meta;
+        }
+    }
+    return 0 unless $seconds;
+    return 1;
+}
+
+sub getSeekData {
+    my ($class, $client, $song, $newtime) = @_;
+    return unless defined $newtime && $newtime >= 0;
+
+    my $bitrate = ($song && $song->can('bitrate')) ? $song->bitrate() : 0;
+    if (!$bitrate && $song) {
+        my $url = ($song->can('currentTrack') && $song->currentTrack) ? $song->currentTrack->url : '';
+        if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+            my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
+            $bitrate = $meta->{bitrate} if $meta;
+        }
+    }
+    $bitrate ||= 900000;
+
+    my $offset = int((($bitrate) / 8) * $newtime);
+    $offset -= $offset % 16;
+
+    return {
+        sourceStreamOffset => $offset,
+        timeOffset         => $newtime,
+    };
+}
+
 # 3. scanUrl 
 sub scanUrl {
     my ($class, $url, $args) = @_;
@@ -364,7 +445,36 @@ sub getNextTrack {
     my $url = $song->currentTrack()->url;
     $log->error("YANDEX: getNextTrack called for: $url");
 
+    my $initial_offset = 0;
+    if ($url =~ /[?&]offset=(\d+(?:\.\d+)?)/) {
+        $initial_offset = $1;
+        if ($initial_offset > 0) {
+            my $sd = ($song->can('seekdata') ? $song->seekdata : $song->{'seekdata'}) || {};
+            $sd->{timeOffset} = $initial_offset;
+            my $calc = $class->getSeekData($song->master(), $song, $initial_offset);
+            if ($calc && $calc->{sourceStreamOffset}) {
+                $sd->{sourceStreamOffset} = $calc->{sourceStreamOffset};
+            }
+            $song->seekdata($sd);
+            $song->startOffset($initial_offset);
+            $song->initialAudioBlock('') if $song->can('initialAudioBlock');
+            $log->info("YANDEX: getNextTrack initialized offset $initial_offset s (preliminary sourceStreamOffset: " . ($sd->{sourceStreamOffset} || 0) . ")");
+        }
+    }
+
     $class->_resolveStreamUrl($song, sub {
+        # Re-calculate byte offset now that exact codec & bitrate are resolved and cached
+        if ($initial_offset > 0) {
+            my $sd = ($song->can('seekdata') ? $song->seekdata : $song->{'seekdata'}) || {};
+            $sd->{timeOffset} = $initial_offset;
+            my $calc = $class->getSeekData($song->master(), $song, $initial_offset);
+            if ($calc && $calc->{sourceStreamOffset}) {
+                $sd->{sourceStreamOffset} = $calc->{sourceStreamOffset};
+                $song->seekdata($sd);
+                $log->info("YANDEX: getNextTrack refreshed offset $initial_offset s with resolved bitrate (sourceStreamOffset: " . $sd->{sourceStreamOffset} . ")");
+            }
+            $song->initialAudioBlock('') if $song->can('initialAudioBlock');
+        }
         # Stamp the resolve time so updateOnStream() (called by the core right
         # before opening the stream) does not hit the API a second time.
         $song->pluginData('yandex_url_resolved_at' => time());
@@ -381,6 +491,8 @@ sub getNextTrack {
 # See docs/resume-bug-investigation.md.
 sub updateOnStream {
     my ($class, $song, $successCb, $errorCb) = @_;
+
+    $song->initialAudioBlock('') if $song && $song->can('initialAudioBlock') && !defined $song->initialAudioBlock;
 
     my $resolved_at = $song->pluginData('yandex_url_resolved_at') || 0;
     my $age = $resolved_at ? time() - $resolved_at : -1;

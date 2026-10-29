@@ -3,6 +3,7 @@ package Plugins::yandex::API::Common;
 use strict;
 use warnings;
 use utf8;
+use Time::HiRes qw(gettimeofday);
 
 # Centralized constants for Yandex Music API
 use constant CLIENT_VERSION => '24023621';
@@ -50,12 +51,20 @@ sub get_api_language {
     return ($lang && $lang =~ /^ru/i) ? 'ru' : 'en';
 }
 
-# Return ISO 8601 UTC timestamp string (e.g. 2026-10-12T15:20:00Z)
+# Return ISO 8601 UTC timestamp string with milliseconds (e.g. 2026-10-12T15:20:00.123Z)
 sub get_iso_timestamp {
     my ($t) = @_;
-    $t //= time();
-    my ($sec, $min, $hour, $mday, $mon, $year) = gmtime($t);
-    return sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", $year + 1900, $mon + 1, $mday, $hour, $min, $sec);
+    my ($sec, $millis);
+    if (defined $t) {
+        $sec = int($t);
+        $millis = int(($t - $sec) * 1000);
+    } else {
+        my ($s, $us) = Time::HiRes::gettimeofday();
+        $sec = $s;
+        $millis = int($us / 1000);
+    }
+    my ($s_part, $min, $hour, $mday, $mon, $year) = gmtime($sec);
+    return sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", $year + 1900, $mon + 1, $mday, $hour, $min, $s_part, $millis);
 }
 
 1;
