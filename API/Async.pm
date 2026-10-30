@@ -35,8 +35,10 @@ use Digest::MD5 qw(md5_hex);
 my $log = logger('plugin.yandex');
 my $cache = Slim::Utils::Cache->new();
 
-use constant SEARCH_TTL => 3600;
-use constant LONG_TTL   => 86400;
+use constant SEARCH_TTL    => 3600;
+use constant LONG_TTL      => 86400;
+use constant HISTORY_TTL   => 300; # 5 minutes cache for listening history
+use constant BOOKSHELF_TTL => 180; # 3 minutes cache for bookshelf recently-played
 
 # Cached result of Crypt::Rijndael availability check (undef = not yet tested).
 my $HAS_RIJNDAEL;
@@ -1254,46 +1256,108 @@ sub albums {
 
 # --- Music & Audiobooks Listening History & Progress Endpoints ---
 
-# Fetch music listening history
+# Helper: Invalidate cached music history and bookshelf requests
+sub _invalidate_history_cache {
+    my ($self) = @_;
+    my $uid = ($self->get_me && $self->get_me->{uid}) ? $self->get_me->{uid} : ($self->{userId} || 'default');
+    my @keys = ("yandex_music_history_${uid}_50", "yandex_music_history_${uid}_20", "yandex_music_history_${uid}_100");
+    if ($self->{_history_cache_keys} && ref $self->{_history_cache_keys} eq 'ARRAY') {
+        push @keys, @{$self->{_history_cache_keys}};
+        $self->{_history_cache_keys} = [];
+    }
+    for my $k (@keys) {
+        if ($cache && $cache->can('remove')) {
+            $cache->remove($k);
+        } elsif ($cache) {
+            $cache->set($k, undef, 0);
+        }
+    }
+}
+
+sub _invalidate_bookshelf_cache {
+    my ($self) = @_;
+    my $uid = ($self->get_me && $self->get_me->{uid}) ? $self->get_me->{uid} : ($self->{userId} || 'default');
+    my @keys = ("yandex_bookshelf_recent_${uid}_0_1", "yandex_bookshelf_recent_${uid}_0_20", "yandex_bookshelf_recent_${uid}_0_50");
+    if ($self->{_bookshelf_cache_keys} && ref $self->{_bookshelf_cache_keys} eq 'ARRAY') {
+        push @keys, @{$self->{_bookshelf_cache_keys}};
+        $self->{_bookshelf_cache_keys} = [];
+    }
+    for my $k (@keys) {
+        if ($cache && $cache->can('remove')) {
+            $cache->remove($k);
+        } elsif ($cache) {
+            $cache->set($k, undef, 0);
+        }
+    }
+}
+
+# Fetch music listening history (cached with HISTORY_TTL = 300s)
 # GET /music-history?fullModelsCount=50
 sub get_music_history {
-    my ($self, $full_models_count, $callback, $error_callback) = @_;
+    my ($self, $full_models_count, $callback, $error_callback, $params_opt) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/music-history';
+    my $count = $full_models_count // 50;
     my $params = {
-        fullModelsCount => ($full_models_count // 50),
+        fullModelsCount => $count,
     };
+
+    my $uid = ($self->get_me && $self->get_me->{uid}) ? $self->get_me->{uid} : ($self->{userId} || 'default');
+    my $cacheKey = "yandex_music_history_${uid}_${count}";
+    push @{$self->{_history_cache_keys} ||= []}, $cacheKey;
+
+    if (!($params_opt && $params_opt->{no_cache})) {
+        if (my $cached = $cache->get($cacheKey)) {
+            main::DEBUGLOG && $log->is_debug && $log->debug("Cache hit: $cacheKey");
+            $callback->($cached) if $callback;
+            return;
+        }
+    }
 
     $self->get(
         $url,
         $params,
         sub {
             my $res = shift;
-            if (ref $res eq 'HASH' && exists $res->{result}) {
-                $callback->($res->{result}) if $callback;
-            } else {
-                $callback->($res) if $callback;
-            }
+            my $data = (ref $res eq 'HASH' && exists $res->{result}) ? $res->{result} : $res;
+            $cache->set($cacheKey, $data, HISTORY_TTL);
+            $callback->($data) if $callback;
         },
         $error_callback
     );
 }
 
-# Lazy loading / batch fetch history items
+# Lazy loading / batch fetch history items (cached with HISTORY_TTL = 300s)
 # POST /music-history/items
 sub post_music_history_items {
-    my ($self, $items, $callback, $error_callback) = @_;
+    my ($self, $items, $callback, $error_callback, $params_opt) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/music-history/items';
     my $body = (ref $items eq 'HASH') ? $items : { shortModels => $items, items => $items };
+
+    my $uid = ($self->get_me && $self->get_me->{uid}) ? $self->get_me->{uid} : ($self->{userId} || 'default');
+    my $key_str = (ref $items eq 'ARRAY')
+        ? join(',', @$items)
+        : (ref $items eq 'HASH')
+            ? join(';', map { "$_=" . (ref $items->{$_} eq 'ARRAY' ? join(',', @{$items->{$_}}) : ($items->{$_} // '')) } sort keys %$items)
+            : ($items // '');
+    my $items_key = md5_hex($key_str);
+    my $cacheKey = "yandex_music_history_items_${uid}_${items_key}";
+
+    if (!($params_opt && $params_opt->{no_cache})) {
+        if (my $cached = $cache->get($cacheKey)) {
+            main::DEBUGLOG && $log->is_debug && $log->debug("Cache hit: $cacheKey");
+            $callback->($cached) if $callback;
+            return;
+        }
+    }
+
     $self->post(
         $url,
         $body,
         sub {
             my $res = shift;
-            if (ref $res eq 'HASH' && exists $res->{result}) {
-                $callback->($res->{result}) if $callback;
-            } else {
-                $callback->($res) if $callback;
-            }
+            my $data = (ref $res eq 'HASH' && exists $res->{result}) ? $res->{result} : $res;
+            $cache->set($cacheKey, $data, HISTORY_TTL);
+            $callback->($data) if $callback;
         },
         $error_callback
     );
@@ -1341,6 +1405,8 @@ sub send_play {
 
     return unless @plays;
 
+    $self->_invalidate_history_cache();
+
     $self->post(
         $url,
         { plays => \@plays },
@@ -1353,26 +1419,38 @@ sub send_play {
     );
 }
 
-# Fetch bookshelf of recently played audiobooks and podcasts
+# Fetch bookshelf of recently played audiobooks and podcasts (cached with BOOKSHELF_TTL = 180s)
 # GET /non-music/bookshelf/recently-played?page=0&pageSize=20
 sub get_bookshelf_recently_played {
-    my ($self, $page, $page_size, $callback, $error_callback) = @_;
+    my ($self, $page, $page_size, $callback, $error_callback, $params_opt) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/non-music/bookshelf/recently-played';
+    my $p = $page // 0;
+    my $ps = $page_size // 20;
     my $params = {
-        page     => ($page // 0),
-        pageSize => ($page_size // 20),
+        page     => $p,
+        pageSize => $ps,
     };
+
+    my $uid = ($self->get_me && $self->get_me->{uid}) ? $self->get_me->{uid} : ($self->{userId} || 'default');
+    my $cacheKey = "yandex_bookshelf_recent_${uid}_${p}_${ps}";
+    push @{$self->{_bookshelf_cache_keys} ||= []}, $cacheKey;
+
+    if (!($params_opt && $params_opt->{no_cache})) {
+        if (my $cached = $cache->get($cacheKey)) {
+            main::DEBUGLOG && $log->is_debug && $log->debug("Cache hit: $cacheKey");
+            $callback->($cached) if $callback;
+            return;
+        }
+    }
 
     $self->get(
         $url,
         $params,
         sub {
             my $res = shift;
-            if (ref $res eq 'HASH' && exists $res->{result}) {
-                $callback->($res->{result}) if $callback;
-            } else {
-                $callback->($res) if $callback;
-            }
+            my $data = (ref $res eq 'HASH' && exists $res->{result}) ? $res->{result} : $res;
+            $cache->set($cacheKey, $data, BOOKSHELF_TTL);
+            $callback->($data) if $callback;
         },
         $error_callback
     );
@@ -1384,6 +1462,8 @@ sub save_stream_progress {
     my ($self, $track_id, $position_sec, $track_length_sec, $finished, $callback, $error_callback) = @_;
     my $url = Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync';
     my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
+
+    $self->_invalidate_bookshelf_cache();
 
     my $body = {
         lastSyncTimestamp => $iso_timestamp,
@@ -1421,6 +1501,8 @@ sub mark_stream_finished {
     my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
     my $len = 0 + int($track_length_sec || 0);
 
+    $self->_invalidate_bookshelf_cache();
+
     my $body = {
         lastSyncTimestamp => $iso_timestamp,
         trackStreams      => [
@@ -1453,6 +1535,8 @@ sub mark_stream_finished {
 # POST /streams/progress/sync (all album chapters)
 sub mark_album_finished {
     my ($self, $album_id, $callback, $error_callback) = @_;
+
+    $self->_invalidate_bookshelf_cache();
 
     $self->get_album_with_tracks(
         $album_id,

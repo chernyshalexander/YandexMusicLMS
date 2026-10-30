@@ -175,6 +175,7 @@ BEGIN {
         sub new { bless {}, shift }
         sub get { my ($s, $k) = @_; return $DATA{$k} }
         sub set { my ($s, $k, $v) = @_; $DATA{$k} = $v }
+        sub remove { my ($s, $k) = @_; delete $DATA{$k} }
         package Slim::Utils::DbCache;
         sub new { bless {}, shift } sub db { bless {}, shift } sub prepare { bless {}, shift } sub execute {} sub fetchrow_array {} sub selectrow_array {}
     }
@@ -440,17 +441,23 @@ use Plugins::yandex::ProtocolHandler;
         $cb->($self->{album});
     }
     package MockClient;
-    sub new { bless { id => '00:04:20:11:22:33', name => 'TestClient', executed => [] }, shift }
+    sub new { my ($cls, %args) = @_; bless { id => '00:04:20:11:22:33', name => 'TestClient', executed => [], %args }, $cls }
     sub id { shift->{id} }
     sub name { shift->{name} }
+    sub model { shift->{model} }
     sub string {
         my ($self, $token) = @_;
         my %dict = (
-            'PLUGIN_YANDEX_RESUME_CHAPTER_AT' => 'Продолжить: Глава %s (с %s)',
-            'PLUGIN_YANDEX_PLAY_FROM_START'   => 'Слушать с начала (Глава 1)',
-            'PLUGIN_YANDEX_TABLE_OF_CONTENTS' => 'Оглавление (Список глав)',
-            'PLUGIN_YANDEX_MARK_FINISHED'     => 'Отметить как прочитанное',
-            'PLUGIN_YANDEX_QUICK_RESUME'      => '[▶] Продолжить: %s',
+            'PLUGIN_YANDEX_RESUME_CHAPTER_AT'  => 'Продолжить: Глава %s (с %s)',
+            'PLUGIN_YANDEX_PLAY_FROM_START'    => 'Слушать с начала (Глава 1)',
+            'PLUGIN_YANDEX_TABLE_OF_CONTENTS'  => 'Оглавление (Список глав)',
+            'PLUGIN_YANDEX_MARK_FINISHED'      => 'Отметить как прочитанное',
+            'PLUGIN_YANDEX_QUICK_RESUME'       => '[▶] Продолжить: %s',
+            'PLUGIN_YANDEX_QUICK_RESUME_BASIC' => '[>] Продолжить: %s',
+            'PLUGIN_YANDEX_ALBUM'              => 'Альбом',
+            'PLUGIN_YANDEX_ARTIST'             => 'Артист',
+            'PLUGIN_YANDEX_PLAYLIST'           => 'Плейлист',
+            'PLUGIN_YANDEX_RADIO'              => 'Радио',
         );
         return $dict{$token} // $token;
     }
@@ -1083,5 +1090,335 @@ use Plugins::yandex::ProtocolHandler;
     like($first_item->{name}, qr{1984}, 'Quick resume item name includes book title 1984');
     is($first_item->{passthrough}[1], 32792140, 'Quick resume item passes album ID 32792140');
 }
+
+# --------------------------------------------------------------------------
+# Test 17: is_basic_display_client helper tests
+# --------------------------------------------------------------------------
+{
+    require Plugins::yandex::Browse::Common;
+
+    {
+        package Slim::Player::SqueezePlay;
+        our @ISA = qw(MockClient);
+        package Slim::Player::Boom;
+        our @ISA = qw(MockClient);
+        package Slim::Player::Squeezebox2;
+        our @ISA = qw(MockClient);
+        package Slim::Player::Transporter;
+        our @ISA = qw(MockClient);
+        package Slim::Player::Receiver;
+        our @ISA = qw(MockClient);
+    }
+
+    is(Plugins::yandex::Browse::Common::is_basic_display_client(undef), 0, 'undef client is not basic display');
+    my $modern_client = MockClient->new();
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($modern_client), 0, 'generic client is not basic display');
+
+    # Squeezelite (headless)
+    my $squeezelite = MockClient->new(model => 'squeezelite');
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($squeezelite), 0, 'squeezelite is not basic display');
+
+    # SqueezePlay class
+    my $sqp_by_class = bless { id => '1' }, 'Slim::Player::SqueezePlay';
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($sqp_by_class), 1, 'Slim::Player::SqueezePlay is basic display');
+
+    # SqueezePlay models (desktop, Touch, Radio, Controller)
+    for my $m (qw(squeezeplay fab4 baby radio controller jive)) {
+        my $c = MockClient->new(model => $m);
+        is(Plugins::yandex::Browse::Common::is_basic_display_client($c), 1, "model $m is basic display");
+    }
+
+    # Hardware players (Boom, Squeezebox 2/3/Classic, Transporter, Receiver)
+    my $boom_by_class = bless { id => '2' }, 'Slim::Player::Boom';
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($boom_by_class), 1, 'Slim::Player::Boom is basic display');
+    my $sb2_by_class = bless { id => '3' }, 'Slim::Player::Squeezebox2';
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($sb2_by_class), 1, 'Slim::Player::Squeezebox2 is basic display');
+
+    for my $m (qw(boom squeezebox2 squeezebox3 classic transporter receiver slimp3)) {
+        my $c = MockClient->new(model => $m);
+        is(Plugins::yandex::Browse::Common::is_basic_display_client($c), 1, "hardware model $m is basic display");
+    }
+
+    # Explicit override flags
+    my $override_yes = MockClient->new(is_basic_display => 1);
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($override_yes), 1, 'override is_basic_display => 1');
+    my $override_no = MockClient->new(is_basic_display => 0, model => 'boom');
+    is(Plugins::yandex::Browse::Common::is_basic_display_client($override_no), 0, 'override is_basic_display => 0 takes precedence');
+}
+
+# --------------------------------------------------------------------------
+# Test 18: Basic display client quick resume button on root menu
+# --------------------------------------------------------------------------
+{
+    my $sqp_client = bless { id => 'sqp1', model => 'squeezeplay' }, 'Slim::Player::SqueezePlay';
+    my $boom_client = bless { id => 'boom1', model => 'boom' }, 'Slim::Player::Boom';
+
+    my $api_client = Plugins::yandex::API::Async->new('dummy_token');
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb) = @_;
+        $cb->({
+            entities => [
+                {
+                    album => {
+                        id => 32792140,
+                        title => '1984',
+                    },
+                    track => { id => 129893157, title => 'Глава 1' }
+                }
+            ]
+        });
+    };
+
+    my $sqp_menu;
+    Plugins::yandex::Plugin::_renderRootMenu($sqp_client, sub { $sqp_menu = shift; }, $api_client);
+    ok(defined $sqp_menu && ref $sqp_menu eq 'ARRAY', 'Squeezeplay root menu returned items');
+    like($sqp_menu->[0]{name}, qr{\[>\]\s*Продолжить:\s*1984}, 'Squeezeplay quick resume uses [>] instead of [▶]');
+    unlike($sqp_menu->[0]{name}, qr{▶}, 'Squeezeplay quick resume does NOT contain ▶ symbol');
+
+    my $boom_menu;
+    Plugins::yandex::Plugin::_renderRootMenu($boom_client, sub { $boom_menu = shift; }, $api_client);
+    ok(defined $boom_menu && ref $boom_menu eq 'ARRAY', 'Boom root menu returned items');
+    like($boom_menu->[0]{name}, qr{\[>\]\s*Продолжить:\s*1984}, 'Boom quick resume uses [>] instead of [▶]');
+    unlike($boom_menu->[0]{name}, qr{▶}, 'Boom quick resume does NOT contain ▶ symbol');
+}
+
+# --------------------------------------------------------------------------
+# Test 19: History context items formatting for basic display clients
+# --------------------------------------------------------------------------
+{
+    my $sqp_client = bless { id => 'sqp2', model => 'squeezeplay' }, 'Slim::Player::SqueezePlay';
+
+    # Wave: * instead of ⚡
+    my $wave_grp = {
+        context => {
+            type => 'wave',
+            data => {
+                fullModel => { wave => { title => 'Berlin school' } },
+                itemId    => { seeds => ['artist:12345'] },
+            },
+        },
+    };
+    my $wave_item = Plugins::yandex::Browse::History::_parse_history_context_item($sqp_client, undef, $wave_grp);
+    ok(defined $wave_item, 'Basic wave context item parsed');
+    like($wave_item->{name}, qr{^\*\s*Berlin school}, 'Basic wave name uses * prefix');
+    unlike($wave_item->{name}, qr{⚡}, 'Basic wave name does NOT contain ⚡ emoji');
+    like($wave_item->{line1}, qr{^\*\s*Berlin school}, 'Basic wave line1 uses * prefix');
+    unlike($wave_item->{line1}, qr{⚡}, 'Basic wave line1 does NOT contain ⚡ emoji');
+
+    # Album: [Альбом] instead of 💿
+    my $album_grp = {
+        context => {
+            type => 'album',
+            data => {
+                fullModel => {
+                    album => {
+                        id => 999,
+                        title => 'По волне моей памяти',
+                        artists => [{ name => 'Давид Тухманов' }],
+                    },
+                },
+                itemId => { id => 999 },
+            },
+        },
+    };
+    my $album_item = Plugins::yandex::Browse::History::_parse_history_context_item($sqp_client, undef, $album_grp);
+    ok(defined $album_item, 'Basic album context item parsed');
+    like($album_item->{name}, qr{\[Альбом\]\s*По волне моей памяти.*Давид Тухманов}, 'Basic album name uses [Альбом] badge and title');
+    unlike($album_item->{name}, qr{💿}, 'Basic album name does NOT contain 💿 emoji');
+    like($album_item->{line1}, qr{\[Альбом\]\s*По волне моей памяти}, 'Basic album line1 uses [Альбом]');
+    unlike($album_item->{line1}, qr{💿}, 'Basic album line1 does NOT contain 💿 emoji');
+    unlike($album_item->{line2}, qr{\x{2022}}, 'Basic album line2 does not contain bullet char');
+
+    # Artist: [Артист] instead of 👤
+    my $artist_grp = {
+        context => {
+            type => 'artist',
+            data => {
+                fullModel => {
+                    artist => { id => 888, name => 'Queen' },
+                },
+                itemId => { id => 888 },
+            },
+        },
+    };
+    my $artist_item = Plugins::yandex::Browse::History::_parse_history_context_item($sqp_client, undef, $artist_grp);
+    ok(defined $artist_item, 'Basic artist context item parsed');
+    like($artist_item->{name}, qr{\[Артист\]\s*Queen}, 'Basic artist name uses [Артист] tag');
+    unlike($artist_item->{name}, qr{👤}, 'Basic artist name does NOT contain 👤 emoji');
+    like($artist_item->{line1}, qr{\[Артист\]\s*Queen}, 'Basic artist line1 uses [Артист] tag');
+    unlike($artist_item->{line1}, qr{👤}, 'Basic artist line1 does NOT contain 👤 emoji');
+
+    # Playlist: [Плейлист] instead of 📜
+    my $playlist_grp = {
+        context => {
+            type => 'playlist',
+            data => {
+                fullModel => {
+                    playlist => {
+                        uid => 111,
+                        kind => 222,
+                        title => 'Top Hits',
+                        owner => { name => 'Yandex Music' },
+                    },
+                },
+                itemId => { uid => 111, kind => 222 },
+            },
+        },
+    };
+    my $playlist_item = Plugins::yandex::Browse::History::_parse_history_context_item($sqp_client, undef, $playlist_grp);
+    ok(defined $playlist_item, 'Basic playlist context item parsed');
+    like($playlist_item->{name}, qr{\[Плейлист\]\s*Top Hits.*Yandex Music}, 'Basic playlist name uses [Плейлист] tag');
+    unlike($playlist_item->{name}, qr{📜}, 'Basic playlist name does NOT contain 📜 emoji');
+    like($playlist_item->{line1}, qr{\[Плейлист\]\s*Top Hits}, 'Basic playlist line1 uses [Плейлист] tag');
+    unlike($playlist_item->{line1}, qr{📜}, 'Basic playlist line1 does NOT contain 📜 emoji');
+    unlike($playlist_item->{line2}, qr{\x{2022}}, 'Basic playlist line2 does not contain bullet char');
+}
+
+# --------------------------------------------------------------------------
+# Test 20: Listening history and bookshelf caching & cache invalidation
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('token123');
+    $api->{me} = { uid => 555666 };
+
+    my $history_calls = 0;
+    my $bookshelf_calls = 0;
+    my $post_items_calls = 0;
+
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::get = sub {
+        my ($s, $url, $params, $cb) = @_;
+        if ($url =~ m{/music-history$}) {
+            $history_calls++;
+            $cb->({ result => { historyTabs => [{ date => '2026-10-30', items => [] }] } });
+        } elsif ($url =~ m{/non-music/bookshelf/recently-played$}) {
+            $bookshelf_calls++;
+            $cb->({ result => { entities => [{ album => { id => 42, title => 'Cached Book' } }] } });
+        } else {
+            $cb->({ result => {} });
+        }
+    };
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($s, $url, $body, $cb) = @_;
+        if ($url =~ m{/music-history/items$}) {
+            $post_items_calls++;
+            $cb->({ result => [{ id => 'item100' }] });
+        } else {
+            $cb->({ result => { status => 'ok' } });
+        }
+    };
+
+    # 1. get_music_history caching
+    my $hist_res1;
+    $api->get_music_history(50, sub { $hist_res1 = shift; });
+    is($history_calls, 1, 'First get_music_history call hits network');
+    is($hist_res1->{historyTabs}[0]{date}, '2026-10-30', 'First get_music_history got result');
+
+    my $hist_res2;
+    $api->get_music_history(50, sub { $hist_res2 = shift; });
+    is($history_calls, 1, 'Second get_music_history call hit cache (network not called)');
+    is($hist_res2->{historyTabs}[0]{date}, '2026-10-30', 'Cached get_music_history matched');
+
+    # no_cache forces fresh call
+    $api->get_music_history(50, sub {}, undef, { no_cache => 1 });
+    is($history_calls, 2, 'get_music_history with no_cache => 1 bypasses cache');
+
+    # 2. send_play invalidates music history cache
+    $api->send_play({ trackId => '100:200', totalPlayedSeconds => 40 });
+    $api->get_music_history(50, sub {});
+    is($history_calls, 3, 'send_play invalidated music history cache (network called again)');
+
+    # 3. get_bookshelf_recently_played caching
+    my $book_res1;
+    $api->get_bookshelf_recently_played(0, 20, sub { $book_res1 = shift; });
+    is($bookshelf_calls, 1, 'First get_bookshelf_recently_played call hits network');
+    is($book_res1->{entities}[0]{album}{title}, 'Cached Book', 'First bookshelf got result');
+
+    my $book_res2;
+    $api->get_bookshelf_recently_played(0, 20, sub { $book_res2 = shift; });
+    is($bookshelf_calls, 1, 'Second get_bookshelf_recently_played hit cache');
+
+    # 4. save_stream_progress invalidates bookshelf cache
+    $api->save_stream_progress(101, 50, 200, 0);
+    $api->get_bookshelf_recently_played(0, 20, sub {});
+    is($bookshelf_calls, 2, 'save_stream_progress invalidated bookshelf cache');
+
+    # 5. post_music_history_items caching
+    my $post_res1;
+    $api->post_music_history_items(['track_1', 'track_2'], sub { $post_res1 = shift; });
+    is($post_items_calls, 1, 'First post_music_history_items hits network');
+
+    my $post_res2;
+    $api->post_music_history_items(['track_1', 'track_2'], sub { $post_res2 = shift; });
+    is($post_items_calls, 1, 'Second post_music_history_items hit cache');
+
+    # 6. Dynamic bookshelf page invalidation
+    my $book_page1_res;
+    $api->get_bookshelf_recently_played(1, 10, sub { $book_page1_res = shift; });
+    is($bookshelf_calls, 3, 'Bookshelf custom page hits network');
+    $api->get_bookshelf_recently_played(1, 10, sub {});
+    is($bookshelf_calls, 3, 'Bookshelf custom page hits cache');
+
+    $api->save_stream_progress(101, 75, 200, 0);
+    $api->get_bookshelf_recently_played(1, 10, sub {});
+    is($bookshelf_calls, 4, 'save_stream_progress invalidated dynamic bookshelf custom page cache');
+}
+
+# --------------------------------------------------------------------------
+# Test 21: sanitize_for_client & separator checks across basic vs full clients
+# --------------------------------------------------------------------------
+{
+    my $sqp_client = bless { id => 'sqp_disp', model => 'squeezeplay' }, 'Slim::Player::SqueezePlay';
+    my $full_client = bless { id => 'web_disp', model => 'squeezelite' }, 'Slim::Player::Client';
+
+    # 1. sanitize_for_client
+    my $raw_str = "▶ Play • ⚡ Super 💿 Album 👤 Artist 📜 Playlist 🎵";
+    my $clean_sqp = Plugins::yandex::Browse::Common::sanitize_for_client($sqp_client, $raw_str);
+    is($clean_sqp, "> Play - * Super Album Artist Playlist", 'Basic client sanitizes ▶, •, ⚡, and strips emojis');
+    my $untouched = Plugins::yandex::Browse::Common::sanitize_for_client($full_client, $raw_str);
+    is($untouched, $raw_str, 'Full client leaves all glyphs and emojis completely untouched');
+
+    # 2. _format_history_track_item separator and emoji sanitization
+    my $track_obj = {
+        id => '123456',
+        title => '⚡ Flash 💿 Track',
+        artists => [{ name => 'Queen 👑' }],
+        albums => [{ title => 'A Night At The Opera' }],
+    };
+    my $basic_tr_item = Plugins::yandex::Browse::History::_format_history_track_item($sqp_client, $track_obj);
+    like($basic_tr_item->{line1}, qr{^\*\s*Flash Track}, 'Basic track line1 sanitized');
+    unlike($basic_tr_item->{line1}, qr{[⚡💿]}, 'Basic track line1 has no unsupported glyphs');
+    like($basic_tr_item->{line2}, qr{Queen - A Night At The Opera}, 'Basic track line2 uses - separator instead of bullet');
+    unlike($basic_tr_item->{line2}, qr{\x{2022}}, 'Basic track line2 does not contain bullet char');
+
+    my $full_tr_item = Plugins::yandex::Browse::History::_format_history_track_item($full_client, $track_obj);
+    like($full_tr_item->{line2}, qr{\x{2022}}, 'Full client track line2 retains bullet separator');
+
+    # 3. renderTrackList separator
+    my $rendered_basic;
+    Plugins::yandex::Browse::Common::renderTrackList(
+        [$track_obj],
+        sub { $rendered_basic = shift; },
+        'Test Tracks',
+        undef,
+        { client => $sqp_client }
+    );
+    ok(defined $rendered_basic && @{$rendered_basic->{items}}, 'renderTrackList returned items');
+    like($rendered_basic->{items}[0]{line2}, qr{Queen.*-.*A Night At The Opera}, 'renderTrackList on basic client uses - separator');
+    unlike($rendered_basic->{items}[0]{line2}, qr{\x{2022}}, 'renderTrackList on basic client has no bullet char');
+
+    my $rendered_full;
+    Plugins::yandex::Browse::Common::renderTrackList(
+        [$track_obj],
+        sub { $rendered_full = shift; },
+        'Test Tracks',
+        undef,
+        { client => $full_client }
+    );
+    like($rendered_full->{items}[0]{line2}, qr{\x{2022}}, 'renderTrackList on full client retains bullet char');
+}
+
+1;
 
 

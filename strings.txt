@@ -855,6 +855,10 @@ PLUGIN_YANDEX_QUICK_RESUME
 	EN	[▶] Resume: %s
 	RU	[▶] Продолжить: %s
 
+PLUGIN_YANDEX_QUICK_RESUME_BASIC
+	EN	[>] Resume: %s
+	RU	[>] Продолжить: %s
+
 PLUGIN_YANDEX_RESUME_CHAPTER_AT
 	EN	Resume: Chapter %s (at %s)
 	RU	Продолжить: Глава %s (с %s)
