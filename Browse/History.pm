@@ -21,6 +21,7 @@ use strict;
 use warnings;
 use utf8;
 
+use Scalar::Util qw(blessed);
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
@@ -760,14 +761,45 @@ sub handleResumeBookAction {
                 $client->execute(['playlist', 'jump', $start_idx]);
             }
 
-            $cb->({
-                items => [{
-                    name => cstring($client, 'PLUGIN_YANDEX_PLAYING'),
-                    type => 'text',
-                }],
-                title => $album->{title} // 'Audiobook',
-                nextWindow => 'nowPlaying',
-            });
+            # On hardware players with button/display navigation (Boom, Classic, Transporter, etc.),
+            # transition directly to Now Playing ('playlist' mode) and abort OPML feed processing.
+            # Returning an items list would cause LMS XMLBrowser to display a dummy "1 of 1 / Playing..." menu.
+            my $is_button = ($args && ref $args eq 'HASH' && $args->{isButton}) ? 1 : 0;
+            my $has_button_mode = (defined $client && blessed($client) && eval { defined &Slim::Buttons::Common::mode } && !eval { $client->isa('Slim::Player::SqueezePlay') });
+            my $cur_mode = $has_button_mode ? eval { Slim::Buttons::Common::mode($client) } : undef;
+
+            if (defined $cur_mode) {
+                # If player was blocked during XMLBrowser async fetch, unblock first
+                if ($client->can('unblock')) {
+                    eval { $client->unblock(); };
+                }
+                $cur_mode = eval { Slim::Buttons::Common::mode($client) } || '';
+                if ($cur_mode eq 'xmlbrowser') {
+                    eval { Slim::Buttons::Common::popMode($client); };
+                }
+                my $after_mode = eval { Slim::Buttons::Common::mode($client) } || '';
+                if ($after_mode ne 'playlist') {
+                    eval { Slim::Buttons::Common::pushModeLeft($client, 'playlist'); };
+                }
+                eval { $client->update if $client->can('update'); };
+            }
+
+            if ($is_button) {
+                $cb->({
+                    command    => 'mode ?',
+                    abort      => 1,
+                    nextWindow => 'nowPlaying',
+                });
+            } else {
+                $cb->({
+                    items => [{
+                        name => cstring($client, 'PLUGIN_YANDEX_PLAYING'),
+                        type => 'text',
+                    }],
+                    title => $album->{title} // 'Audiobook',
+                    nextWindow => 'nowPlaying',
+                });
+            }
         },
         sub {
             my $error = shift;
