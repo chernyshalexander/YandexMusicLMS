@@ -56,6 +56,30 @@ BEGIN {
         sub repeat { 0 }
     }
 
+    $INC{"Slim/Buttons/Common.pm"} = 1;
+    {
+        package Slim::Buttons::Common;
+        sub mode {
+            my $client = shift;
+            return undef unless $client && ref $client && $client->can('modeStack');
+            my $stack = $client->modeStack;
+            return ($stack && @$stack) ? $stack->[-1] : undef;
+        }
+        sub popMode {
+            my $client = shift;
+            return undef unless $client && ref $client && $client->can('modeStack');
+            my $stack = $client->modeStack;
+            pop @$stack if ($stack && @$stack);
+            return ($stack && @$stack) ? $stack->[-1] : undef;
+        }
+        sub pushModeLeft {
+            my ($client, $mode) = @_;
+            return unless $client && ref $client && $client->can('modeStack');
+            my $stack = $client->modeStack;
+            push @$stack, $mode;
+        }
+    }
+
     # Mock JSON::XS::VersionOneAndTwo with JSON::PP
     $INC{"JSON/XS/VersionOneAndTwo.pm"} = 1;
     require JSON::PP;
@@ -565,6 +589,139 @@ use Plugins::yandex::ProtocolHandler;
     is($executed_commands[4]->[5]->{timeOffset}, 75, 'Jump passed timeOffset => 75');
 
     is($resume_cb_res->{nextWindow}, 'nowPlaying', 'Resume action response specifies nextWindow nowPlaying');
+}
+
+# --------------------------------------------------------------------------
+# Test 7b: Browse::History handleResumeBookAction on classic button clients (Boom, Classic, Transporter)
+# --------------------------------------------------------------------------
+{
+    my @executed_commands;
+    package MockClassicClient;
+    sub new {
+        my ($class, $stack) = @_;
+        bless { modeStack => $stack || ['home', 'xmlbrowser', 'block'] }, $class;
+    }
+    sub id { '00:04:20:99:88:77' }
+    sub name { 'TestBoom' }
+    sub string { return $_[1] }
+    sub modeStack { $_[0]->{modeStack} }
+    sub update { $_[0]->{updated} = 1 }
+    sub unblock {
+        my $self = shift;
+        if ($self->{modeStack} && @{$self->{modeStack}} && $self->{modeStack}->[-1] eq 'block') {
+            pop @{$self->{modeStack}};
+        }
+    }
+    sub execute {
+        my ($self, $cmd) = @_;
+        push @executed_commands, $cmd;
+    }
+    package main;
+
+    my $mock_album = {
+        id      => 888,
+        title   => 'Queued Book',
+        volumes => [
+            [
+                { id => 101, title => 'Ch 1' },
+                { id => 102, title => 'Ch 2' },
+                { id => 103, title => 'Ch 3' },
+            ]
+        ]
+    };
+    my $mock_api = MockAPI->new($mock_album);
+
+    # 1. Hardware button trigger (isButton => 1) with block mode active during async fetch
+    my $client = MockClassicClient->new(['home', 'xmlbrowser', 'block']);
+    @executed_commands = ();
+    my $resume_cb_res;
+
+    Plugins::yandex::Browse::History::handleResumeBookAction(
+        $client,
+        sub { $resume_cb_res = shift; },
+        { isButton => 1 },
+        $mock_api,
+        888,
+        1,
+        75
+    );
+
+    is(Slim::Buttons::Common::mode($client), 'playlist', 'Classic player transitions to playlist mode (Now Playing)');
+    is_deeply($client->modeStack, ['home', 'playlist'], 'Mode stack has block unblocked, xmlbrowser popped, and playlist pushed');
+    is($client->{updated}, 1, 'Client display update called');
+    is($resume_cb_res->{nextWindow}, 'nowPlaying', 'Button response specifies nextWindow nowPlaying');
+    is($resume_cb_res->{abort}, 1, 'Button response aborts OPML list generation');
+    is($resume_cb_res->{command}, 'mode ?', 'Button response specifies safe mode ? command');
+    ok(!exists $resume_cb_res->{items}, 'No dummy 1 of 1 items returned for classic players');
+
+    # 2. handleQuickResumeBook with isButton => 1 and block mode active
+    my $quick_client = MockClassicClient->new(['home', 'xmlbrowser', 'block']);
+    @executed_commands = ();
+    my $quick_cb_res;
+
+    Plugins::yandex::Browse::History::handleQuickResumeBook(
+        $quick_client,
+        sub { $quick_cb_res = shift; },
+        { isButton => 1 },
+        $mock_api,
+        888
+    );
+
+    is(Slim::Buttons::Common::mode($quick_client), 'playlist', 'Quick resume transitions classic player to playlist mode');
+    is_deeply($quick_client->modeStack, ['home', 'playlist'], 'Quick resume stack has block unblocked, xmlbrowser popped, and playlist pushed');
+    is($quick_cb_res->{abort}, 1, 'Quick resume aborts OPML list generation');
+    ok(!exists $quick_cb_res->{items}, 'Quick resume has no dummy items');
+
+    # 3. Web UI controlling classic player (isButton => 0):
+    # Even if physical player was currently browsing in xmlbrowser mode,
+    # physical player transitions to playlist mode, but Web UI strictly gets items array
+    my $web_client = MockClassicClient->new(['home', 'xmlbrowser']);
+    @executed_commands = ();
+    my $web_cb_res;
+
+    Plugins::yandex::Browse::History::handleResumeBookAction(
+        $web_client,
+        sub { $web_cb_res = shift; },
+        {},
+        $mock_api,
+        888,
+        0,
+        0
+    );
+
+    is(Slim::Buttons::Common::mode($web_client), 'playlist', 'Web UI control transitions physical classic player to playlist mode');
+    is_deeply($web_client->modeStack, ['home', 'playlist'], 'Physical player mode stack popped xmlbrowser and pushed playlist');
+    is($web_cb_res->{nextWindow}, 'nowPlaying', 'Web response has nextWindow nowPlaying');
+    ok(exists $web_cb_res->{items}, 'Web response retains items array for Web UI/Material skin (no crash in _cliQuery_done)');
+    is(scalar(@{$web_cb_res->{items}}), 1, 'Web response contains 1 item');
+
+    # 4. SqueezePlay client (isa Slim::Player::SqueezePlay)
+    {
+        package MockSPClient;
+        our @ISA = qw(Slim::Player::SqueezePlay);
+        sub new { bless { modeStack => [] }, shift }
+        sub id { '00:04:20:11:22:33' }
+        sub name { 'TestSP' }
+        sub string { return $_[1] }
+        sub modeStack { $_[0]->{modeStack} }
+        sub execute { }
+        package main;
+
+        my $sp_client = MockSPClient->new();
+        my $sp_cb_res;
+        Plugins::yandex::Browse::History::handleResumeBookAction(
+            $sp_client,
+            sub { $sp_cb_res = shift; },
+            {},
+            $mock_api,
+            888,
+            0,
+            0
+        );
+        is($sp_cb_res->{nextWindow}, 'nowPlaying', 'SqueezePlay gets nextWindow nowPlaying');
+        ok(exists $sp_cb_res->{items}, 'SqueezePlay gets items array');
+        is_deeply($sp_client->modeStack, [], 'SqueezePlay modeStack remains untouched');
+    }
 }
 
 # --------------------------------------------------------------------------
