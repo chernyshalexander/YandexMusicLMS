@@ -1301,6 +1301,24 @@ use Plugins::yandex::ProtocolHandler;
     is(Plugins::yandex::Browse::Common::is_basic_display_client($override_yes), 1, 'override is_basic_display => 1');
     my $override_no = MockClient->new(is_basic_display => 0, model => 'boom');
     is(Plugins::yandex::Browse::Common::is_basic_display_client($override_no), 0, 'override is_basic_display => 0 takes precedence');
+
+    # Array-based real LMS client objects (Slim::Utils::Accessor blessed [])
+    {
+        package MockArrayBoomClient;
+        our @ISA = qw(Slim::Player::Boom);
+        sub model { 'boom' }
+
+        package MockArrayGenericClient;
+        our @ISA = qw(MockClient);
+        sub model { 'http' }
+
+        package main;
+        my $array_boom = bless [], 'MockArrayBoomClient';
+        is(Plugins::yandex::Browse::Common::is_basic_display_client($array_boom), 1, 'Array-based Boom client is detected as basic display without hash error');
+
+        my $array_generic = bless [], 'MockArrayGenericClient';
+        is(Plugins::yandex::Browse::Common::is_basic_display_client($array_generic), 0, 'Array-based generic client is not basic display without hash error');
+    }
 }
 
 # --------------------------------------------------------------------------

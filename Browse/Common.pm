@@ -27,6 +27,7 @@ use strict;
 use warnings;
 use utf8;
 
+use Scalar::Util qw(blessed reftype);
 use Slim::Utils::Cache;
 use Slim::Utils::Log;
 use Slim::Utils::Strings qw(cstring);
@@ -256,12 +257,18 @@ sub is_basic_display_client {
     return 0 unless $client && ref $client;
 
     # Explicit override (useful for testing or custom client capability tags)
-    if (defined $client->{is_basic_display}) {
+    if (eval { $client->can('is_basic_display') }) {
+        my $val = eval { $client->is_basic_display };
+        return $val ? 1 : 0 if defined $val;
+    }
+    if (eval { reftype($client) eq 'HASH' } && defined $client->{is_basic_display}) {
         return $client->{is_basic_display} ? 1 : 0;
     }
 
-    # Model inspection
-    my $model = eval { $client->can('model') ? $client->model : undef } || $client->{model} || '';
+    # Model inspection (LMS clients inherit from Slim::Player::Client which is an array-based object)
+    my $model = eval { $client->can('model') ? $client->model : undef }
+             || (eval { reftype($client) eq 'HASH' } ? ($client->{model} || '') : '')
+             || '';
 
     # Exclude headless players (squeezelite) controlled by modern web/mobile apps
     return 0 if $model eq 'squeezelite';
