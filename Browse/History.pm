@@ -181,9 +181,13 @@ sub _parse_history_context_item {
 
         my $wave_url = $seed ? ('yandexmusic://rotor_session/' . $seed) : 'yandexmusic://rotor_session/user:onyourwave';
 
+        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+        my $wave_prefix = $is_basic ? "* " : "⚡ ";
+        $wave_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $wave_name) if $is_basic;
+
         return {
-            name      => "⚡ " . $wave_name,
-            line1     => "⚡ " . $wave_name,
+            name      => $wave_prefix . $wave_name,
+            line1     => $wave_prefix . $wave_name,
             line2     => cstring($client, 'PLUGIN_YANDEX_RADIO'),
             type      => 'audio',
             url       => $wave_url,
@@ -206,13 +210,27 @@ sub _parse_history_context_item {
         my $cover_uri = (ref $alb eq 'HASH') ? $alb->{coverUri} : undef;
         my $cover = $cover_uri ? Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200') : 'html/images/albums.png';
 
-        my $label = "💿 " . cstring($client, 'PLUGIN_YANDEX_ALBUM') . ": " . $alb_title;
-        $label .= " ($art_name)" if $art_name;
+        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+        my $label;
+        my $line1;
+        my $sep = $is_basic ? " - " : " \x{2022} ";
+        if ($is_basic) {
+            $alb_title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $alb_title);
+            $art_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $art_name);
+            my $alb_tag = "[" . cstring($client, 'PLUGIN_YANDEX_ALBUM') . "] ";
+            $label = $alb_tag . $alb_title;
+            $label .= " ($art_name)" if $art_name;
+            $line1 = $alb_tag . $alb_title;
+        } else {
+            $label = "💿 " . cstring($client, 'PLUGIN_YANDEX_ALBUM') . ": " . $alb_title;
+            $label .= " ($art_name)" if $art_name;
+            $line1 = "💿 " . $alb_title;
+        }
 
         return {
             name        => $label,
-            line1       => "💿 " . $alb_title,
-            line2       => $art_name ? ($art_name . " \x{2022} " . cstring($client, 'PLUGIN_YANDEX_ALBUM')) : cstring($client, 'PLUGIN_YANDEX_ALBUM'),
+            line1       => $line1,
+            line2       => $art_name ? ($art_name . $sep . cstring($client, 'PLUGIN_YANDEX_ALBUM')) : cstring($client, 'PLUGIN_YANDEX_ALBUM'),
             type        => 'playlist',
             url         => \&Plugins::yandex::Browse::_handleAlbum,
             passthrough => [$yandex_client, $alb_id],
@@ -229,9 +247,22 @@ sub _parse_history_context_item {
         my $cover_uri = (ref $art eq 'HASH') ? ($art->{cover}{uri} || $art->{coverUri}) : undef;
         my $cover = $cover_uri ? Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200') : 'html/images/artists.png';
 
+        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+        my $label;
+        my $line1;
+        if ($is_basic) {
+            $art_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $art_name);
+            my $art_tag = "[" . cstring($client, 'PLUGIN_YANDEX_ARTIST') . "] ";
+            $label = $art_tag . $art_name;
+            $line1 = $art_tag . $art_name;
+        } else {
+            $label = "👤 " . cstring($client, 'PLUGIN_YANDEX_ARTIST') . ": " . $art_name;
+            $line1 = "👤 " . $art_name;
+        }
+
         return {
-            name        => "👤 " . cstring($client, 'PLUGIN_YANDEX_ARTIST') . ": " . $art_name,
-            line1       => "👤 " . $art_name,
+            name        => $label,
+            line1       => $line1,
             line2       => cstring($client, 'PLUGIN_YANDEX_ARTIST'),
             type        => 'link',
             url         => \&Plugins::yandex::Browse::_handleArtist,
@@ -250,13 +281,27 @@ sub _parse_history_context_item {
         my $cover_uri = (ref $pl eq 'HASH') ? (($pl->{cover} && $pl->{cover}{uri}) || $pl->{coverUri}) : undef;
         my $cover = $cover_uri ? Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200') : 'plugins/yandex/html/images/playlist.png';
 
-        my $label = "📜 " . cstring($client, 'PLUGIN_YANDEX_PLAYLIST') . ": " . $pl_title;
-        $label .= " ($owner_name)" if $owner_name;
+        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+        my $label;
+        my $line1;
+        my $sep = $is_basic ? " - " : " \x{2022} ";
+        if ($is_basic) {
+            $pl_title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $pl_title);
+            $owner_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $owner_name);
+            my $pl_tag = "[" . cstring($client, 'PLUGIN_YANDEX_PLAYLIST') . "] ";
+            $label = $pl_tag . $pl_title;
+            $label .= " ($owner_name)" if $owner_name;
+            $line1 = $pl_tag . $pl_title;
+        } else {
+            $label = "📜 " . cstring($client, 'PLUGIN_YANDEX_PLAYLIST') . ": " . $pl_title;
+            $label .= " ($owner_name)" if $owner_name;
+            $line1 = "📜 " . $pl_title;
+        }
 
         return {
             name        => $label,
-            line1       => "📜 " . $pl_title,
-            line2       => $owner_name ? ($owner_name . " \x{2022} " . cstring($client, 'PLUGIN_YANDEX_PLAYLIST')) : cstring($client, 'PLUGIN_YANDEX_PLAYLIST'),
+            line1       => $line1,
+            line2       => $owner_name ? ($owner_name . $sep . cstring($client, 'PLUGIN_YANDEX_PLAYLIST')) : cstring($client, 'PLUGIN_YANDEX_PLAYLIST'),
             type        => 'playlist',
             url         => \&Plugins::yandex::Browse::_handlePlaylist,
             passthrough => [$yandex_client, $uid, $kind],
@@ -293,8 +338,16 @@ sub _format_history_track_item {
     my $duration_ms = $track_object->{durationMs} || $track_object->{duration_ms} || 0;
     my $track_url = 'yandexmusic://' . $track_id;
 
+    my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+    my $sep = $is_basic ? " - " : " \x{2022} ";
+    if ($is_basic) {
+        $track_title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $track_title);
+        $artist_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $artist_name);
+        $album_name  = Plugins::yandex::Browse::Common::sanitize_for_client($client, $album_name);
+    }
+
     my $line2 = $artist_name;
-    $line2 .= " \x{2022} " . $album_name if $album_name;
+    $line2 .= $sep . $album_name if $album_name;
 
     Plugins::yandex::Browse::Common::cache_track_metadata($track_object);
 
@@ -492,13 +545,15 @@ sub handleAudiobooksHistory {
                 my $cover_uri = $album->{coverUri} // $item->{coverUri} // $album->{ogImage} // $item->{ogImage};
                 my $icon = Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200');
 
+                my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+                my $sep = $is_basic ? " - " : " \x{2022} ";
                 my $dur_left = $album->{durationLeft} // $item->{durationLeft};
                 my $dur_sec  = $album->{durationSec}  // $item->{durationSec};
                 my $subtitle = $author_name;
                 if ($dur_left && $dur_sec && $dur_sec > 0) {
                     my $pct = int((($dur_sec - $dur_left) / $dur_sec) * 100);
                     $pct = 100 if $pct > 100;
-                    $subtitle .= ($subtitle ? " \x{2022} " : "") . "$pct%";
+                    $subtitle .= ($subtitle ? $sep : "") . "$pct%";
                 } elsif ($item->{track} && ref $item->{track} eq 'HASH') {
                     my $tr = $item->{track};
                     my $pos = ($tr->{streamProgress} && $tr->{streamProgress}{endPositionSec})
@@ -506,10 +561,15 @@ sub handleAudiobooksHistory {
                     my $tr_title = $tr->{title} || '';
                     if ($pos > 0) {
                         my $pos_fmt = _format_seconds($pos);
-                        $subtitle .= ($subtitle ? " \x{2022} " : "") . "$tr_title ($pos_fmt)";
+                        $subtitle .= ($subtitle ? $sep : "") . "$tr_title ($pos_fmt)";
                     } elsif ($tr_title) {
-                        $subtitle .= ($subtitle ? " \x{2022} " : "") . $tr_title;
+                        $subtitle .= ($subtitle ? $sep : "") . $tr_title;
                     }
+                }
+
+                if ($is_basic) {
+                    $title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $title);
+                    $subtitle = Plugins::yandex::Browse::Common::sanitize_for_client($client, $subtitle);
                 }
 
                 push @items, {

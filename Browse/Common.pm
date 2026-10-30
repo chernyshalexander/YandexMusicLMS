@@ -88,8 +88,11 @@ sub renderTrackList {
              $album_name = $track_object->{albums}[0]->{title};
          }
 
+         my $client = ($params && ref $params eq 'HASH') ? $params->{client} : undef;
+         my $is_basic = is_basic_display_client($client);
+         my $sep = $is_basic ? " - " : " \x{2022} ";
          my $line2 = $artist_name;
-         $line2 .= " \x{2022} " . $album_name if $album_name && $album_name ne 'Unknown';
+         $line2 .= $sep . $album_name if $album_name && $album_name ne 'Unknown';
 
          push @items, {
             name      => $artist_name . ' - ' . $track_title,
@@ -242,10 +245,59 @@ sub renderPlaylistList {
         };
     }
 
-    $cb->({
-        items => \@items,
-        title => $title,
-    });
+}
+
+# Detect clients with limited font/character support (Squeezeplay desktop,
+# SqueezeOS on Touch/Radio/Controller, and older hardware players like Boom, Classic 3,
+# Transporter, Receiver, etc.). These clients lack modern Unicode emojis (💿, 👤, 📜, ⚡)
+# and special geometric symbols (▶ U+25B6).
+sub is_basic_display_client {
+    my ($client) = @_;
+    return 0 unless $client && ref $client;
+
+    # Explicit override (useful for testing or custom client capability tags)
+    if (defined $client->{is_basic_display}) {
+        return $client->{is_basic_display} ? 1 : 0;
+    }
+
+    # Model inspection
+    my $model = eval { $client->can('model') ? $client->model : undef } || $client->{model} || '';
+
+    # Exclude headless players (squeezelite) controlled by modern web/mobile apps
+    return 0 if $model eq 'squeezelite';
+
+    # SqueezePlay / Jive players: desktop squeezeplay, Touch (fab4), Radio (baby), Controller (controller/jive)
+    return 1 if eval { $client->isa('Slim::Player::SqueezePlay') };
+    return 1 if $model =~ /^(?:squeezeplay|fab4|baby|radio|controller|jive)$/i;
+
+    # Hardware players with character/VFD or limited displays: Boom, Classic/SB2/SB3, Transporter, Receiver, SB1, SliMP3, SoftSqueeze
+    return 1 if eval { $client->isa('Slim::Player::Boom') } ||
+                eval { $client->isa('Slim::Player::Squeezebox2') } ||
+                eval { $client->isa('Slim::Player::Transporter') } ||
+                eval { $client->isa('Slim::Player::Receiver') } ||
+                eval { $client->isa('Slim::Player::Squeezebox1') } ||
+                eval { $client->isa('Slim::Player::SLIMP3') } ||
+                eval { $client->isa('Slim::Player::SoftSqueeze') };
+    return 1 if $model =~ /^(?:boom|squeezebox[123]|classic|transporter|receiver|slimp3|softsqueeze)$/i;
+
+    return 0;
+}
+
+# Sanitize text for basic display clients: replace unsupported glyphs
+# (▶ -> >, • -> -, ⚡ -> *, SMP emojis stripped)
+sub sanitize_for_client {
+    my ($client, $text) = @_;
+    return $text unless defined $text && $text ne '';
+    return $text unless is_basic_display_client($client);
+
+    $text =~ s/\x{25B6}/>/g;             # ▶ to >
+    $text =~ s/\x{2022}/-/g;             # • to -
+    $text =~ s/\x{26A1}/*/g;             # ⚡ to *
+    $text =~ s/[\x{1F000}-\x{1FAFF}]//g; # SMP emojis
+    $text =~ s/\s{2,}/ /g;
+    $text =~ s/^\s+//;
+    $text =~ s/\s+$//;
+    return $text;
 }
 
 1;

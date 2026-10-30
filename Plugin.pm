@@ -1222,8 +1222,20 @@ sub _renderRootMenu {
                     if ($album_id && $title) {
                         my $cover_uri = $album->{coverUri} // $item->{coverUri} // $album->{ogImage} // $item->{ogImage};
                         my $icon = Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200');
+                        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+                        my $resume_token = $is_basic ? 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' : 'PLUGIN_YANDEX_QUICK_RESUME';
+                        my $resume_fmt = cstring($client, $resume_token);
+                        if ($resume_token eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' && $resume_fmt eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC') {
+                            $resume_fmt = cstring($client, 'PLUGIN_YANDEX_QUICK_RESUME');
+                        }
+                        if ($is_basic) {
+                            $resume_fmt =~ s/▶/>/g;
+                            $title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $title);
+                        }
+                        my $quick_label = sprintf($resume_fmt, $title);
                         $quick_item = {
-                            name        => sprintf(cstring($client, 'PLUGIN_YANDEX_QUICK_RESUME'), $title),
+                            name        => $quick_label,
+                            line1       => $quick_label,
                             type        => 'action',
                             url         => \&Plugins::yandex::Browse::_handleQuickResumeBook,
                             passthrough => [$client_instance, $album_id],
