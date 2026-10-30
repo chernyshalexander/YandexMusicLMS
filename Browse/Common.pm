@@ -291,15 +291,18 @@ sub is_basic_display_client {
 }
 
 # Sanitize text for basic display clients: replace unsupported glyphs
-# (▶ -> >, • -> -, ⚡ -> *, SMP emojis stripped)
+# (▶ -> >, • -> -, ⚡ -> [Радио] / [Radio], SMP emojis stripped)
 sub sanitize_for_client {
     my ($client, $text) = @_;
     return $text unless defined $text && $text ne '';
     return $text unless is_basic_display_client($client);
 
+    my $radio_word = (defined &cstring && eval { cstring($client, 'PLUGIN_YANDEX_RADIO') }) || 'Radio';
+    my $radio_tag = "[$radio_word] ";
+
     $text =~ s/\x{25B6}/>/g;             # ▶ to >
     $text =~ s/\x{2022}/-/g;             # • to -
-    $text =~ s/\x{26A1}/*/g;             # ⚡ to *
+    $text =~ s/\x{26A1}\s*/$radio_tag/g; # ⚡ to [Радио] / [Radio]
     $text =~ s/[\x{1F000}-\x{1FAFF}]//g; # SMP emojis
     $text =~ s/\s{2,}/ /g;
     $text =~ s/^\s+//;

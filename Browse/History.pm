@@ -183,12 +183,19 @@ sub _parse_history_context_item {
         my $wave_url = $seed ? ('yandexmusic://rotor_session/' . $seed) : 'yandexmusic://rotor_session/user:onyourwave';
 
         my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
-        my $wave_prefix = $is_basic ? "* " : "⚡ ";
-        $wave_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $wave_name) if $is_basic;
+        my $radio_word = cstring($client, 'PLUGIN_YANDEX_RADIO') || 'Radio';
+        my $radio_tag = "[$radio_word] ";
+        my $line1;
+        if ($is_basic) {
+            $wave_name = Plugins::yandex::Browse::Common::sanitize_for_client($client, $wave_name);
+            $line1 = ($wave_name =~ /^\Q[$radio_word]\E/i) ? $wave_name : ($radio_tag . $wave_name);
+        } else {
+            $line1 = ($wave_name =~ /^⚡/) ? $wave_name : ("⚡ " . $wave_name);
+        }
 
         return {
-            name      => $wave_prefix . $wave_name,
-            line1     => $wave_prefix . $wave_name,
+            name      => $line1,
+            line1     => $line1,
             line2     => cstring($client, 'PLUGIN_YANDEX_RADIO'),
             type      => 'audio',
             url       => $wave_url,

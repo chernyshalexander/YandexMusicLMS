@@ -1364,7 +1364,7 @@ use Plugins::yandex::ProtocolHandler;
 {
     my $sqp_client = bless { id => 'sqp2', model => 'squeezeplay' }, 'Slim::Player::SqueezePlay';
 
-    # Wave: * instead of ⚡
+    # Wave: [Радио] / [Radio] instead of ⚡
     my $wave_grp = {
         context => {
             type => 'wave',
@@ -1376,10 +1376,22 @@ use Plugins::yandex::ProtocolHandler;
     };
     my $wave_item = Plugins::yandex::Browse::History::_parse_history_context_item($sqp_client, undef, $wave_grp);
     ok(defined $wave_item, 'Basic wave context item parsed');
-    like($wave_item->{name}, qr{^\*\s*Berlin school}, 'Basic wave name uses * prefix');
+    like($wave_item->{name}, qr{^\[Радио\]\s*Berlin school}, 'Basic wave name uses [Радио] prefix');
     unlike($wave_item->{name}, qr{⚡}, 'Basic wave name does NOT contain ⚡ emoji');
-    like($wave_item->{line1}, qr{^\*\s*Berlin school}, 'Basic wave line1 uses * prefix');
+    like($wave_item->{line1}, qr{^\[Радио\]\s*Berlin school}, 'Basic wave line1 uses [Радио] prefix');
     unlike($wave_item->{line1}, qr{⚡}, 'Basic wave line1 does NOT contain ⚡ emoji');
+
+    # Wave in English
+    {
+        package MockENClient;
+        our @ISA = qw(Slim::Player::SqueezePlay);
+        sub new { bless { id => 'en_sqp', model => 'squeezeplay' }, shift }
+        sub string { return 'Radio' if $_[1] eq 'PLUGIN_YANDEX_RADIO'; return $_[1]; }
+        package main;
+        my $en_client = MockENClient->new();
+        my $en_wave_item = Plugins::yandex::Browse::History::_parse_history_context_item($en_client, undef, $wave_grp);
+        like($en_wave_item->{line1}, qr{^\[Radio\]\s*Berlin school}, 'English basic wave line1 uses [Radio] prefix');
+    }
 
     # Album: [Альбом] instead of 💿
     my $album_grp = {
@@ -1550,7 +1562,7 @@ use Plugins::yandex::ProtocolHandler;
     # 1. sanitize_for_client
     my $raw_str = "▶ Play • ⚡ Super 💿 Album 👤 Artist 📜 Playlist 🎵";
     my $clean_sqp = Plugins::yandex::Browse::Common::sanitize_for_client($sqp_client, $raw_str);
-    is($clean_sqp, "> Play - * Super Album Artist Playlist", 'Basic client sanitizes ▶, •, ⚡, and strips emojis');
+    is($clean_sqp, "> Play - [Радио] Super Album Artist Playlist", 'Basic client sanitizes ▶, •, ⚡ to [Радио], and strips emojis');
     my $untouched = Plugins::yandex::Browse::Common::sanitize_for_client($full_client, $raw_str);
     is($untouched, $raw_str, 'Full client leaves all glyphs and emojis completely untouched');
 
@@ -1562,7 +1574,7 @@ use Plugins::yandex::ProtocolHandler;
         albums => [{ title => 'A Night At The Opera' }],
     };
     my $basic_tr_item = Plugins::yandex::Browse::History::_format_history_track_item($sqp_client, $track_obj);
-    like($basic_tr_item->{line1}, qr{^\*\s*Flash Track}, 'Basic track line1 sanitized');
+    like($basic_tr_item->{line1}, qr{^\[Радио\]\s*Flash Track}, 'Basic track line1 sanitized');
     unlike($basic_tr_item->{line1}, qr{[⚡💿]}, 'Basic track line1 has no unsupported glyphs');
     like($basic_tr_item->{line2}, qr{Queen - A Night At The Opera}, 'Basic track line2 uses - separator instead of bullet');
     unlike($basic_tr_item->{line2}, qr{\x{2022}}, 'Basic track line2 does not contain bullet char');
