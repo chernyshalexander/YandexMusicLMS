@@ -943,3 +943,11 @@ PLUGIN_YANDEX_PROGRESS_SAVE_INTERVAL_DESC
 	EN	How often to save listening progress for audiobooks and podcasts (default: 30 seconds).
 	RU	Как часто сохранять прогресс прослушивания аудиокниг и подкастов (по умолчанию: 30 сек).
 
+PLUGIN_YANDEX_FINISHED
+	EN	Finished
+	RU	Прослушано
+
+PLUGIN_YANDEX_CURRENT
+	EN	Current
+	RU	Слушается
+

@@ -140,12 +140,22 @@ sub handleNewReleases {
 sub handleNewPlaylists {
     my ($client, $cb, $args, $yandex_client) = @_;
 
+    if (ref $yandex_client eq 'HASH' && !eval { $yandex_client->can('get_new_playlists') }) {
+        $yandex_client = undef;
+    }
+    $yandex_client ||= eval { Plugins::yandex::Plugin::getAPIForClient($client) };
+
+    unless ($yandex_client) {
+        $cb->({ items => [{ name => "Error: API client unavailable", type => 'text' }], title => cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS') });
+        return;
+    }
+
     $yandex_client->get_new_playlists(
         sub {
             my $playlists_data = shift;
 
             if (!$playlists_data || scalar(@$playlists_data) == 0) {
-                Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, [], $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'), { client => $client });
                 return;
             }
 
@@ -153,24 +163,27 @@ sub handleNewPlaylists {
             my @items;
             my $pending = scalar(@$playlists_data);
 
-            foreach my $pdata (@$playlists_data) {
+            for my $i (0 .. $#$playlists_data) {
+                my $pdata = $playlists_data->[$i];
                 my $uid = $pdata->{uid};
                 my $kind = $pdata->{kind};
 
                 $yandex_client->get_playlist($uid, $kind, sub {
                     my $playlist = shift;
                     if ($playlist) {
-                        push @items, $playlist;
+                        $items[$i] = $playlist;
                     }
                     $pending--;
                     if ($pending == 0) {
-                        Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, \@items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                        my @valid_items = grep { defined $_ } @items;
+                        Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, \@valid_items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'), { client => $client });
                     }
                 }, sub {
                     $log->error("Error fetching playlist: $_[0]");
                     $pending--;
                     if ($pending == 0) {
-                        Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, \@items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'));
+                        my @valid_items = grep { defined $_ } @items;
+                        Plugins::yandex::Browse::Common::renderPlaylistList($yandex_client, \@valid_items, $cb, cstring($client, 'PLUGIN_YANDEX_NEW_PLAYLISTS'), { client => $client });
                     }
                 });
             }

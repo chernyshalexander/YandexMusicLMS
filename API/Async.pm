@@ -226,7 +226,11 @@ sub post_form {
             my $content = $http->content();
             my $json = eval { decode_json($content) };
             if ($@ || !defined $json) {
-                $error_callback->($@ || "Failed to decode JSON response");
+                if (defined $content && $content =~ /ok/i) {
+                    $callback->({ result => 'ok' }) if $callback;
+                } else {
+                    $error_callback->($@ || "Failed to decode JSON response");
+                }
             } else {
                 $callback->($json);
             }
@@ -1425,12 +1429,11 @@ sub send_play {
             rand(0xffff), rand(0xffff), rand(0xffff)
         );
         my $album_id = defined $p->{albumId} ? int($p->{albumId}) : 0;
-        my $ctx = $p->{context} || ($album_id ? 'album' : 'radio');
-        my $ctx_item = "" . ($p->{contextItem} // $album_id // '');
-        push @plays, {
+        my $ctx = $p->{context} || ($p->{radioSessionId} ? 'wave' : ($album_id ? 'album' : 'radio'));
+        my $ctx_item = "" . ($p->{contextItem} // ($p->{radioSessionId} ? $p->{radioSessionId} : ($album_id || '')));
+        my $play_entry = {
             playId             => $uuid,
             trackId            => "" . $p->{trackId},
-            albumId            => $album_id,
             from               => $p->{from} || 'android-app',
             context            => $ctx,
             contextItem        => $ctx_item,
@@ -1445,6 +1448,22 @@ sub send_play {
             pause              => \0,
             seek               => \0,
         };
+        $play_entry->{albumId}        = "" . $album_id if $album_id;
+        $play_entry->{radioSessionId} = "" . $p->{radioSessionId} if defined $p->{radioSessionId};
+        $play_entry->{batchId}        = "" . $p->{batchId} if defined $p->{batchId};
+        push @plays, $play_entry;
+
+        # Dispatch /play-audio (form-urlencoded) as used by Yandex Music clients
+        $self->play_audio({
+            trackId            => $p->{trackId},
+            albumId            => $album_id,
+            playId             => $uuid,
+            from               => $p->{from} || 'android-app',
+            totalPlayedSeconds => $play_entry->{totalPlayedSeconds},
+            endPositionSeconds => $play_entry->{endPositionSeconds},
+            trackLengthSeconds => $play_entry->{trackLengthSeconds},
+            timestamp          => $play_entry->{timestamp},
+        });
     }
 
     return unless @plays;
@@ -1460,6 +1479,94 @@ sub send_play {
         },
         $error_callback || sub {},
         { clientNow => $client_now, 'client-now' => $client_now },
+    );
+}
+
+# Report music play event via form-urlencoded /play-audio
+# POST /play-audio
+sub play_audio {
+    my ($self, $play_data, $callback, $error_callback) = @_;
+    my $url = Plugins::yandex::API::Common::BASE_URL . '/play-audio';
+    my $client_now = Plugins::yandex::API::Common::get_iso_timestamp();
+
+    my $track_id = $play_data->{trackId} // $play_data->{'track-id'};
+    return unless $track_id;
+
+    my $uuid = $play_data->{playId} // $play_data->{'play-id'} // sprintf("%04x%04x-%04x-%04x-%04x-%04x%04x%04x",
+        rand(0xffff), rand(0xffff), rand(0xffff),
+        rand(0x0fff) | 0x4000,
+        rand(0x3fff) | 0x8000,
+        rand(0xffff), rand(0xffff), rand(0xffff)
+    );
+    my $album_id = defined $play_data->{albumId} ? int($play_data->{albumId}) : (defined $play_data->{'album-id'} ? int($play_data->{'album-id'}) : 0);
+    my $uid = $play_data->{uid}
+           || ($self->get_me && $self->get_me->{uid})
+           || ($self->{account_status} && $self->{account_status}{account} && $self->{account_status}{account}{uid})
+           || ($self->{userId} && $self->{userId} =~ /^\d+$/ ? $self->{userId} : undef);
+
+    my $form = {
+        'track-id'             => "" . $track_id,
+        'from-cache'           => 'false',
+        'from'                 => $play_data->{from} || 'android-app',
+        'play-id'              => $uuid,
+        'timestamp'            => $play_data->{timestamp} || $client_now,
+        'track-length-seconds' => int($play_data->{trackLengthSeconds} // $play_data->{'track-length-seconds'} // 0),
+        'total-played-seconds' => int($play_data->{totalPlayedSeconds} // $play_data->{'total-played-seconds'} // 0),
+        'end-position-seconds' => int($play_data->{endPositionSeconds} // $play_data->{'end-position-seconds'} // $play_data->{totalPlayedSeconds} // 0),
+        'client-now'           => $client_now,
+    };
+    $form->{uid}           = "" . $uid if defined $uid;
+    $form->{'album-id'}    = "" . $album_id if $album_id;
+    $form->{'playlist-id'} = "" . $play_data->{'playlist-id'} if $play_data->{'playlist-id'};
+
+    $self->_invalidate_history_cache();
+
+    $self->post_form(
+        $url,
+        $form,
+        sub {
+            my $res = shift;
+            $callback->($res) if $callback;
+        },
+        $error_callback || sub {}
+    );
+}
+
+# Fetch user recently listened contexts (real-time history)
+# GET /users/{uid}/contexts?trackCount=10&types=album,artist,playlist&contextCount=30
+sub get_user_contexts {
+    my ($self, $callback, $error_callback, $params_opt) = @_;
+    my $uid = ($self->get_me && $self->get_me->{uid})
+           || ($self->{account_status} && $self->{account_status}{account} && $self->{account_status}{account}{uid})
+           || ($self->{userId} && $self->{userId} =~ /^\d+$/ ? $self->{userId} : undef);
+    return $error_callback->("No user ID available for contexts") if !$uid && $error_callback;
+
+    my $url = Plugins::yandex::API::Common::BASE_URL . "/users/$uid/contexts";
+    my $params = {
+        trackCount   => 10,
+        types        => 'album,artist,playlist',
+        contextCount => 30,
+    };
+    my $cacheKey = "yandex_user_contexts_${uid}";
+    push @{$self->{_history_cache_keys} ||= []}, $cacheKey;
+
+    if (!($params_opt && $params_opt->{no_cache})) {
+        if (my $cached = $cache->get($cacheKey)) {
+            $callback->($cached) if $callback;
+            return;
+        }
+    }
+
+    $self->get(
+        $url,
+        $params,
+        sub {
+            my $res = shift;
+            my $data = (ref $res eq 'HASH' && exists $res->{result}) ? $res->{result} : $res;
+            $cache->set($cacheKey, $data, HISTORY_TTL);
+            $callback->($data) if $callback;
+        },
+        $error_callback
     );
 }
 
@@ -1507,6 +1614,20 @@ sub save_stream_progress {
     my $url = Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync';
     my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
 
+    my $len = 0 + int($track_length_sec || 0);
+    my $pos = 0 + int($position_sec || 0);
+
+    if (!$len && $cache) {
+        my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+        if ($meta && ref $meta eq 'HASH' && $meta->{duration}) {
+            $len = 0 + int($meta->{duration});
+        }
+    }
+    $len ||= ($pos || 1);
+    if ($finished) {
+        $pos = $len if $pos <= 0;
+    }
+
     $self->_invalidate_bookshelf_cache();
 
     my $body = {
@@ -1514,8 +1635,8 @@ sub save_stream_progress {
         trackStreams      => [
             {
                 trackId        => "$track_id",
-                positionSec    => 0 + int($position_sec || 0),
-                trackLengthSec => 0 + int($track_length_sec || 0),
+                positionSec    => $pos,
+                trackLengthSec => $len,
                 finished       => $finished ? \1 : \0,
                 timestamp      => $iso_timestamp,
             }
@@ -1544,6 +1665,14 @@ sub mark_stream_finished {
     my $url = Plugins::yandex::API::Common::BASE_URL . '/streams/progress/sync';
     my $iso_timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
     my $len = 0 + int($track_length_sec || 0);
+
+    if (!$len && $cache) {
+        my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+        if ($meta && ref $meta eq 'HASH' && $meta->{duration}) {
+            $len = 0 + int($meta->{duration});
+        }
+    }
+    $len ||= 1; # Yandex API returns 400 'Must be > 0' if positionSec/trackLengthSec == 0 on finished stream
 
     $self->_invalidate_bookshelf_cache();
 
@@ -1595,6 +1724,7 @@ sub mark_album_finished {
             my @track_streams = map {
                 my $tid = $_->{id};
                 my $dur = 0 + ($_->{durationMs} ? int($_->{durationMs} / 1000) : ($_->{durationSec} || 0));
+                $dur ||= 1;
                 {
                     trackId        => "$tid",
                     positionSec    => $dur,

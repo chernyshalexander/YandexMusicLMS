@@ -366,7 +366,7 @@ sub _handlePlaylist {
                 }
             }
 
-            Plugins::yandex::Browse::Common::renderTrackList(\@tracks, $cb, $playlist->{title}, 'yandexmusic://playlist/' . $user_id . '/' . $kind);
+            Plugins::yandex::Browse::Common::renderTrackList(\@tracks, $cb, $playlist->{title}, 'yandexmusic://playlist/' . $user_id . '/' . $kind, { client => $client });
         },
         sub {
             my $error = shift;
