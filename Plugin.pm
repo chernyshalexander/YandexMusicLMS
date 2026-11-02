@@ -37,7 +37,7 @@ $log = Slim::Utils::Log->addLogCategory({
     'category'     => 'plugin.yandex',
     'defaultLevel' => 'ERROR',
     'description'  => string('PLUGIN_YANDEX'),
-});
+}) || Slim::Utils::Log::logger('plugin.yandex');
 
 my $prefs = preferences('plugin.yandex');
 
@@ -445,16 +445,15 @@ sub _handleTrackSwitch {
     my $prev_play_sent  = $client->pluginData('yandex_curr_play_sent') || 0;
 
     if ($prev_track_id) {
+        my $played_seconds = $prev_dur > 0 ? $prev_dur : (time() - $prev_start_time);
         if ($prev_is_chapter) {
             # Chapter completed naturally
-            _mark_chapter_finished($client, $prev_track_id);
+            _mark_chapter_finished($client, $prev_track_id, $prev_dur);
             _save_current_progress($client, $prev_track_id, $prev_dur, $prev_dur, 1);
-        } else {
-            # Music track
-            my $played_seconds = $prev_dur > 0 ? $prev_dur : (time() - $prev_start_time);
-            if ($played_seconds >= 30 && !$prev_play_sent) {
-                _send_music_play($client, $prev_track_id, $prev_album_id, $played_seconds, $prev_dur);
-            }
+        }
+        # Both music and audiobook chapter plays should be reported to history if >= 30s
+        if ($played_seconds >= 30 && !$prev_play_sent) {
+            _send_music_play($client, $prev_track_id, $prev_album_id, $played_seconds, $prev_dur);
         }
     }
 
@@ -478,16 +477,77 @@ sub _handleTrackSwitch {
         }
         my $duration = ($meta && $meta->{duration}) || $song->duration() || 0;
 
+        my $rotor_session;
+        my $batch_id;
+        if ($url =~ /[?&]rotor_session=([^&]+)/) {
+            $rotor_session = URI::Escape::uri_unescape($1);
+        }
+        if ($url =~ /[?&]batch_id=([^&]+)/) {
+            $batch_id = URI::Escape::uri_unescape($1);
+        }
+
         $client->pluginData('yandex_curr_track_id', $new_track_id);
         $client->pluginData('yandex_curr_album_id', $new_album_id);
         $client->pluginData('yandex_curr_is_chapter', $is_chapter);
         $client->pluginData('yandex_curr_duration', $duration);
         $client->pluginData('yandex_curr_start_time', time());
         $client->pluginData('yandex_curr_play_sent', 0);
+        $client->pluginData('yandex_curr_radio_session', $rotor_session);
+        $client->pluginData('yandex_curr_batch_id', $batch_id);
+
+        if ($is_chapter && $new_album_id) {
+            my $title = ($meta && ($meta->{album} || $meta->{album_title})) || '';
+            my $cover = ($meta && ($meta->{cover} || $meta->{cover_uri} || $meta->{coverUri})) || '';
+            if (!$title) {
+                my $album_meta = $cache->get('yandex_album_' . $new_album_id);
+                if ($album_meta && ref $album_meta eq 'HASH') {
+                    $title = $album_meta->{title} || '';
+                    $cover ||= $album_meta->{coverUri} || $album_meta->{ogImage} || '';
+                }
+            }
+            my $userId = _getUserIdForClient($client) || 'default';
+            if ($title) {
+                my $book_info = {
+                    album_id  => $new_album_id,
+                    track_id  => $new_track_id,
+                    title     => $title,
+                    cover_uri => $cover,
+                    timestamp => time(),
+                };
+                $prefs->set("last_played_audiobook_${userId}", $book_info);
+                $client->pluginData('yandex_last_played_audiobook', $book_info);
+            } else {
+                my $api = getAPIForClient($client);
+                if ($api) {
+                    $api->get_album_with_tracks(
+                        $new_album_id,
+                        sub {
+                            my $album_data = shift;
+                            my $fetched_title = $album_data->{title} || '';
+                            my $fetched_cover = $album_data->{coverUri} || $album_data->{ogImage} || '';
+                            if ($fetched_title) {
+                                my $book_info = {
+                                    album_id  => $new_album_id,
+                                    track_id  => $new_track_id,
+                                    title     => $fetched_title,
+                                    cover_uri => $fetched_cover,
+                                    timestamp => time(),
+                                };
+                                $prefs->set("last_played_audiobook_${userId}", $book_info);
+                                $client->pluginData('yandex_last_played_audiobook', $book_info);
+                            }
+                        },
+                        sub { }
+                    );
+                }
+            }
+        }
 
         _start_progress_timer($client);
     } else {
         $client->pluginData('yandex_curr_track_id', undef);
+        $client->pluginData('yandex_curr_radio_session', undef);
+        $client->pluginData('yandex_curr_batch_id', undef);
         _stop_progress_timer($client);
     }
 }
@@ -502,11 +562,10 @@ sub _handle_pause_or_stop {
 
     if ($is_chapter) {
         _save_current_progress($client, $track_id, $pos, $dur, 0);
-    } else {
-        if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
-            $client->pluginData('yandex_curr_play_sent', 1);
-            _send_music_play($client, $track_id, $album_id, $pos, $dur);
-        }
+    }
+    if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+        $client->pluginData('yandex_curr_play_sent', 1);
+        _send_music_play($client, $track_id, $album_id, $pos, $dur);
     }
     _stop_progress_timer($client);
 }
@@ -525,11 +584,10 @@ sub _progress_timer_tick {
 
     if ($is_chapter) {
         _save_current_progress($client, $track_id, $pos, $dur, 0);
-    } else {
-        if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
-            $client->pluginData('yandex_curr_play_sent', 1);
-            _send_music_play($client, $track_id, $album_id, $pos, $dur);
-        }
+    }
+    if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+        $client->pluginData('yandex_curr_play_sent', 1);
+        _send_music_play($client, $track_id, $album_id, $pos, $dur);
     }
 
     my $interval = $prefs->get('progress_save_interval') || 30;
@@ -555,6 +613,61 @@ sub _save_current_progress {
     my $api = getAPIForClient($client);
     return unless $api;
 
+    my $album_id = $client ? $client->pluginData('yandex_curr_album_id') : undef;
+    if ($client && $album_id) {
+        my $userId = _getUserIdForClient($client) || 'default';
+        my $book_info = $prefs->get("last_played_audiobook_${userId}")
+                     || $client->pluginData('yandex_last_played_audiobook');
+        if ($book_info && $book_info->{album_id} == $album_id) {
+            $book_info->{track_id}  = $track_id;
+            $book_info->{timestamp} = time();
+            $prefs->set("last_played_audiobook_${userId}", $book_info);
+            $client->pluginData('yandex_last_played_audiobook', $book_info);
+        } else {
+            my $cache = Slim::Utils::Cache->new();
+            my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+            my $album_meta = eval { $cache->get('yandex_album_' . $album_id) };
+            my $title = ($meta && ($meta->{album} || $meta->{album_title}))
+                     || ($album_meta && $album_meta->{title})
+                     || '';
+            my $cover = ($meta && ($meta->{cover} || $meta->{cover_uri} || $meta->{coverUri}))
+                     || ($album_meta && ($album_meta->{coverUri} || $album_meta->{ogImage}))
+                     || '';
+            if ($title) {
+                my $new_info = {
+                    album_id  => $album_id,
+                    track_id  => $track_id,
+                    title     => $title,
+                    cover_uri => $cover,
+                    timestamp => time(),
+                };
+                $prefs->set("last_played_audiobook_${userId}", $new_info);
+                $client->pluginData('yandex_last_played_audiobook', $new_info);
+            } elsif ($api) {
+                $api->get_album_with_tracks(
+                    $album_id,
+                    sub {
+                        my $album_data = shift;
+                        my $fetched_title = $album_data->{title} || '';
+                        my $fetched_cover = $album_data->{coverUri} || $album_data->{ogImage} || '';
+                        if ($fetched_title) {
+                            my $new_info = {
+                                album_id  => $album_id,
+                                track_id  => $track_id,
+                                title     => $fetched_title,
+                                cover_uri => $fetched_cover,
+                                timestamp => time(),
+                            };
+                            $prefs->set("last_played_audiobook_${userId}", $new_info);
+                            $client->pluginData('yandex_last_played_audiobook', $new_info);
+                        }
+                    },
+                    sub { }
+                );
+            }
+        }
+    }
+
     $api->save_stream_progress(
         $track_id,
         $pos,
@@ -571,11 +684,20 @@ sub _save_current_progress {
 }
 
 sub _mark_chapter_finished {
-    my ($client, $track_id) = @_;
+    my ($client, $track_id, $track_length_sec) = @_;
     return unless $track_id;
 
     my $api = getAPIForClient($client);
     return unless $api;
+
+    $track_length_sec = int($track_length_sec || 0);
+    if (!$track_length_sec) {
+        my $cache = Slim::Utils::Cache->new();
+        my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+        if ($meta && ref $meta eq 'HASH' && $meta->{duration}) {
+            $track_length_sec = int($meta->{duration});
+        }
+    }
 
     $api->mark_stream_finished(
         $track_id,
@@ -585,7 +707,8 @@ sub _mark_chapter_finished {
         sub {
             my $err = shift;
             $log->warn("YANDEX: Failed to mark track $track_id finished: $err");
-        }
+        },
+        $track_length_sec
     );
 }
 
@@ -596,13 +719,26 @@ sub _send_music_play {
     my $api = getAPIForClient($client);
     return unless $api;
 
-    my $tid = $track_id;
-    if ($album_id && $tid !~ /:/) {
-        $tid = "$track_id:$album_id";
+    # Clean numeric trackId (never concatenate "trackId:albumId")
+    if ($track_id =~ /^(\d+):(\d+)$/) {
+        $track_id = $1;
+        $album_id ||= $2;
+    } elsif ($track_id =~ /^(\d+)/) {
+        $track_id = $1;
     }
 
+    my $cache = Slim::Utils::Cache->new();
+    my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+    if ($meta && ref $meta eq 'HASH') {
+        $dur ||= $meta->{duration};
+        $album_id ||= $meta->{album_id};
+    }
+
+    my $radio_session = $client ? $client->pluginData('yandex_curr_radio_session') : undef;
+    my $batch_id      = $client ? $client->pluginData('yandex_curr_batch_id') : undef;
+
     my $play_obj = {
-        trackId            => $tid,
+        trackId            => "$track_id",
         totalPlayedSeconds => int($played_sec || 0),
         trackLengthSeconds => int($dur || 0),
         endPositionSeconds => int($played_sec || 0),
@@ -610,15 +746,39 @@ sub _send_music_play {
     };
     $play_obj->{albumId} = int($album_id) if $album_id;
 
-    $log->info("YANDEX: Reporting music play >= 30s for track $tid (played " . int($played_sec) . "s)");
+    if ($radio_session) {
+        $play_obj->{radioSessionId} = $radio_session;
+        $play_obj->{batchId}        = $batch_id if $batch_id;
+        $play_obj->{context}        = 'wave';
+        $play_obj->{contextItem}    = $radio_session;
+    }
+
+    # Record recent played track locally for immediate history access in LMS
+    my $userId = _getUserIdForClient($client) || 'default';
+    my $recent_tracks = $prefs->get("recent_played_music_${userId}") || [];
+    $recent_tracks = [ grep { ref $_ eq 'HASH' && $_->{track_id} && $_->{track_id} ne $track_id } @$recent_tracks ];
+    unshift @$recent_tracks, {
+        track_id   => "$track_id",
+        album_id   => $album_id ? int($album_id) : undef,
+        timestamp  => time(),
+        title      => $meta ? $meta->{title} : undef,
+        artist     => $meta ? $meta->{artist} : undef,
+        album      => $meta ? $meta->{album} : undef,
+        duration   => int($dur || 0),
+        cover_uri  => $meta ? ($meta->{cover_uri} || $meta->{cover} || $meta->{ogImage}) : undef,
+    };
+    splice(@$recent_tracks, 50) if @$recent_tracks > 50;
+    $prefs->set("recent_played_music_${userId}", $recent_tracks);
+
+    $log->info("YANDEX: Reporting music play >= 30s for track $track_id (played " . int($played_sec) . "s)");
     $api->send_play(
         $play_obj,
         sub {
-            $log->info("YANDEX: Music play reported successfully for track $tid");
+            $log->info("YANDEX: Music play reported successfully for track $track_id");
         },
         sub {
             my $err = shift;
-            $log->warn("YANDEX: Failed to report music play for track $tid: $err");
+            $log->warn("YANDEX: Failed to report music play for track $track_id: $err");
         }
     );
 }
@@ -665,6 +825,20 @@ sub handleFeed {
             $cb->([{ name => "Error: $error", type => 'text' }]);
         },
     );
+}
+
+sub _iso_to_epoch {
+    my $str = shift;
+    return 0 unless defined $str && $str ne '';
+    if ($str =~ /^\d{13,}$/) {
+        return int($str / 1000);
+    }
+    if ($str =~ /^\d{9,11}$/) {
+        return int($str);
+    }
+    return 0 unless $str =~ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
+    require Time::Local;
+    return eval { Time::Local::timegm($6, $5, $4, $3, $2 - 1, $1) } || 0;
 }
 
 sub _renderRootMenu {
@@ -770,6 +944,40 @@ sub _renderRootMenu {
     };
 
     if ($prefs->get('show_resume_quick_item')) {
+        my $userId = _getUserIdForClient($client) || 'default';
+        my $local_book = $prefs->get("last_played_audiobook_${userId}")
+                      || ($client ? $client->pluginData('yandex_last_played_audiobook') : undef);
+
+        my $_build_quick_item = sub {
+            my ($album_id, $title, $cover_uri) = @_;
+            return undef unless $album_id && $title;
+
+            my $icon = Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200');
+            my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+            my $resume_token = $is_basic ? 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' : 'PLUGIN_YANDEX_QUICK_RESUME';
+            my $resume_fmt = cstring($client, $resume_token);
+            if ($resume_token eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' && $resume_fmt eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC') {
+                $resume_fmt = cstring($client, 'PLUGIN_YANDEX_QUICK_RESUME');
+            }
+            if ($is_basic) {
+                $resume_fmt =~ s/▶/>/g;
+                $title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $title);
+            }
+            if ($resume_fmt !~ /%s/) {
+                $resume_fmt .= ': %s';
+            }
+            my $quick_label = sprintf($resume_fmt, $title);
+            return {
+                name        => $quick_label,
+                line1       => $quick_label,
+                type        => 'action',
+                url         => \&Plugins::yandex::Browse::_handleQuickResumeBook,
+                passthrough => [$client_instance, $album_id],
+                image       => $icon,
+                nextWindow  => 'nowPlaying',
+            };
+        };
+
         $client_instance->get_bookshelf_recently_played(
             0,
             1,
@@ -786,41 +994,57 @@ sub _renderRootMenu {
                         }
                     }
                 }
-                my $quick_item;
+
+                my ($chosen_id, $chosen_title, $chosen_cover);
+                my ($remote_id, $remote_title, $remote_cover);
+                my $remote_ts = 0;
+
                 if (@raw && $raw[0]) {
                     my $item = $raw[0];
                     my $album = $item->{album} // (exists $item->{volumes} || exists $item->{trackCount} ? $item : {});
-                    my $album_id = $album->{id} // $item->{id} // $item->{albumId};
-                    my $title = $album->{title} // $item->{title} // $item->{name};
-                    if ($album_id && $title) {
-                        my $cover_uri = $album->{coverUri} // $item->{coverUri} // $album->{ogImage} // $item->{ogImage};
-                        my $icon = Plugins::yandex::Browse::Common::format_cover_url($cover_uri, '200x200');
-                        my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
-                        my $resume_token = $is_basic ? 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' : 'PLUGIN_YANDEX_QUICK_RESUME';
-                        my $resume_fmt = cstring($client, $resume_token);
-                        if ($resume_token eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC' && $resume_fmt eq 'PLUGIN_YANDEX_QUICK_RESUME_BASIC') {
-                            $resume_fmt = cstring($client, 'PLUGIN_YANDEX_QUICK_RESUME');
-                        }
-                        if ($is_basic) {
-                            $resume_fmt =~ s/▶/>/g;
-                            $title = Plugins::yandex::Browse::Common::sanitize_for_client($client, $title);
-                        }
-                        my $quick_label = sprintf($resume_fmt, $title);
-                        $quick_item = {
-                            name        => $quick_label,
-                            line1       => $quick_label,
-                            type        => 'action',
-                            url         => \&Plugins::yandex::Browse::_handleQuickResumeBook,
-                            passthrough => [$client_instance, $album_id],
-                            image       => $icon,
-                            nextWindow  => 'nowPlaying',
-                        };
-                    }
+                    $remote_id    = $album->{id} // $item->{id} // $item->{albumId};
+                    $remote_title = $album->{title} // $item->{title} // $item->{name};
+                    $remote_cover = $album->{coverUri} // $item->{coverUri} // $album->{ogImage} // $item->{ogImage};
+                    my $date_str  = $item->{listeningDate}
+                                 || $album->{listeningDate}
+                                 || $item->{updateTime}
+                                 || $album->{updateTime}
+                                 || ($item->{track} && $item->{track}{streamProgress} && ($item->{track}{streamProgress}{updateTime} || $item->{track}{streamProgress}{timestamp}))
+                                 || $item->{timestamp}
+                                 || $album->{timestamp}
+                                 || '';
+                    $remote_ts    = _iso_to_epoch($date_str);
                 }
+
+                if ($remote_ts > 0 && $local_book && $local_book->{album_id} && $local_book->{title}) {
+                    if (($local_book->{timestamp} || 0) >= $remote_ts) {
+                        $chosen_id    = $local_book->{album_id};
+                        $chosen_title = $local_book->{title};
+                        $chosen_cover = $local_book->{cover_uri};
+                    } else {
+                        $chosen_id    = $remote_id;
+                        $chosen_title = $remote_title;
+                        $chosen_cover = $remote_cover;
+                    }
+                } elsif ($remote_id) {
+                    $chosen_id    = $remote_id;
+                    $chosen_title = $remote_title;
+                    $chosen_cover = $remote_cover;
+                } elsif ($local_book && $local_book->{album_id} && $local_book->{title}) {
+                    $chosen_id    = $local_book->{album_id};
+                    $chosen_title = $local_book->{title};
+                    $chosen_cover = $local_book->{cover_uri};
+                }
+
+                my $quick_item = $_build_quick_item->($chosen_id, $chosen_title, $chosen_cover);
                 $render->($quick_item);
             },
             sub {
-                $render->(undef);
+                my $quick_item;
+                if ($local_book && $local_book->{album_id} && $local_book->{title}) {
+                    $quick_item = $_build_quick_item->($local_book->{album_id}, $local_book->{title}, $local_book->{cover_uri});
+                }
+                $render->($quick_item);
             }
         );
     } else {

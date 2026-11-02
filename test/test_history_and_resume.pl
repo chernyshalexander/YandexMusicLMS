@@ -18,7 +18,7 @@ BEGIN {
         sub info {} sub error {} sub warn {} sub debug {} sub is_debug { 0 } sub is_info { 0 }
         package Slim::Utils::Log;
         sub logger { bless {}, 'MockLog' }
-        sub addLogCategory {}
+        sub addLogCategory { bless {}, 'MockLog' }
         sub import {
             my $caller = caller;
             no strict 'refs';
@@ -213,7 +213,7 @@ BEGIN {
         our @EXPORT_OK = qw(cstring string);
         sub cstring {
             my ($client, $token) = @_;
-            return $client->string($token) if $client && $client->can('string');
+            return $client->string($token) if $client && eval { $client->can('string') };
             return $token;
         }
         sub string { my ($token) = @_; return $token; }
@@ -784,6 +784,7 @@ use Plugins::yandex::ProtocolHandler;
         return $s->{plugin_data}{$k};
     }
     sub playingSong { shift->{playing_song} }
+    sub string { MockClient::string(@_) }
 
     package MockLMSRequest;
     sub new {
@@ -1604,6 +1605,811 @@ use Plugins::yandex::ProtocolHandler;
         { client => $full_client }
     );
     like($rendered_full->{items}[0]{line2}, qr{\x{2022}}, 'renderTrackList on full client retains bullet char');
+}
+
+# --------------------------------------------------------------------------
+# Test 22: renderPlaylistList and handleNewPlaylists callback execution
+# --------------------------------------------------------------------------
+{
+    require Plugins::yandex::Browse::Common;
+    require Plugins::yandex::Browse::Collection;
+
+    # 1. renderPlaylistList with playlists
+    my $mock_playlists = [
+        {
+            title => 'Indie Hits',
+            owner => { uid => '12345', name => 'Yandex Music' },
+            kind => '1001',
+            cover => { uri => 'avatars.yandex.net/get-music-content/123/%%' },
+        },
+        {
+            title => 'Rock Classics',
+            owner => { uid => '67890', name => 'Curator' },
+            kind => '2002',
+            cover => { uri => 'avatars.yandex.net/get-music-content/456/%%' },
+        },
+        undef, # Should be skipped gracefully
+    ];
+
+    my $render_res;
+    Plugins::yandex::Browse::Common::renderPlaylistList(
+        'MOCK_API',
+        $mock_playlists,
+        sub { $render_res = shift; },
+        'New Playlists'
+    );
+
+    ok(defined $render_res, 'renderPlaylistList invoked callback');
+    is($render_res->{title}, 'New Playlists', 'renderPlaylistList sets correct title');
+    is(scalar(@{$render_res->{items}}), 2, 'renderPlaylistList returned 2 items (undef skipped)');
+    is($render_res->{items}[0]{name}, 'Indie Hits (Yandex Music)', 'First playlist item title and owner');
+    is($render_res->{items}[0]{line1}, 'Indie Hits', 'First playlist item line1');
+    is($render_res->{items}[0]{line2}, 'Yandex Music', 'First playlist item line2');
+    is($render_res->{items}[0]{type}, 'playlist', 'First playlist item type');
+    is($render_res->{items}[0]{play}, 'yandexmusic://playlist/12345/1001', 'First playlist item play URL');
+    is($render_res->{items}[0]{image}, 'https://avatars.yandex.net/get-music-content/123/200x200', 'First playlist formatted cover URL');
+    is_deeply($render_res->{items}[0]{passthrough}, ['MOCK_API', '12345', '1001'], 'First playlist passthrough args');
+
+    # 2. renderPlaylistList with empty array
+    my $empty_res;
+    Plugins::yandex::Browse::Common::renderPlaylistList(
+        'MOCK_API',
+        [],
+        sub { $empty_res = shift; },
+        'Empty Playlists'
+    );
+    ok(defined $empty_res, 'renderPlaylistList invoked callback on empty array');
+    is(scalar(@{$empty_res->{items}}), 0, 'renderPlaylistList empty items count is 0');
+
+    # 3. renderPlaylistList with mosaic cover, coverUri, and owner without name
+    my $cover_variants = [
+        {
+            title => 'Mosaic Playlist',
+            owner => { uid => '111', name => 'Curator 1' },
+            kind => '501',
+            cover => { type => 'mosaic', itemsUri => ['avatars.yandex.net/mosaic-1/%%'] },
+        },
+        {
+            title => 'CoverUri Playlist',
+            owner => { uid => '222' }, # no name
+            kind => '502',
+            coverUri => 'avatars.yandex.net/coveruri-2/%%',
+        },
+    ];
+
+    my $variants_res;
+    Plugins::yandex::Browse::Common::renderPlaylistList(
+        'MOCK_API',
+        $cover_variants,
+        sub { $variants_res = shift; },
+        'Variants'
+    );
+    ok(defined $variants_res, 'renderPlaylistList with mosaic/coverUri invoked callback');
+    is($variants_res->{items}[0]{image}, 'https://avatars.yandex.net/mosaic-1/200x200', 'Mosaic itemsUri parsed');
+    is($variants_res->{items}[1]{image}, 'https://avatars.yandex.net/coveruri-2/200x200', 'Direct coverUri parsed');
+    is($variants_res->{items}[1]{name}, 'CoverUri Playlist', 'Playlist without owner name does not append (Unknown)');
+    is($variants_res->{items}[1]{line1}, 'CoverUri Playlist', 'Playlist line1 matches title');
+    ok(!defined $variants_res->{items}[1]{line2}, 'Playlist line2 is undef without owner name');
+
+    # 4. renderPlaylistList on basic display client sanitizes emoji
+    my $emoji_playlist = [
+        {
+            title => "🔥 Top Hits \x{26A1}",
+            owner => { uid => '333', name => "Super \x{1F600} Dj" },
+            kind => '601',
+        },
+    ];
+    my $basic_client = { is_basic_display => 1 };
+    my $basic_pl_res;
+    Plugins::yandex::Browse::Common::renderPlaylistList(
+        'MOCK_API',
+        $emoji_playlist,
+        sub { $basic_pl_res = shift; },
+        'Emoji Test',
+        { client => $basic_client }
+    );
+    ok(defined $basic_pl_res, 'renderPlaylistList with basic client invoked callback');
+    is($basic_pl_res->{items}[0]{line1}, 'Top Hits [PLUGIN_YANDEX_RADIO]', 'Basic client strips fire emoji and replaces lightning with radio tag');
+    is($basic_pl_res->{items}[0]{line2}, 'Super Dj', 'Basic client strips emoji from owner name');
+    is($basic_pl_res->{items}[0]{name}, 'Top Hits [PLUGIN_YANDEX_RADIO] (Super Dj)', 'Basic client name sanitized correctly');
+
+    # 5. handleNewPlaylists end-to-end with mock API
+    {
+        package MockYandexClientNewPlaylists;
+        sub new { bless {}, shift }
+        sub get_new_playlists {
+            my ($self, $cb, $err_cb) = @_;
+            $cb->([
+                { uid => '100', kind => '10' },
+                { uid => '200', kind => '20' },
+                { uid => '300', kind => '30' },
+            ]);
+        }
+        sub get_playlist {
+            my ($self, $uid, $kind, $cb, $err_cb) = @_;
+            my $pl = {
+                title => "Playlist $kind",
+                owner => { uid => $uid, name => "User $uid" },
+                kind  => $kind,
+            };
+            $cb->($pl);
+        }
+    }
+
+    my $mock_client_obj = { client_id => 'test' };
+    my $mock_api = MockYandexClientNewPlaylists->new();
+    my $cb_res;
+
+    Plugins::yandex::Browse::Collection::handleNewPlaylists(
+        $mock_client_obj,
+        sub { $cb_res = shift; },
+        {},
+        $mock_api
+    );
+
+    ok(defined $cb_res, 'handleNewPlaylists callback invoked successfully');
+    is(scalar(@{$cb_res->{items}}), 3, 'handleNewPlaylists returned all 3 playlists');
+    is($cb_res->{items}[0]{play}, 'yandexmusic://playlist/100/10', 'First playlist in order');
+    is($cb_res->{items}[1]{play}, 'yandexmusic://playlist/200/20', 'Second playlist in order');
+    is($cb_res->{items}[2]{play}, 'yandexmusic://playlist/300/30', 'Third playlist in order');
+}
+
+# --------------------------------------------------------------------------
+# Test 23: Fix for natural chapter finish duration in _mark_chapter_finished
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my ($posted_url, $posted_body);
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($self, $url, $body, $cb, $err_cb) = @_;
+        $posted_url  = $url;
+        $posted_body = $body;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+
+    # 23a: mark_stream_finished with explicit duration
+    $api->mark_stream_finished(127083193, undef, undef, 796);
+    is($posted_body->{trackStreams}[0]{trackId}, '127083193', 'mark_stream_finished trackId matches');
+    is($posted_body->{trackStreams}[0]{positionSec}, 796, 'mark_stream_finished positionSec > 0');
+    is($posted_body->{trackStreams}[0]{trackLengthSec}, 796, 'mark_stream_finished trackLengthSec matches duration');
+    is(${$posted_body->{trackStreams}[0]{finished}}, 1, 'mark_stream_finished finished flag is 1');
+
+    # 23b: mark_stream_finished without duration falls back to cache or 1 (never 0)
+    my $cache = Slim::Utils::Cache->new();
+    $cache->set('yandex_meta_99999', { duration => 350 });
+    $api->mark_stream_finished(99999);
+    is($posted_body->{trackStreams}[0]{trackLengthSec}, 350, 'mark_stream_finished without arg resolved duration from cache');
+
+    $api->mark_stream_finished(88888); # No cache
+    ok($posted_body->{trackStreams}[0]{trackLengthSec} > 0, 'mark_stream_finished without cache defaults length > 0 (prevents 400 Bad Request)');
+}
+
+# --------------------------------------------------------------------------
+# Test 24: Fix for _send_music_play clean trackId and Wave radioSessionId propagation
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my ($sent_url, $sent_body, $sent_params);
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($self, $url, $body, $cb, $err_cb, $params) = @_;
+        $sent_url    = $url;
+        $sent_body   = $body;
+        $sent_params = $params;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+    local *Plugins::yandex::Plugin::getAPIForClient = sub { return $api; };
+
+    my $player = MockPlayerClient->new();
+    $player->pluginData('yandex_curr_radio_session', 'session-xyz-123');
+    $player->pluginData('yandex_curr_batch_id', 'batch-abc-789');
+
+    # When trackId has "trackId:albumId" format from LMS, it must be cleaned to numeric trackId
+    Plugins::yandex::Plugin::_send_music_play($player, '27536680:3296314', 3296314, 45, 210);
+
+    my $play_record = $sent_body->{plays}[0];
+    is($play_record->{trackId}, '27536680', '_send_music_play passes pure numeric trackId');
+    is($play_record->{albumId}, 3296314, '_send_music_play passes albumId separately');
+    is($play_record->{context}, 'wave', '_send_music_play sets context to wave for radio session');
+    is($play_record->{contextItem}, 'session-xyz-123', '_send_music_play sets contextItem to radioSessionId');
+    is($play_record->{radioSessionId}, 'session-xyz-123', '_send_music_play propagates radioSessionId');
+    is($play_record->{batchId}, 'batch-abc-789', '_send_music_play propagates batchId');
+}
+
+# --------------------------------------------------------------------------
+# Test 25: _calculate_resume_point advances to chapter 2 when chapter 1 is finished
+# --------------------------------------------------------------------------
+{
+    my @tracks_prodawec = (
+        { id => 127083193, durationMs => 796_000, streamProgress => { everFinished => 1, endPositionSec => 0 } },
+        { id => 127083194, durationMs => 820_000 },
+        { id => 127083195, durationMs => 750_000 },
+    );
+    my $album_prodawec = {
+        id      => 31670261,
+        title   => 'Продавец приключений',
+        volumes => [ \@tracks_prodawec ],
+    };
+
+    my ($target_idx, $offset_sec) = Plugins::yandex::Browse::History::_calculate_resume_point($album_prodawec, \@tracks_prodawec);
+    is($target_idx, 1, 'Chapter 1 finished: Advances resume point to Chapter 2 (index 1)');
+    is($offset_sec, 0, 'Offset is 0s at start of Chapter 2');
+}
+
+# --------------------------------------------------------------------------
+# Test 26: Quick resume prioritization of local audiobook over older remote bookshelf
+# --------------------------------------------------------------------------
+{
+    my $api_client = Plugins::yandex::API::Async->new('dummy_token');
+    my $client = MockPlayerClient->new();
+
+    # Set local audiobook played today (recent timestamp)
+    my $local_time = time();
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    $prefs->set('last_played_audiobook_19183055', {
+        album_id  => 31670261,
+        title     => 'Продавец приключений',
+        cover_uri => 'cover.jpg',
+        timestamp => $local_time,
+    });
+    $prefs->client($client)->set('userId', '19183055');
+    $prefs->set('accounts', {
+        '19183055' => { name => 'Test User', token => 'test_token' }
+    });
+
+    # Remote bookshelf still returns Orwell from 3 days ago
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb) = @_;
+        $cb->({
+            entities => [
+                {
+                    album => {
+                        id    => 32792140,
+                        title => 'Джордж Оруэлл. «Фунты лиха в Париже и Лондоне»',
+                    },
+                    listeningDate => '2026-10-29T10:21:29Z', # Older than local_time
+                }
+            ]
+        });
+    };
+
+    my $rendered_menu;
+    Plugins::yandex::Plugin::_renderRootMenu($client, sub { $rendered_menu = shift; }, $api_client);
+    ok(defined $rendered_menu && ref $rendered_menu eq 'ARRAY', 'Root menu rendered');
+    my $quick_item = $rendered_menu->[0];
+    ok(defined $quick_item, 'Quick resume button exists');
+    like($quick_item->{name}, qr{Продавец приключений}, 'Quick resume prioritizes newer local book over older remote book');
+    is($quick_item->{passthrough}[1], 31670261, 'Quick resume links to album 31670261 (Продавец приключений)');
+
+    # Remote bookshelf returns a newer book from mobile app (tomorrow)
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb) = @_;
+        $cb->({
+            entities => [
+                {
+                    album => {
+                        id    => 99999999,
+                        title => 'New Mobile Book',
+                    },
+                    listeningDate => '2026-11-05T12:00:00Z', # Newer than local_time
+                }
+            ]
+        });
+    };
+
+    my $rendered_menu_new;
+    Plugins::yandex::Plugin::_renderRootMenu($client, sub { $rendered_menu_new = shift; }, $api_client);
+    like($rendered_menu_new->[0]{name}, qr{New Mobile Book}, 'Quick resume prioritizes remote book if listeningDate is newer than local');
+
+    # Remote bookshelf errors out: fallback to local book
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb, $err_cb) = @_;
+        $err_cb->('Network Timeout');
+    };
+
+    my $rendered_menu_err;
+    Plugins::yandex::Plugin::_renderRootMenu($client, sub { $rendered_menu_err = shift; }, $api_client);
+    ok(defined $rendered_menu_err->[0], 'Quick resume shows on remote network error');
+    like($rendered_menu_err->[0]{name}, qr{Продавец приключений}, 'Quick resume falls back to local book on remote error');
+}
+
+# --------------------------------------------------------------------------
+# Test 27: _iso_to_epoch parses ISO8601, epoch seconds, and epoch milliseconds
+# --------------------------------------------------------------------------
+{
+    is(Plugins::yandex::Plugin::_iso_to_epoch('2026-11-02T10:00:00Z'), 1793613600, '_iso_to_epoch parses ISO8601');
+    is(Plugins::yandex::Plugin::_iso_to_epoch('1730541600'), 1730541600, '_iso_to_epoch parses 10-digit epoch seconds');
+    is(Plugins::yandex::Plugin::_iso_to_epoch('1730541600000'), 1730541600, '_iso_to_epoch parses 13-digit epoch milliseconds');
+    is(Plugins::yandex::Plugin::_iso_to_epoch(''), 0, '_iso_to_epoch handles empty string');
+    is(Plugins::yandex::Plugin::_iso_to_epoch(undef), 0, '_iso_to_epoch handles undef');
+}
+
+# --------------------------------------------------------------------------
+# Test 28: send_play omits albumId when 0 or undef, includes string when > 0
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my $posted_body;
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($self, $url, $body, $cb, $err_cb) = @_;
+        $posted_body = $body;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+
+    # albumId is undef
+    $api->send_play({ trackId => 111, totalPlayedSeconds => 35 });
+    ok(!exists $posted_body->{plays}[0]{albumId}, 'send_play omits albumId when undef');
+
+    # albumId is 0
+    $api->send_play({ trackId => 222, albumId => 0, totalPlayedSeconds => 35 });
+    ok(!exists $posted_body->{plays}[0]{albumId}, 'send_play omits albumId when 0');
+
+    # albumId is positive
+    $api->send_play({ trackId => 333, albumId => 444, totalPlayedSeconds => 35 });
+    ok(exists $posted_body->{plays}[0]{albumId}, 'send_play includes albumId when > 0');
+    is($posted_body->{plays}[0]{albumId}, '444', 'send_play serializes albumId as string');
+}
+
+# --------------------------------------------------------------------------
+# Test 29: save_stream_progress clamps duration and position to avoid 400 Bad Request
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my $posted_body;
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($self, $url, $body, $cb, $err_cb) = @_;
+        $posted_body = $body;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+
+    # Both position and duration are 0 on finished track
+    $api->save_stream_progress(127083193, 0, 0, 1);
+    my $stream = $posted_body->{trackStreams}[0];
+    ok($stream->{trackLengthSec} >= 1, 'save_stream_progress trackLengthSec clamped to >= 1 when 0');
+    ok($stream->{positionSec} >= 1, 'save_stream_progress positionSec clamped to length when finished');
+
+    # Duration resolved from cache when not passed
+    my $cache = Slim::Utils::Cache->new();
+    $cache->set('yandex_meta_55555', { duration => 420 });
+    $api->save_stream_progress(55555, 10, 0, 0);
+    is($posted_body->{trackStreams}[0]{trackLengthSec}, 420, 'save_stream_progress resolved duration from cache');
+}
+
+# --------------------------------------------------------------------------
+# Test 30: _save_current_progress updates last_played_audiobook when switching books
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    no warnings 'redefine';
+    local *Plugins::yandex::Plugin::getAPIForClient = sub { return $api; };
+    local *Plugins::yandex::API::Async::save_stream_progress = sub {
+        my ($self, $tid, $pos, $dur, $fin, $cb) = @_;
+        $cb->() if $cb;
+    };
+
+    my $client = MockPlayerClient->new();
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    $prefs->set('accounts', { 'user_switch' => { name => 'User Switch', token => 'tok' } });
+    $prefs->client($client)->set('userId', 'user_switch');
+
+    # User previously played Orwell
+    $prefs->set('last_played_audiobook_user_switch', {
+        album_id => 32792140,
+        title    => 'Orwell',
+        timestamp => 1000,
+    });
+
+    # Now playing "Продавец приключений" (album 31670261)
+    $client->pluginData('yandex_curr_album_id', 31670261);
+    my $cache = Slim::Utils::Cache->new();
+    $cache->set('yandex_album_31670261', { title => 'Продавец приключений', coverUri => 'cover.jpg' });
+
+    Plugins::yandex::Plugin::_save_current_progress($client, 127083193, 15, 796, 0);
+
+    my $updated_book = $prefs->get('last_played_audiobook_user_switch');
+    is($updated_book->{album_id}, 31670261, '_save_current_progress updated album_id when book switched');
+    is($updated_book->{title}, 'Продавец приключений', '_save_current_progress resolved title for new book');
+    ok($updated_book->{timestamp} > 1000, '_save_current_progress refreshed timestamp');
+}
+
+# --------------------------------------------------------------------------
+# Test 31: Audiobook chapter tracks report play >= 30s to history
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my @reported_plays;
+    no warnings 'redefine';
+    local *Plugins::yandex::Plugin::getAPIForClient = sub { return $api; };
+    local *Plugins::yandex::Plugin::_save_current_progress = sub {};
+    local *Plugins::yandex::Plugin::_mark_chapter_finished = sub {};
+    local *Plugins::yandex::API::Async::send_play = sub {
+        my ($self, $play_obj, $cb) = @_;
+        push @reported_plays, $play_obj;
+        $cb->() if $cb;
+    };
+
+    my $client = MockPlayerClient->new();
+    $client->pluginData('yandex_curr_track_id', 127083193);
+    $client->pluginData('yandex_curr_album_id', 31670261);
+    $client->pluginData('yandex_curr_is_chapter', 1);
+    $client->pluginData('yandex_curr_duration', 796);
+    $client->pluginData('yandex_curr_play_sent', 0);
+
+    # Mock songTime returning 35 seconds
+    local *Slim::Player::Source::songTime = sub { return 35; };
+
+    # Tick timer while playing
+    Plugins::yandex::Plugin::_progress_timer_tick($client);
+
+    is(scalar(@reported_plays), 1, 'Audiobook chapter triggered send_play when pos >= 30s');
+    is($reported_plays[0]{trackId}, '127083193', 'send_play passed chapter trackId');
+    is($reported_plays[0]{albumId}, 31670261, 'send_play passed chapter albumId');
+    is($client->pluginData('yandex_curr_play_sent'), 1, 'play_sent flag set to 1 preventing duplicate reports');
+
+    # Second tick does not re-report
+    Plugins::yandex::Plugin::_progress_timer_tick($client);
+    is(scalar(@reported_plays), 1, 'Second tick did not send duplicate play');
+}
+
+# --------------------------------------------------------------------------
+# Test 32: API::Async::play_audio posts form-urlencoded to /play-audio
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my ($posted_url, $posted_form);
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::post_form = sub {
+        my ($self, $url, $form, $cb, $err_cb) = @_;
+        $posted_url  = $url;
+        $posted_form = $form;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+
+    $api->play_audio({
+        trackId            => 102213,
+        albumId            => 11048,
+        from               => 'desktop_win-home-playlist_of_the_day-playlist-default',
+        totalPlayedSeconds => 45,
+        trackLengthSeconds => 354,
+        endPositionSeconds => 45,
+    });
+
+    like($posted_url, qr{/play-audio$}, 'play_audio hits /play-audio endpoint');
+    is($posted_form->{'track-id'}, '102213', 'play_audio sets track-id');
+    is($posted_form->{'album-id'}, '11048', 'play_audio sets album-id');
+    is($posted_form->{'from'}, 'desktop_win-home-playlist_of_the_day-playlist-default', 'play_audio sets from');
+    is($posted_form->{'from-cache'}, 'false', 'play_audio sets from-cache false');
+    is($posted_form->{'total-played-seconds'}, 45, 'play_audio sets total-played-seconds');
+    is($posted_form->{'track-length-seconds'}, 354, 'play_audio sets track-length-seconds');
+    is($posted_form->{'end-position-seconds'}, 45, 'play_audio sets end-position-seconds');
+    ok(defined $posted_form->{'play-id'}, 'play_audio auto-generates play-id UUID');
+    ok(defined $posted_form->{'timestamp'}, 'play_audio includes timestamp');
+    ok(defined $posted_form->{'client-now'}, 'play_audio includes client-now');
+}
+
+# --------------------------------------------------------------------------
+# Test 33: send_play dispatches play_audio alongside POST /plays
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    my @play_audio_calls;
+    my @plays_post_calls;
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::play_audio = sub {
+        my ($self, $data, $cb, $err_cb) = @_;
+        push @play_audio_calls, $data;
+        $cb->({ result => 'ok' }) if $cb;
+    };
+    local *Plugins::yandex::API::Async::post = sub {
+        my ($self, $url, $body, $cb, $err_cb) = @_;
+        push @plays_post_calls, { url => $url, body => $body };
+        $cb->({ result => 'ok' }) if $cb;
+    };
+
+    $api->send_play({
+        trackId            => 998877,
+        albumId            => 665544,
+        totalPlayedSeconds => 60,
+        trackLengthSeconds => 240,
+    });
+
+    is(scalar(@plays_post_calls), 1, 'send_play posted to /plays');
+    is(scalar(@play_audio_calls), 1, 'send_play also dispatched play_audio (/play-audio)');
+    is($play_audio_calls[0]{trackId}, '998877', 'play_audio received trackId');
+    is($play_audio_calls[0]{albumId}, 665544, 'play_audio received albumId');
+    is($play_audio_calls[0]{totalPlayedSeconds}, 60, 'play_audio received totalPlayedSeconds');
+}
+
+# --------------------------------------------------------------------------
+# Test 34: handleAudiobooksHistory sorts newest first and displays listening date/time
+# --------------------------------------------------------------------------
+{
+    my $mock_client = MockClient2->new();
+    my $api_client = Plugins::yandex::API::Async->new('dummy_token');
+
+    # Provide 3 books in random/unordered date sequence
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb) = @_;
+        $cb->({
+            entities => [
+                {
+                    type => 'album',
+                    album => {
+                        id => 100,
+                        title => 'Older Book',
+                        artists => [{ name => 'Author One' }],
+                    },
+                    listeningDate => '2026-06-20T17:49:27Z',
+                    track => { id => '1', title => 'Ch 1' },
+                },
+                {
+                    type => 'album',
+                    album => {
+                        id => 200,
+                        title => 'Newest Book',
+                        artists => [{ name => 'Author Two' }],
+                    },
+                    listeningDate => '2026-10-29T10:21:29Z',
+                    track => { id => '2', title => 'Ch 2' },
+                },
+                {
+                    type => 'album',
+                    album => {
+                        id => 300,
+                        title => 'Middle Book',
+                        artists => [{ name => 'Author Three' }],
+                    },
+                    listeningDate => '2026-08-20T19:34:31Z',
+                    track => { id => '3', title => 'Ch 3' },
+                },
+            ],
+        });
+    };
+
+    my $bookshelf_result;
+    Plugins::yandex::Browse::History::handleAudiobooksHistory(
+        $mock_client,
+        sub { $bookshelf_result = shift; },
+        {},
+        $api_client
+    );
+
+    ok(defined $bookshelf_result && $bookshelf_result->{items}, 'Bookshelf returned items');
+    is(scalar(@{$bookshelf_result->{items}}), 3, 'Three books returned');
+
+    # Must be sorted descending by listening timestamp:
+    # 1st: Newest Book (2026-10-29)
+    # 2nd: Middle Book (2026-08-20)
+    # 3rd: Older Book (2026-06-20)
+    is($bookshelf_result->{items}[0]{line1}, 'Newest Book', 'First book is the newest listened');
+    is($bookshelf_result->{items}[1]{line1}, 'Middle Book', 'Second book is the middle listened');
+    is($bookshelf_result->{items}[2]{line1}, 'Older Book', 'Third book is the oldest listened');
+
+    # Date/time should be formatted in line2
+    like($bookshelf_result->{items}[0]{line2}, qr{29\.10\.2026}, 'Newest book line2 displays date 29.10.2026');
+    like($bookshelf_result->{items}[1]{line2}, qr{20\.08\.2026}, 'Middle book line2 displays date 20.08.2026');
+    like($bookshelf_result->{items}[2]{line2}, qr{20\.06\.2026}, 'Older book line2 displays date 20.06.2026');
+}
+
+# --------------------------------------------------------------------------
+# Test 35: _iso_to_epoch correctly adjusts for timezone offsets (+HH:MM, -HH:MM)
+# --------------------------------------------------------------------------
+{
+    my $t_utc  = Plugins::yandex::Browse::History::_iso_to_epoch('2026-11-02T08:16:17Z');
+    my $t_plus = Plugins::yandex::Browse::History::_iso_to_epoch('2026-11-02T11:16:17+03:00');
+    my $t_min  = Plugins::yandex::Browse::History::_iso_to_epoch('2026-11-02T03:16:17-05:00');
+
+    is($t_plus, $t_utc, '_iso_to_epoch adjusts +03:00 timezone offset correctly');
+    is($t_min,  $t_utc, '_iso_to_epoch adjusts -05:00 timezone offset correctly');
+}
+
+# --------------------------------------------------------------------------
+# Test 36: handleAudiobooksHistory displays chapter/track and progress% simultaneously
+# --------------------------------------------------------------------------
+{
+    my $mock_client = MockClient2->new();
+    my $api_client  = Plugins::yandex::API::Async->new('dummy_token');
+
+    local *Plugins::yandex::API::Async::get_bookshelf_recently_played = sub {
+        my ($self, $page, $pageSize, $cb) = @_;
+        $cb->({
+            entities => [
+                {
+                    type => 'album',
+                    album => {
+                        id           => 32792140,
+                        title        => 'Джордж Оруэлл',
+                        artists      => [{ name => 'Андрей Крупник' }],
+                        durationSec  => 24492,
+                        durationLeft => 137,
+                    },
+                    listeningDate => '2026-10-29T10:21:29Z',
+                    track => {
+                        id    => '129893157',
+                        title => 'Джордж Оруэлл. Часть 38',
+                        streamProgress => { endPositionSec => 0, everFinished => \0 },
+                    },
+                },
+            ],
+        });
+    };
+
+    my $bookshelf_res;
+    Plugins::yandex::Browse::History::handleAudiobooksHistory(
+        $mock_client,
+        sub { $bookshelf_res = shift; },
+        {},
+        $api_client
+    );
+
+    ok(defined $bookshelf_res && $bookshelf_res->{items}, 'Bookshelf returned Orwell item');
+    my $item = $bookshelf_res->{items}[0];
+    is($item->{line1}, 'Джордж Оруэлл', 'Audiobook title matches');
+    like($item->{line2}, qr{Часть 38}, 'Audiobook subtitle displays chapter/track title');
+    like($item->{line2}, qr{99%}, 'Audiobook subtitle displays progress percentage');
+    like($item->{line2}, qr{29\.10\.2026}, 'Audiobook subtitle displays listening date');
+}
+
+# --------------------------------------------------------------------------
+# Test 37: handleBookChaptersList displays status badge and marks current chapter
+# --------------------------------------------------------------------------
+{
+    my $mock_client = MockClient2->new();
+    my $api_client  = Plugins::yandex::API::Async->new('dummy_token');
+
+    local *Plugins::yandex::API::Async::get_album_with_tracks = sub {
+        my ($self, $album_id, $cb) = @_;
+        $cb->({
+            id           => 32792140,
+            title        => 'George Orwell',
+            lastListened => { trackId => '102' },
+            volumes => [
+                [
+                    {
+                        id         => '101',
+                        title      => 'Chapter 1',
+                        durationMs => 300000,
+                        streamProgress => { everFinished => \1, endPositionSec => 0 },
+                    },
+                    {
+                        id         => '102',
+                        title      => 'Chapter 2',
+                        durationMs => 400000,
+                        streamProgress => { everFinished => \0, endPositionSec => 120 },
+                    },
+                    {
+                        id         => '103',
+                        title      => 'Chapter 3',
+                        durationMs => 500000,
+                        streamProgress => { everFinished => \0, endPositionSec => 0 },
+                    },
+                ]
+            ],
+        });
+    };
+
+    my $chapters_res;
+    Plugins::yandex::Browse::History::handleBookChaptersList(
+        $mock_client,
+        sub { $chapters_res = shift; },
+        {},
+        $api_client,
+        32792140
+    );
+
+    ok(defined $chapters_res && $chapters_res->{items}, 'Chapters list returned');
+    is(scalar(@{$chapters_res->{items}}), 3, 'Three chapters returned');
+
+    # Chapter 1 finished
+    like($chapters_res->{items}[0]{line2}, qr{Finished|Прослушано}, 'Chapter 1 marked finished');
+
+    # Chapter 2 is current and in-progress
+    like($chapters_res->{items}[1]{line1}, qr{▶ 2\. Chapter 2}, 'Chapter 2 marked with play arrow');
+    like($chapters_res->{items}[1]{line2}, qr{2:00 / 6:40}, 'Chapter 2 displays offset position');
+
+    # Chapter 3 not started
+    is($chapters_res->{items}[2]{line1}, '3. Chapter 3', 'Chapter 3 title unmodified');
+    is($chapters_res->{items}[2]{line2}, '8:20', 'Chapter 3 displays duration only');
+}
+
+# --------------------------------------------------------------------------
+# Test 38: handleMusicHistory synthesizes Today tab for plays recorded today
+# --------------------------------------------------------------------------
+{
+    my $mock_client = MockClient2->new();
+    my $api_client  = Plugins::yandex::API::Async->new('dummy_token');
+
+    # Store a track played locally today in $prefs
+    my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
+    my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
+
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($mock_client) } || 'default';
+    $prefs->set("recent_played_music_${userId}", [
+        {
+            track_id  => '2773110',
+            album_id  => '298151',
+            title     => 'Time',
+            artist    => 'Pink Floyd',
+            album     => 'The Dark Side of the Moon',
+            duration  => 422,
+            timestamp => time(),
+        }
+    ]);
+
+    # Mock get_music_history with older dates only (no today tab)
+    local *Plugins::yandex::API::Async::get_music_history = sub {
+        my ($self, $count, $cb) = @_;
+        $cb->({
+            historyTabs => [
+                {
+                    date  => '2026-10-30',
+                    items => [],
+                }
+            ],
+        });
+    };
+
+    my $history_res;
+    Plugins::yandex::Browse::History::handleMusicHistory(
+        $mock_client,
+        sub { $history_res = shift; },
+        {},
+        $api_client
+    );
+
+    ok(defined $history_res && $history_res->{items}, 'Music history returned tabs');
+    # The first tab should now be Today
+    like($history_res->{items}[0]{name}, qr{Today|Сегодня}, 'First tab in music history is Today');
+
+    # Inspect today tracks
+    my $day_tracks_tab = $history_res->{items}[0]{passthrough}[1];
+    my $day_tracks_res;
+    Plugins::yandex::Browse::History::handleMusicHistoryDayTracks(
+        $mock_client,
+        sub { $day_tracks_res = shift; },
+        {},
+        $api_client,
+        $day_tracks_tab
+    );
+
+    ok(defined $day_tracks_res && $day_tracks_res->{items}, 'Today tracks returned');
+    is($day_tracks_res->{items}[0]{line1}, 'Time', 'Track title matches');
+    like($day_tracks_res->{items}[0]{line2}, qr{Pink Floyd}, 'Track line2 has artist');
+    like($day_tracks_res->{items}[0]{line2}, qr{The Dark Side of the Moon}, 'Track line2 has album');
+    like($day_tracks_res->{items}[0]{line2}, qr{\d{2}:\d{2}}, 'Track line2 has listening time');
+}
+
+# --------------------------------------------------------------------------
+# Test 39: API::Async::get_user_contexts queries /users/{uid}/contexts
+# --------------------------------------------------------------------------
+{
+    my $api = Plugins::yandex::API::Async->new('dummy_token');
+    $api->{userId} = '19183055';
+
+    my ($req_url, $req_params);
+    no warnings 'redefine';
+    local *Plugins::yandex::API::Async::get = sub {
+        my ($self, $url, $params, $cb, $err_cb) = @_;
+        $req_url    = $url;
+        $req_params = $params;
+        $cb->({ result => { contexts => [] } }) if $cb;
+    };
+
+    my $contexts_result;
+    $api->get_user_contexts(
+        sub { $contexts_result = shift; },
+        sub { }
+    );
+
+    like($req_url, qr{/users/19183055/contexts$}, 'get_user_contexts queries /users/19183055/contexts');
+    is($req_params->{trackCount}, 10, 'get_user_contexts sets trackCount=10');
+    is($req_params->{contextCount}, 30, 'get_user_contexts sets contextCount=30');
+    ok(defined $contexts_result, 'get_user_contexts invoked success callback');
 }
 
 1;

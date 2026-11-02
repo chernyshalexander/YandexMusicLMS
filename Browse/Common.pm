@@ -181,7 +181,16 @@ sub cache_track_metadata {
     };
 
     $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days 
-    
+
+    if ($album_id && $album_name && $album_name ne 'Unknown') {
+        $cache->set('yandex_album_' . $album_id, {
+            id       => $album_id,
+            title    => $album_name,
+            coverUri => $cover_uri,
+            type     => $album_type,
+        }, '90d');
+    }
+
     return $meta;
 }
 
@@ -220,32 +229,64 @@ sub renderAlbumList {
 }
 
 sub renderPlaylistList {
-    my ($yandex_client, $playlists, $cb, $title) = @_;
+    my ($yandex_client, $playlists, $cb, $title, $params) = @_;
 
     my @items;
+
+    my $client;
+    if ($params) {
+        $client = (ref $params eq 'HASH') ? $params->{client} : $params;
+    }
 
     foreach my $playlist (@$playlists) {
         next unless $playlist;
 
         my $playlist_title = $playlist->{title} // 'Unknown';
-        my $owner_name = 'Unknown';
+        my $owner_name = '';
 
         if ($playlist->{owner} && $playlist->{owner}->{name}) {
             $owner_name = $playlist->{owner}->{name};
         }
 
-        my $icon = format_cover_url($playlist->{cover} ? $playlist->{cover}->{uri} : undef, '200x200');
+        if ($client && is_basic_display_client($client)) {
+            $playlist_title = sanitize_for_client($client, $playlist_title);
+            $owner_name = sanitize_for_client($client, $owner_name) if $owner_name;
+        }
+
+        my $cover_uri;
+        if (ref $playlist->{cover} eq 'HASH') {
+            $cover_uri = $playlist->{cover}->{uri};
+            if (!$cover_uri && $playlist->{cover}->{itemsUri} && ref $playlist->{cover}->{itemsUri} eq 'ARRAY') {
+                $cover_uri = $playlist->{cover}->{itemsUri}[0];
+            }
+        } elsif (!ref $playlist->{cover}) {
+            $cover_uri = $playlist->{cover};
+        }
+        $cover_uri ||= $playlist->{coverUri} || $playlist->{ogImage};
+
+        my $icon = format_cover_url($cover_uri, '200x200');
+
+        my $owner_uid = ($playlist->{owner} && $playlist->{owner}->{uid}) ? $playlist->{owner}->{uid} : $playlist->{uid};
+        my $kind = $playlist->{kind};
+
+        my $item_name = ($owner_name && $owner_name ne 'Unknown') ? "$playlist_title ($owner_name)" : $playlist_title;
 
         push @items, {
-            name => $playlist_title . ' (' . $owner_name . ')',
+            name => $item_name,
+            line1 => $playlist_title,
+            line2 => ($owner_name && $owner_name ne 'Unknown') ? $owner_name : undef,
             type => 'playlist',
             url => \&Plugins::yandex::Browse::_handlePlaylist,
-            passthrough => [$yandex_client, $playlist->{owner}->{uid}, $playlist->{kind}],
+            passthrough => [$yandex_client, $owner_uid, $kind],
             image => $icon,
-            play => 'yandexmusic://playlist/' . $playlist->{owner}->{uid} . '/' . $playlist->{kind},
+            play => 'yandexmusic://playlist/' . $owner_uid . '/' . $kind,
         };
     }
 
+    $cb->({
+        items => \@items,
+        title => $title,
+    });
 }
 
 # Detect clients with limited font/character support (Squeezeplay desktop,

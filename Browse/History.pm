@@ -85,6 +85,93 @@ sub handleMusicHistory {
             my $data = shift;
             my $tabs = (ref $data eq 'HASH') ? ($data->{historyTabs} // []) : [];
 
+            my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
+            my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
+            my ($ysec, $ymin, $yhour, $ymday, $ymon, $yyear) = localtime(time - 86400);
+            my $yesterday_str = sprintf("%04d-%02d-%02d", $yyear + 1900, $ymon + 1, $ymday);
+
+            my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($client) } || 'default';
+            my $local_tracks = $prefs->get("recent_played_music_${userId}") || [];
+
+            # Check if historyTabs already has today's tab
+            my $today_tab;
+            for my $t (@$tabs) {
+                if (($t->{date} // '') eq $today_str) {
+                    $today_tab = $t;
+                    last;
+                }
+            }
+
+            # Filter local tracks played today
+            require Time::Local;
+            my $today_midnight = eval { Time::Local::timelocal(0, 0, 0, $mday, $mon, $year) } || (time - 86400);
+            my @today_local = grep { ref $_ eq 'HASH' && ($_->{timestamp} || 0) >= $today_midnight } @$local_tracks;
+
+            if (@today_local) {
+                if (!$today_tab) {
+                    my @tracks_list;
+                    for my $lt (@today_local) {
+                        push @tracks_list, {
+                            type => 'track',
+                            data => {
+                                fullModel => {
+                                    id         => $lt->{track_id},
+                                    title      => $lt->{title} || 'Track ' . $lt->{track_id},
+                                    durationMs => ($lt->{duration} || 0) * 1000,
+                                    coverUri   => $lt->{cover_uri},
+                                    artists    => $lt->{artist} ? [{ name => $lt->{artist} }] : [],
+                                    albums     => $lt->{album} ? [{ title => $lt->{album}, id => $lt->{album_id} }] : ($lt->{album_id} ? [{ id => $lt->{album_id} }] : []),
+                                    timestamp  => $lt->{timestamp},
+                                },
+                            },
+                        };
+                    }
+                    $today_tab = {
+                        date  => $today_str,
+                        title => cstring($client, 'PLUGIN_YANDEX_TODAY'),
+                        items => [{
+                            context => { type => 'various' },
+                            tracks  => \@tracks_list,
+                        }],
+                    };
+                    unshift @$tabs, $today_tab;
+                } else {
+                    my $existing_tids = {};
+                    for my $grp (@{$today_tab->{items} || []}) {
+                        for my $tr (@{$grp->{tracks} || []}) {
+                            my $td = $tr->{data} || $tr;
+                            my $fm = $td->{fullModel} || $td;
+                            my $tid = $fm->{id} // (ref $td->{itemId} eq 'HASH' ? $td->{itemId}{trackId} : $td->{itemId});
+                            $existing_tids->{$tid} = 1 if defined $tid;
+                        }
+                    }
+                    my @new_local_tracks;
+                    for my $lt (@today_local) {
+                        next if $existing_tids->{$lt->{track_id}};
+                        push @new_local_tracks, {
+                            type => 'track',
+                            data => {
+                                fullModel => {
+                                    id         => $lt->{track_id},
+                                    title      => $lt->{title} || 'Track ' . $lt->{track_id},
+                                    durationMs => ($lt->{duration} || 0) * 1000,
+                                    coverUri   => $lt->{cover_uri},
+                                    artists    => $lt->{artist} ? [{ name => $lt->{artist} }] : [],
+                                    albums     => $lt->{album} ? [{ title => $lt->{album}, id => $lt->{album_id} }] : ($lt->{album_id} ? [{ id => $lt->{album_id} }] : []),
+                                    timestamp  => $lt->{timestamp},
+                                },
+                            },
+                        };
+                    }
+                    if (@new_local_tracks) {
+                        unshift @{$today_tab->{items}}, {
+                            context => { type => 'various' },
+                            tracks  => \@new_local_tracks,
+                        };
+                    }
+                }
+            }
+
             if (!@$tabs) {
                 $cb->({
                     items => [{
@@ -96,21 +183,17 @@ sub handleMusicHistory {
                 return;
             }
 
-            my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
-            my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
-
-            my ($ysec, $ymin, $yhour, $ymday, $ymon, $yyear) = localtime(time - 86400);
-            my $yesterday_str = sprintf("%04d-%02d-%02d", $yyear + 1900, $ymon + 1, $ymday);
-
             my @items;
             for my $tab (@$tabs) {
                 my $date = $tab->{date} // '';
 
                 my $title;
                 if ($date eq $today_str) {
-                    $title = cstring($client, 'PLUGIN_YANDEX_TODAY');
+                    my $word = cstring($client, 'PLUGIN_YANDEX_TODAY');
+                    $title = ($word && $word ne 'PLUGIN_YANDEX_TODAY') ? $word : 'Today';
                 } elsif ($date eq $yesterday_str) {
-                    $title = cstring($client, 'PLUGIN_YANDEX_YESTERDAY');
+                    my $word = cstring($client, 'PLUGIN_YANDEX_YESTERDAY');
+                    $title = ($word && $word ne 'PLUGIN_YANDEX_YESTERDAY') ? $word : 'Yesterday';
                 } elsif ($date =~ /^(\d{4})-(\d{2})-(\d{2})$/) {
                     $title = "$3.$2.$1";
                 } else {
@@ -357,6 +440,12 @@ sub _format_history_track_item {
     my $line2 = $artist_name;
     $line2 .= $sep . $album_name if $album_name;
 
+    my $raw_date = $track_object->{timestamp} || $track_object->{date} || $track_object->{listeningDate};
+    if ($raw_date) {
+        my $date_lbl = _format_listening_date($client, $raw_date);
+        $line2 .= $sep . $date_lbl if $date_lbl;
+    }
+
     Plugins::yandex::Browse::Common::cache_track_metadata($track_object);
 
     return {
@@ -499,6 +588,75 @@ sub handleMusicHistoryDayTracks {
     }
 }
 
+sub _iso_to_epoch {
+    my $str = shift;
+    return 0 unless defined $str && $str ne '';
+    if ($str =~ /^\d{13,}$/) {
+        return int($str / 1000);
+    }
+    if ($str =~ /^\d{9,11}$/) {
+        return int($str);
+    }
+    if ($str =~ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):?(\d{2}))?/) {
+        my ($y, $mon, $d, $h, $min, $s, $tz_sign, $tz_h, $tz_m) = ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+        require Time::Local;
+        my $epoch = eval { Time::Local::timegm($s, $min, $h, $d, $mon - 1, $y) } || 0;
+        if ($epoch && defined $tz_sign && defined $tz_h) {
+            my $offset = $tz_h * 3600 + ($tz_m || 0) * 60;
+            $epoch -= ($tz_sign eq '+' ? $offset : -$offset);
+        }
+        return $epoch;
+    }
+    return 0;
+}
+
+sub _extract_item_epoch {
+    my ($item) = @_;
+    return 0 unless ref $item eq 'HASH';
+
+    my $album = $item->{album} // (exists $item->{volumes} || exists $item->{trackCount} ? $item : {});
+    my $date_str = $item->{listeningDate}
+                || $album->{listeningDate}
+                || $item->{updateTime}
+                || $album->{updateTime}
+                || ($item->{track} && $item->{track}{streamProgress} && ($item->{track}{streamProgress}{updateTime} || $item->{track}{streamProgress}{timestamp}))
+                || $item->{lastPlayedTimestamp}
+                || $item->{timestamp}
+                || $album->{timestamp}
+                || '';
+    return _iso_to_epoch($date_str);
+}
+
+sub _format_listening_date {
+    my ($client, $raw_date) = @_;
+    return '' unless defined $raw_date && $raw_date ne '';
+
+    my $epoch = _iso_to_epoch($raw_date);
+    return '' unless $epoch > 0;
+
+    my ($sec, $min, $hour, $mday, $mon, $year) = localtime($epoch);
+    my $time_str = sprintf("%02d:%02d", $hour, $min);
+
+    my ($c_sec, $c_min, $c_hour, $c_mday, $c_mon, $c_year) = localtime(time);
+    my $today_str     = sprintf("%04d-%02d-%02d", $c_year + 1900, $c_mon + 1, $c_mday);
+    my ($y_sec, $y_min, $y_hour, $y_mday, $y_mon, $y_year) = localtime(time - 86400);
+    my $yesterday_str = sprintf("%04d-%02d-%02d", $y_year + 1900, $y_mon + 1, $y_mday);
+
+    my $target_date_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
+
+    if ($target_date_str eq $today_str) {
+        my $word = cstring($client, 'PLUGIN_YANDEX_TODAY');
+        $word = 'Today' if !$word || $word eq 'PLUGIN_YANDEX_TODAY';
+        return "$word, $time_str";
+    } elsif ($target_date_str eq $yesterday_str) {
+        my $word = cstring($client, 'PLUGIN_YANDEX_YESTERDAY');
+        $word = 'Yesterday' if !$word || $word eq 'PLUGIN_YANDEX_YESTERDAY';
+        return "$word, $time_str";
+    } else {
+        return sprintf("%02d.%02d.%04d %s", $mday, $mon + 1, $year + 1900, $time_str);
+    }
+}
+
 # Audiobooks and podcasts history
 sub handleAudiobooksHistory {
     my ($client, $cb, $args, $yandex_client) = @_;
@@ -526,6 +684,24 @@ sub handleAudiobooksHistory {
                 }
             }
 
+            my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($client) } || 'default';
+            my $local_book = $prefs->get("last_played_audiobook_${userId}")
+                          || ($client && eval { $client->can('pluginData') } ? $client->pluginData('yandex_last_played_audiobook') : undef);
+
+            for my $item (@raw_items) {
+                $item->{_epoch} = _extract_item_epoch($item);
+                if ($local_book && $local_book->{album_id}) {
+                    my $alb = $item->{album} // (exists $item->{volumes} || exists $item->{trackCount} ? $item : {});
+                    my $aid = $alb->{id} // $item->{id} // $item->{albumId};
+                    if ($aid && $aid == $local_book->{album_id}) {
+                        if (($local_book->{timestamp} || 0) > ($item->{_epoch} || 0)) {
+                            $item->{_epoch} = $local_book->{timestamp};
+                            $item->{timestamp} = $local_book->{timestamp};
+                        }
+                    }
+                }
+            }
+
             if (!@raw_items) {
                 $cb->({
                     items => [{
@@ -536,6 +712,9 @@ sub handleAudiobooksHistory {
                 });
                 return;
             }
+
+            # Sort descending by listening date/time: latest listened is first
+            @raw_items = sort { ($b->{_epoch} || 0) <=> ($a->{_epoch} || 0) } @raw_items;
 
             my @items;
             for my $item (@raw_items) {
@@ -557,22 +736,50 @@ sub handleAudiobooksHistory {
                 my $sep = $is_basic ? " - " : " \x{2022} ";
                 my $dur_left = $album->{durationLeft} // $item->{durationLeft};
                 my $dur_sec  = $album->{durationSec}  // $item->{durationSec};
-                my $subtitle = $author_name;
+                my $progress_str = '';
                 if ($dur_left && $dur_sec && $dur_sec > 0) {
                     my $pct = int((($dur_sec - $dur_left) / $dur_sec) * 100);
                     $pct = 100 if $pct > 100;
-                    $subtitle .= ($subtitle ? $sep : "") . "$pct%";
-                } elsif ($item->{track} && ref $item->{track} eq 'HASH') {
+                    $progress_str = "$pct%";
+                }
+
+                my $tr_info = '';
+                if ($item->{track} && ref $item->{track} eq 'HASH') {
                     my $tr = $item->{track};
                     my $pos = ($tr->{streamProgress} && $tr->{streamProgress}{endPositionSec})
                         ? int($tr->{streamProgress}{endPositionSec}) : 0;
                     my $tr_title = $tr->{title} || '';
+                    if ($tr_title && $title) {
+                        $tr_title =~ s/^\Q$title\E[\.\s\:\-]*//i;
+                    }
                     if ($pos > 0) {
                         my $pos_fmt = _format_seconds($pos);
-                        $subtitle .= ($subtitle ? $sep : "") . "$tr_title ($pos_fmt)";
+                        $tr_info = $tr_title ? "$tr_title ($pos_fmt)" : $pos_fmt;
                     } elsif ($tr_title) {
-                        $subtitle .= ($subtitle ? $sep : "") . $tr_title;
+                        $tr_info = $tr_title;
                     }
+                }
+
+                my $subtitle = $author_name;
+                if ($tr_info) {
+                    $subtitle .= ($subtitle ? $sep : "") . $tr_info;
+                    $subtitle .= " ($progress_str)" if $progress_str && $tr_info !~ /\Q$progress_str\E/;
+                } elsif ($progress_str) {
+                    $subtitle .= ($subtitle ? $sep : "") . $progress_str;
+                }
+
+                # Display listening date/time if available
+                my $raw_date = $item->{listeningDate}
+                            || $album->{listeningDate}
+                            || $item->{updateTime}
+                            || $album->{updateTime}
+                            || ($item->{track} && $item->{track}{streamProgress} && ($item->{track}{streamProgress}{updateTime} || $item->{track}{streamProgress}{timestamp}))
+                            || $item->{lastPlayedTimestamp}
+                            || $item->{timestamp}
+                            || $album->{timestamp};
+                my $date_label = _format_listening_date($client, $item->{_epoch} || $raw_date);
+                if ($date_label) {
+                    $subtitle .= ($subtitle ? $sep : "") . $date_label;
                 }
 
                 if ($is_basic) {
@@ -743,6 +950,23 @@ sub handleResumeBookAction {
             $log->info(sprintf("YANDEX: Starting book %s at chapter %d offset %ds",
                 $album_id, $start_idx, $offset_sec));
 
+            # Track last played audiobook locally for quick resume
+            if ($album && $album->{title} && $album_id) {
+                my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($client) } || 'default';
+                my $book_info = {
+                    album_id  => $album_id,
+                    title     => $album->{title},
+                    cover_uri => $album->{coverUri} || $album->{ogImage} || '',
+                    timestamp => time(),
+                };
+                $prefs->set("last_played_audiobook_${userId}", $book_info);
+                if ($client && eval { $client->can('pluginData') }) {
+                    $client->pluginData('yandex_last_played_audiobook', $book_info);
+                }
+                my $cache = Slim::Utils::Cache->new();
+                $cache->set('yandex_album_' . $album_id, $album, 86400);
+            }
+
             # Clear existing playlist
             $client->execute(['playlist', 'clear']);
 
@@ -831,6 +1055,11 @@ sub handleBookChaptersList {
                 return;
             }
 
+            my ($resume_idx, $offset_sec) = _calculate_resume_point($album, \@all_tracks);
+            my $last_tid = ($album->{lastListened} && ref $album->{lastListened} eq 'HASH') ? $album->{lastListened}{trackId} : undef;
+            my $is_basic = Plugins::yandex::Browse::Common::is_basic_display_client($client);
+            my $sep = $is_basic ? " - " : " \x{2022} ";
+
             my @items;
             for my $i (0 .. $#all_tracks) {
                 my $tr = $all_tracks[$i];
@@ -839,10 +1068,40 @@ sub handleBookChaptersList {
                 my $dur_fmt = _format_seconds($dur_sec);
                 my $title   = $tr->{title} || sprintf(cstring($client, 'PLUGIN_YANDEX_CHAPTER'), $num);
 
+                my $is_current = ($i == $resume_idx) || ($last_tid && $tr->{id} && $tr->{id} eq $last_tid);
+                my $sp = ($tr->{streamProgress} && ref $tr->{streamProgress} eq 'HASH') ? $tr->{streamProgress} : undef;
+
+                my $status_lbl = '';
+                my $is_fin = $sp && ((ref $sp->{everFinished}) ? ${$sp->{everFinished}} : ($sp->{everFinished} || 0));
+                if ($is_fin) {
+                    my $word = cstring($client, 'PLUGIN_YANDEX_FINISHED');
+                    $status_lbl = ($word && $word ne 'PLUGIN_YANDEX_FINISHED') ? $word : 'Finished';
+                } elsif ($sp && ($sp->{endPositionSec} || 0) > 0) {
+                    $status_lbl = _format_seconds(int($sp->{endPositionSec})) . " / $dur_fmt";
+                } elsif ($is_current) {
+                    my $word = cstring($client, 'PLUGIN_YANDEX_CURRENT');
+                    $status_lbl = ($word && $word ne 'PLUGIN_YANDEX_CURRENT') ? $word : 'Current';
+                }
+
+                my $line2 = $dur_fmt;
+                if ($status_lbl) {
+                    $line2 .= $sep . $status_lbl;
+                }
+
+                my $line1 = "$num. $title";
+                if ($is_current && !$is_basic) {
+                    $line1 = "▶ $line1";
+                }
+
+                if ($is_basic) {
+                    $line1 = Plugins::yandex::Browse::Common::sanitize_for_client($client, $line1);
+                    $line2 = Plugins::yandex::Browse::Common::sanitize_for_client($client, $line2);
+                }
+
                 push @items, {
-                    name        => "$num. $title ($dur_fmt)",
-                    line1       => "$num. $title",
-                    line2       => $dur_fmt,
+                    name        => "$num. $title ($dur_fmt)" . ($status_lbl ? " - $status_lbl" : ""),
+                    line1       => $line1,
+                    line2       => $line2,
                     type        => 'action',
                     url         => \&handleResumeBookAction,
                     passthrough => [$yandex_client, $album_id, $i, 0],
@@ -1022,16 +1281,31 @@ sub _calculate_resume_point {
         }
     } elsif (!$found_by_pos) {
         # Fallback: scan individual tracks for streamProgress (e.g. Orwell album without root trackPosition)
-        for my $i (reverse 0 .. $#$all_tracks) {
+        my $last_finished_idx = -1;
+        my $in_progress_found = 0;
+        for my $i (0 .. $#$all_tracks) {
             my $tr = $all_tracks->[$i];
             if ($tr->{streamProgress} && ref $tr->{streamProgress} eq 'HASH') {
                 my $sp = $tr->{streamProgress};
                 my $pos = int($sp->{endPositionSec} || 0);
-                if ($pos > 0 && !$sp->{everFinished}) {
+                my $is_fin = (ref $sp->{everFinished}) ? ${$sp->{everFinished}} : ($sp->{everFinished} || 0);
+                if ($is_fin) {
+                    $last_finished_idx = $i;
+                } elsif ($pos > 0) {
                     $target_idx = $i;
                     $offset_sec = $pos;
+                    $in_progress_found = 1;
                     last;
                 }
+            }
+        }
+        if (!$in_progress_found && $last_finished_idx >= 0) {
+            if ($last_finished_idx + 1 < @$all_tracks) {
+                $target_idx = $last_finished_idx + 1;
+                $offset_sec = 0;
+            } else {
+                $target_idx = 0;
+                $offset_sec = 0;
             }
         }
     }
