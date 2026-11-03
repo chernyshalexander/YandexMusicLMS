@@ -142,6 +142,16 @@ sub initPlugin {
         _init_api_client($userId);
     }
 
+    # Clean up legacy local music history from prefs (including orphaned accounts)
+    if ($prefs->can('all')) {
+        for my $k (keys %{ $prefs->all || {} }) {
+            $prefs->remove($k) if $k =~ /^recent_played_music_/;
+        }
+    }
+    for my $uid (keys %$accounts, 'default') {
+        $prefs->remove("recent_played_music_${uid}") if $prefs->get("recent_played_music_${uid}");
+    }
+
     Slim::Menu::TrackInfo->registerInfoProvider( yandex => (
         before => 'top',
         func   => \&Plugins::yandex::Browse::InfoMenu::trackInfoMenu,
@@ -757,23 +767,6 @@ sub _send_music_play {
         $play_obj->{context}        = 'wave';
         $play_obj->{contextItem}    = $radio_session;
     }
-
-    # Record recent played track locally for immediate history access in LMS
-    my $userId = _getUserIdForClient($client) || 'default';
-    my $recent_tracks = $prefs->get("recent_played_music_${userId}") || [];
-    $recent_tracks = [ grep { ref $_ eq 'HASH' && $_->{track_id} && $_->{track_id} ne $track_id } @$recent_tracks ];
-    unshift @$recent_tracks, {
-        track_id   => "$track_id",
-        album_id   => $album_id ? int($album_id) : undef,
-        timestamp  => time(),
-        title      => $meta ? $meta->{title} : undef,
-        artist     => $meta ? $meta->{artist} : undef,
-        album      => $meta ? $meta->{album} : undef,
-        duration   => int($dur || 0),
-        cover_uri  => $meta ? ($meta->{cover_uri} || $meta->{cover} || $meta->{ogImage}) : undef,
-    };
-    splice(@$recent_tracks, 50) if @$recent_tracks > 50;
-    $prefs->set("recent_played_music_${userId}", $recent_tracks);
 
     $log->info("YANDEX: Reporting music play >= 30s for track $track_id (played " . int($played_sec) . "s)");
     $api->send_play(

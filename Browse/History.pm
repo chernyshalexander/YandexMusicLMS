@@ -134,101 +134,12 @@ sub handleMusicHistory {
         50,
         sub {
             my $data = shift;
-            my $tabs = (ref $data eq 'HASH') ? ($data->{historyTabs} // []) : [];
+            my $tabs = (ref $data eq 'HASH' && ref $data->{historyTabs} eq 'ARRAY') ? $data->{historyTabs} : [];
 
             my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
             my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
             my ($ysec, $ymin, $yhour, $ymday, $ymon, $yyear) = localtime(time - 86400);
             my $yesterday_str = sprintf("%04d-%02d-%02d", $yyear + 1900, $ymon + 1, $ymday);
-
-            my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($client) } || 'default';
-            my $local_tracks = $prefs->get("recent_played_music_${userId}") || [];
-
-            # Clean and sanitize recent_played_music so no audiobooks or podcasts linger in music history
-            my @clean_local = grep { ref $_ eq 'HASH' && !_is_audiobook_or_podcast_track($_) } @$local_tracks;
-            if (scalar(@clean_local) != scalar(@$local_tracks)) {
-                $prefs->set("recent_played_music_${userId}", \@clean_local);
-                $local_tracks = \@clean_local;
-            }
-
-            # Check if historyTabs already has today's tab
-            my $today_tab;
-            for my $t (@$tabs) {
-                if (($t->{date} // '') eq $today_str) {
-                    $today_tab = $t;
-                    last;
-                }
-            }
-
-            # Filter local tracks played today (music only)
-            require Time::Local;
-            my $today_midnight = eval { Time::Local::timelocal(0, 0, 0, $mday, $mon, $year) } || (time - 86400);
-            my @today_local = grep { ref $_ eq 'HASH' && ($_->{timestamp} || 0) >= $today_midnight && !_is_audiobook_or_podcast_track($_) } @$local_tracks;
-
-            if (@today_local) {
-                if (!$today_tab) {
-                    my @tracks_list;
-                    for my $lt (@today_local) {
-                        push @tracks_list, {
-                            type => 'track',
-                            data => {
-                                fullModel => {
-                                    id         => $lt->{track_id},
-                                    title      => $lt->{title} || 'Track ' . $lt->{track_id},
-                                    durationMs => ($lt->{duration} || 0) * 1000,
-                                    coverUri   => $lt->{cover_uri},
-                                    artists    => $lt->{artist} ? [{ name => $lt->{artist} }] : [],
-                                    albums     => $lt->{album} ? [{ title => $lt->{album}, id => $lt->{album_id} }] : ($lt->{album_id} ? [{ id => $lt->{album_id} }] : []),
-                                    timestamp  => $lt->{timestamp},
-                                },
-                            },
-                        };
-                    }
-                    $today_tab = {
-                        date  => $today_str,
-                        title => cstring($client, 'PLUGIN_YANDEX_TODAY'),
-                        items => [{
-                            context => { type => 'various' },
-                            tracks  => \@tracks_list,
-                        }],
-                    };
-                    unshift @$tabs, $today_tab;
-                } else {
-                    my $existing_tids = {};
-                    for my $grp (@{$today_tab->{items} || []}) {
-                        for my $tr (@{$grp->{tracks} || []}) {
-                            my $td = $tr->{data} || $tr;
-                            my $fm = $td->{fullModel} || $td;
-                            my $tid = $fm->{id} // (ref $td->{itemId} eq 'HASH' ? $td->{itemId}{trackId} : $td->{itemId});
-                            $existing_tids->{$tid} = 1 if defined $tid;
-                        }
-                    }
-                    my @new_local_tracks;
-                    for my $lt (@today_local) {
-                        next if $existing_tids->{$lt->{track_id}};
-                        push @new_local_tracks, {
-                            type => 'track',
-                            data => {
-                                fullModel => {
-                                    id         => $lt->{track_id},
-                                    title      => $lt->{title} || 'Track ' . $lt->{track_id},
-                                    durationMs => ($lt->{duration} || 0) * 1000,
-                                    coverUri   => $lt->{cover_uri},
-                                    artists    => $lt->{artist} ? [{ name => $lt->{artist} }] : [],
-                                    albums     => $lt->{album} ? [{ title => $lt->{album}, id => $lt->{album_id} }] : ($lt->{album_id} ? [{ id => $lt->{album_id} }] : []),
-                                    timestamp  => $lt->{timestamp},
-                                },
-                            },
-                        };
-                    }
-                    if (@new_local_tracks) {
-                        unshift @{$today_tab->{items}}, {
-                            context => { type => 'various' },
-                            tracks  => \@new_local_tracks,
-                        };
-                    }
-                }
-            }
 
             if (!@$tabs) {
                 $cb->({
@@ -532,10 +443,22 @@ sub handleMusicHistoryDayTracks {
     }
     $yandex_client = _resolve_api_client($client, $yandex_client);
 
-    my $date = $tab->{date} // 'History';
-    my $title = $tab->{title};
+    my $tab_hash = (ref $tab eq 'HASH') ? $tab : {};
+    my $date = $tab_hash->{date} // 'History';
+    my $title = $tab_hash->{title};
     if (!$title) {
-        if ($date =~ /^(\d{4})-(\d{2})-(\d{2})$/) {
+        my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
+        my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
+        my ($ysec, $ymin, $yhour, $ymday, $ymon, $yyear) = localtime(time - 86400);
+        my $yesterday_str = sprintf("%04d-%02d-%02d", $yyear + 1900, $ymon + 1, $ymday);
+
+        if ($date eq $today_str) {
+            my $word = cstring($client, 'PLUGIN_YANDEX_TODAY');
+            $title = ($word && $word ne 'PLUGIN_YANDEX_TODAY') ? $word : 'Today';
+        } elsif ($date eq $yesterday_str) {
+            my $word = cstring($client, 'PLUGIN_YANDEX_YESTERDAY');
+            $title = ($word && $word ne 'PLUGIN_YANDEX_YESTERDAY') ? $word : 'Yesterday';
+        } elsif ($date =~ /^(\d{4})-(\d{2})-(\d{2})$/) {
             $title = "$3.$2.$1";
         } else {
             $title = $date;
@@ -545,7 +468,7 @@ sub handleMusicHistoryDayTracks {
     my @menu_items;
     my @missing_ids;
 
-    my $raw_groups = $tab->{items} // $tab->{tracks} // [];
+    my $raw_groups = $tab_hash->{items} // $tab_hash->{tracks} // [];
     if (ref $raw_groups eq 'ARRAY') {
         for my $grp (@$raw_groups) {
             next unless ref $grp eq 'HASH';
@@ -598,8 +521,10 @@ sub handleMusicHistoryDayTracks {
     }
 
     if (@missing_ids) {
+        my %seen_missing;
+        my @uniq_missing_ids = grep { !$seen_missing{$_}++ } @missing_ids;
         $yandex_client->tracks(
-            \@missing_ids,
+            \@uniq_missing_ids,
             sub {
                 my $resolved = shift;
                 my %map;

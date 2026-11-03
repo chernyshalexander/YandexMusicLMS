@@ -56,6 +56,13 @@ BEGIN {
         sub repeat { 0 }
     }
 
+    $INC{"Slim/Music/Import.pm"} = 1;
+    {
+        package Slim::Music::Import;
+        sub addImporter {}
+        sub useImporter {}
+    }
+
     $INC{"Slim/Buttons/Common.pm"} = 1;
     {
         package Slim::Buttons::Common;
@@ -162,6 +169,8 @@ BEGIN {
         );
         sub get { my ($s, $k) = @_; return $PREFS{$k}; }
         sub set { my ($s, $k, $v) = @_; $PREFS{$k} = $v; }
+        sub remove { my ($s, $k) = @_; delete $PREFS{$k}; }
+        sub all { return \%PREFS; }
         sub init { my ($s, $defaults) = @_; %PREFS = (%$defaults, %PREFS); }
         sub setChange {}
         sub client { shift }
@@ -2329,35 +2338,48 @@ use Plugins::yandex::ProtocolHandler;
 }
 
 # --------------------------------------------------------------------------
-# Test 38: handleMusicHistory synthesizes Today tab for plays recorded today
+# Test 38: handleMusicHistory formats API history tabs without local prefs
 # --------------------------------------------------------------------------
 {
     my $mock_client = MockClient2->new();
     my $api_client  = Plugins::yandex::API::Async->new('dummy_token');
 
-    # Store a track played locally today in $prefs
     my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
     my $today_str = sprintf("%04d-%02d-%02d", $year + 1900, $mon + 1, $mday);
 
     my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
     my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($mock_client) } || 'default';
-    $prefs->set("recent_played_music_${userId}", [
-        {
-            track_id  => '2773110',
-            album_id  => '298151',
-            title     => 'Time',
-            artist    => 'Pink Floyd',
-            album     => 'The Dark Side of the Moon',
-            duration  => 422,
-            timestamp => time(),
-        }
-    ]);
 
-    # Mock get_music_history with older dates only (no today tab)
+    # Ensure no local history exists in prefs
+    $prefs->remove("recent_played_music_${userId}");
+
+    # Mock get_music_history returning tabs directly from API
     local *Plugins::yandex::API::Async::get_music_history = sub {
         my ($self, $count, $cb) = @_;
         $cb->({
             historyTabs => [
+                {
+                    date  => $today_str,
+                    items => [
+                        {
+                            tracks => [
+                                {
+                                    type => 'track',
+                                    data => {
+                                        fullModel => {
+                                            id         => '2773110',
+                                            title      => 'Time',
+                                            durationMs => 422000,
+                                            artists    => [{ name => 'Pink Floyd' }],
+                                            albums     => [{ title => 'The Dark Side of the Moon', id => 298151 }],
+                                            timestamp  => '2026-11-03T10:00:00Z',
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                },
                 {
                     date  => '2026-10-30',
                     items => [],
@@ -2374,9 +2396,13 @@ use Plugins::yandex::ProtocolHandler;
         $api_client
     );
 
-    ok(defined $history_res && $history_res->{items}, 'Music history returned tabs');
-    # The first tab should now be Today
-    like($history_res->{items}[0]{name}, qr{Today|Сегодня}, 'First tab in music history is Today');
+    ok(defined $history_res && $history_res->{items}, 'Music history returned tabs from API');
+    is(scalar(@{$history_res->{items}}), 2, 'Two tabs returned');
+    like($history_res->{items}[0]{name}, qr{Today|Сегодня}, 'First tab in music history is localized Today');
+    is($history_res->{items}[1]{name}, '30.10.2026', 'Second tab formatted as dd.mm.yyyy');
+
+    # Verify no local prefs were accessed or written
+    is($prefs->get("recent_played_music_${userId}"), undef, 'No local history written to prefs');
 
     # Inspect today tracks
     my $day_tracks_tab = $history_res->{items}[0]{passthrough}[1];
@@ -2390,10 +2416,26 @@ use Plugins::yandex::ProtocolHandler;
     );
 
     ok(defined $day_tracks_res && $day_tracks_res->{items}, 'Today tracks returned');
+    like($day_tracks_res->{title}, qr{Today|Сегодня}, 'Today day tracks submenu title is localized Today');
     is($day_tracks_res->{items}[0]{line1}, 'Time', 'Track title matches');
     like($day_tracks_res->{items}[0]{line2}, qr{Pink Floyd}, 'Track line2 has artist');
     like($day_tracks_res->{items}[0]{line2}, qr{The Dark Side of the Moon}, 'Track line2 has album');
-    like($day_tracks_res->{items}[0]{line2}, qr{\d{2}:\d{2}}, 'Track line2 has listening time');
+
+    # Empty tabs case
+    local *Plugins::yandex::API::Async::get_music_history = sub {
+        my ($self, $count, $cb) = @_;
+        $cb->({ historyTabs => [] });
+    };
+
+    my $empty_res;
+    Plugins::yandex::Browse::History::handleMusicHistory(
+        $mock_client,
+        sub { $empty_res = shift; },
+        {},
+        $api_client
+    );
+    ok(defined $empty_res && $empty_res->{items}, 'Empty history returned items');
+    is($empty_res->{items}[0]{name}, 'PLUGIN_YANDEX_NO_HISTORY', 'Empty tabs returns NO_HISTORY message');
 }
 
 # --------------------------------------------------------------------------
@@ -2425,7 +2467,7 @@ use Plugins::yandex::ProtocolHandler;
 }
 
 # --------------------------------------------------------------------------
-# Test 40: Audiobook chapters are strictly filtered out of Music History (Today)
+# Test 40: Audiobook chapters are strictly filtered out of API Music History
 # --------------------------------------------------------------------------
 {
     my $mock_client = MockPlayerClient->new();
@@ -2434,43 +2476,39 @@ use Plugins::yandex::ProtocolHandler;
     my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
     my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($mock_client) } || 'default';
 
-    # Mix music and audiobook in recent_played_music
-    $prefs->set("recent_played_music_${userId}", [
-        {
-            track_id  => '153294569',
-            album_id  => '19752174',
-            title     => 'Роберт Шекли. «Корпорация „Бессмертие"». Часть 3',
-            artist    => 'Григорий Перель',
-            album     => 'Роберт Шекли. «Корпорация „Бессмертие"»',
-            duration  => 796,
-            timestamp => time(),
-        },
-        {
-            track_id  => '999999',
-            album_id  => '888888',
-            title     => 'Actual Music Song',
-            artist    => 'Rock Band',
-            album     => 'Rock Album',
-            duration  => 210,
-            timestamp => time(),
-        }
-    ]);
-
-    local *Plugins::yandex::API::Async::get_music_history = sub {
-        my ($self, $count, $cb) = @_;
-        $cb->({ historyTabs => [] });
+    my $day_tab = {
+        date  => '2026-11-03',
+        items => [
+            {
+                tracks => [
+                    {
+                        type => 'track',
+                        data => {
+                            fullModel => {
+                                id        => '153294569',
+                                title     => 'Роберт Шекли. «Корпорация „Бессмертие"». Часть 3',
+                                artists   => [{ name => 'Григорий Перель' }],
+                                albums    => [{ title => 'Роберт Шекли. «Корпорация „Бессмертие"»', id => 19752174 }],
+                                timestamp => '2026-11-03T11:00:00Z',
+                            }
+                        }
+                    },
+                    {
+                        type => 'track',
+                        data => {
+                            fullModel => {
+                                id        => '999999',
+                                title     => 'Actual Music Song',
+                                artists   => [{ name => 'Rock Band' }],
+                                albums    => [{ title => 'Rock Album', id => 888888 }],
+                                timestamp => '2026-11-03T11:05:00Z',
+                            }
+                        }
+                    }
+                ]
+            }
+        ]
     };
-
-    my $res;
-    Plugins::yandex::Browse::History::handleMusicHistory(
-        $mock_client,
-        sub { $res = shift; },
-        {},
-        $api_client
-    );
-
-    ok(defined $res && $res->{items}, 'Music history returned tabs');
-    my $day_tab = $res->{items}[0]{passthrough}[1];
 
     my $day_tracks;
     Plugins::yandex::Browse::History::handleMusicHistoryDayTracks(
@@ -2484,11 +2522,27 @@ use Plugins::yandex::ProtocolHandler;
     ok(defined $day_tracks && $day_tracks->{items}, 'Day tracks returned');
     is(scalar(@{$day_tracks->{items}}), 1, 'Only 1 track returned (audiobook filtered out)');
     is($day_tracks->{items}[0]{line1}, 'Actual Music Song', 'The only track in music history is the actual music track');
+    is($prefs->get("recent_played_music_${userId}"), undef, 'No history stored in prefs');
+}
 
-    # Also verify that recent_played_music was sanitized in prefs
-    my $cleaned_prefs = $prefs->get("recent_played_music_${userId}");
-    is(scalar(@$cleaned_prefs), 1, 'Audiobook was removed from recent_played_music prefs');
-    is($cleaned_prefs->[0]{title}, 'Actual Music Song', 'Remaining track is the music song');
+# --------------------------------------------------------------------------
+# Test 41: Plugin::initPlugin cleans up legacy recent_played_music from prefs
+# --------------------------------------------------------------------------
+{
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    $prefs->set('recent_played_music_19183055', [{ track_id => '123' }]);
+    $prefs->set('recent_played_music_default', [{ track_id => '456' }]);
+    $prefs->set('recent_played_music_orphaned999', [{ track_id => '789' }]);
+    $prefs->set('accounts', { '19183055' => { token => 'dummy' } });
+
+    no warnings 'redefine';
+    local *Plugins::yandex::Plugin::_init_api_client = sub {};
+
+    Plugins::yandex::Plugin->initPlugin();
+
+    is($prefs->get('recent_played_music_19183055'), undef, 'recent_played_music_19183055 cleaned up from prefs');
+    is($prefs->get('recent_played_music_default'), undef, 'recent_played_music_default cleaned up from prefs');
+    is($prefs->get('recent_played_music_orphaned999'), undef, 'recent_played_music_orphaned999 cleaned up from prefs');
 }
 
 1;
