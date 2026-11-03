@@ -2017,14 +2017,18 @@ use Plugins::yandex::ProtocolHandler;
 }
 
 # --------------------------------------------------------------------------
-# Test 31: Audiobook chapter tracks report play >= 30s to history
+# Test 31: Audiobook chapter tracks save progress, music tracks report play >= 30s
 # --------------------------------------------------------------------------
 {
     my $api = Plugins::yandex::API::Async->new('dummy_token');
     my @reported_plays;
+    my @saved_progress;
     no warnings 'redefine';
     local *Plugins::yandex::Plugin::getAPIForClient = sub { return $api; };
-    local *Plugins::yandex::Plugin::_save_current_progress = sub {};
+    local *Plugins::yandex::Plugin::_save_current_progress = sub {
+        my ($client, $tid, $pos, $dur, $fin) = @_;
+        push @saved_progress, { track_id => $tid, pos => $pos, dur => $dur, fin => $fin };
+    };
     local *Plugins::yandex::Plugin::_mark_chapter_finished = sub {};
     local *Plugins::yandex::API::Async::send_play = sub {
         my ($self, $play_obj, $cb) = @_;
@@ -2042,17 +2046,25 @@ use Plugins::yandex::ProtocolHandler;
     # Mock songTime returning 35 seconds
     local *Slim::Player::Source::songTime = sub { return 35; };
 
-    # Tick timer while playing
+    # Tick timer while playing audiobook chapter
     Plugins::yandex::Plugin::_progress_timer_tick($client);
 
-    is(scalar(@reported_plays), 1, 'Audiobook chapter triggered send_play when pos >= 30s');
-    is($reported_plays[0]{trackId}, '127083193', 'send_play passed chapter trackId');
-    is($reported_plays[0]{albumId}, 31670261, 'send_play passed chapter albumId');
-    is($client->pluginData('yandex_curr_play_sent'), 1, 'play_sent flag set to 1 preventing duplicate reports');
+    is(scalar(@saved_progress), 1, 'Audiobook chapter triggered _save_current_progress');
+    is(scalar(@reported_plays), 0, 'Audiobook chapter did NOT trigger send_play (not music)');
 
-    # Second tick does not re-report
-    Plugins::yandex::Plugin::_progress_timer_tick($client);
-    is(scalar(@reported_plays), 1, 'Second tick did not send duplicate play');
+    # Now play a regular music track
+    my $music_client = MockPlayerClient->new();
+    $music_client->pluginData('yandex_curr_track_id', 16782654);
+    $music_client->pluginData('yandex_curr_album_id', 20138562);
+    $music_client->pluginData('yandex_curr_is_chapter', 0);
+    $music_client->pluginData('yandex_curr_duration', 240);
+    $music_client->pluginData('yandex_curr_play_sent', 0);
+
+    Plugins::yandex::Plugin::_progress_timer_tick($music_client);
+
+    is(scalar(@reported_plays), 1, 'Music track triggered send_play when pos >= 30s');
+    is($reported_plays[0]{trackId}, '16782654', 'send_play passed music trackId');
+    is($reported_plays[0]{albumId}, 20138562, 'send_play passed music albumId');
 }
 
 # --------------------------------------------------------------------------
@@ -2410,6 +2422,73 @@ use Plugins::yandex::ProtocolHandler;
     is($req_params->{trackCount}, 10, 'get_user_contexts sets trackCount=10');
     is($req_params->{contextCount}, 30, 'get_user_contexts sets contextCount=30');
     ok(defined $contexts_result, 'get_user_contexts invoked success callback');
+}
+
+# --------------------------------------------------------------------------
+# Test 40: Audiobook chapters are strictly filtered out of Music History (Today)
+# --------------------------------------------------------------------------
+{
+    my $mock_client = MockPlayerClient->new();
+    my $api_client  = Plugins::yandex::API::Async->new('dummy_token');
+
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($mock_client) } || 'default';
+
+    # Mix music and audiobook in recent_played_music
+    $prefs->set("recent_played_music_${userId}", [
+        {
+            track_id  => '153294569',
+            album_id  => '19752174',
+            title     => 'Роберт Шекли. «Корпорация „Бессмертие"». Часть 3',
+            artist    => 'Григорий Перель',
+            album     => 'Роберт Шекли. «Корпорация „Бессмертие"»',
+            duration  => 796,
+            timestamp => time(),
+        },
+        {
+            track_id  => '999999',
+            album_id  => '888888',
+            title     => 'Actual Music Song',
+            artist    => 'Rock Band',
+            album     => 'Rock Album',
+            duration  => 210,
+            timestamp => time(),
+        }
+    ]);
+
+    local *Plugins::yandex::API::Async::get_music_history = sub {
+        my ($self, $count, $cb) = @_;
+        $cb->({ historyTabs => [] });
+    };
+
+    my $res;
+    Plugins::yandex::Browse::History::handleMusicHistory(
+        $mock_client,
+        sub { $res = shift; },
+        {},
+        $api_client
+    );
+
+    ok(defined $res && $res->{items}, 'Music history returned tabs');
+    my $day_tab = $res->{items}[0]{passthrough}[1];
+
+    my $day_tracks;
+    Plugins::yandex::Browse::History::handleMusicHistoryDayTracks(
+        $mock_client,
+        sub { $day_tracks = shift; },
+        {},
+        $api_client,
+        $day_tab
+    );
+
+    ok(defined $day_tracks && $day_tracks->{items}, 'Day tracks returned');
+    is(scalar(@{$day_tracks->{items}}), 1, 'Only 1 track returned (audiobook filtered out)');
+    is($day_tracks->{items}[0]{line1}, 'Actual Music Song', 'The only track in music history is the actual music track');
+
+    # Also verify that recent_played_music was sanitized in prefs
+    my $cleaned_prefs = $prefs->get("recent_played_music_${userId}");
+    is(scalar(@$cleaned_prefs), 1, 'Audiobook was removed from recent_played_music prefs');
+    is($cleaned_prefs->[0]{title}, 'Actual Music Song', 'Remaining track is the music song');
 }
 
 1;

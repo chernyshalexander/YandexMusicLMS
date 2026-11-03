@@ -46,6 +46,57 @@ sub _resolve_api_client {
     return $yandex_client;
 }
 
+sub _is_audiobook_or_podcast_track {
+    my $tr = shift;
+    return 0 unless ref $tr eq 'HASH';
+
+    return 1 if $tr->{is_chapter} || $tr->{is_podcast};
+    return 1 if ($tr->{type} && $tr->{type} =~ /^(?:podcast|audiobook)$/i);
+
+    if ($tr->{albums} && ref $tr->{albums} eq 'ARRAY') {
+        for my $alb (@{$tr->{albums}}) {
+            next unless ref $alb eq 'HASH';
+            return 1 if ($alb->{type} && $alb->{type} =~ /podcast|audiobook/i);
+            return 1 if ($alb->{metaType} && $alb->{metaType} =~ /podcast|audiobook/i);
+            return 1 if ($alb->{genre} && $alb->{genre} =~ /audiobook/i);
+        }
+    }
+
+    # Check cached track metadata if available
+    my $tid = $tr->{track_id} // $tr->{id};
+    if ($tid) {
+        my $cache = Slim::Utils::Cache->new();
+        my $meta = eval { $cache->get('yandex_meta_' . $tid) };
+        if ($meta && ref $meta eq 'HASH') {
+            return 1 if ($meta->{is_podcast} || ($meta->{album_type} && $meta->{album_type} =~ /podcast|audiobook/i));
+        }
+    }
+
+    # Check cached album metadata if available
+    my $aid = $tr->{album_id} // (($tr->{albums} && ref $tr->{albums} eq 'ARRAY' && $tr->{albums}[0]) ? $tr->{albums}[0]{id} : undef);
+    if ($aid) {
+        my $cache = Slim::Utils::Cache->new();
+        my $alb = eval { $cache->get('yandex_album_' . $aid) };
+        if ($alb && ref $alb eq 'HASH') {
+            return 1 if ($alb->{type} && $alb->{type} =~ /podcast|audiobook/i);
+            return 1 if ($alb->{metaType} && $alb->{metaType} =~ /podcast|audiobook/i);
+            return 1 if ($alb->{genre} && $alb->{genre} =~ /audiobook/i);
+        }
+    }
+
+    # Title / Album patterns for audiobooks and podcast episodes
+    my $title = $tr->{title} || '';
+    my $album_title = $tr->{album} || (($tr->{albums} && ref $tr->{albums} eq 'ARRAY' && $tr->{albums}[0]) ? $tr->{albums}[0]{title} : '') || '';
+    if ($title =~ /(?:Часть|Глава|Выпуск|Chapter|Episode)\s+\d+/i) {
+        return 1;
+    }
+    if ($album_title =~ /(?:аудиокнига|audiobook)/i) {
+        return 1;
+    }
+
+    return 0;
+}
+
 # Root history menu: Music vs Audiobooks & Podcasts
 sub handleHistory {
     my ($client, $cb, $args, $yandex_client) = @_;
@@ -93,6 +144,13 @@ sub handleMusicHistory {
             my $userId = eval { Plugins::yandex::Plugin::_getUserIdForClient($client) } || 'default';
             my $local_tracks = $prefs->get("recent_played_music_${userId}") || [];
 
+            # Clean and sanitize recent_played_music so no audiobooks or podcasts linger in music history
+            my @clean_local = grep { ref $_ eq 'HASH' && !_is_audiobook_or_podcast_track($_) } @$local_tracks;
+            if (scalar(@clean_local) != scalar(@$local_tracks)) {
+                $prefs->set("recent_played_music_${userId}", \@clean_local);
+                $local_tracks = \@clean_local;
+            }
+
             # Check if historyTabs already has today's tab
             my $today_tab;
             for my $t (@$tabs) {
@@ -102,10 +160,10 @@ sub handleMusicHistory {
                 }
             }
 
-            # Filter local tracks played today
+            # Filter local tracks played today (music only)
             require Time::Local;
             my $today_midnight = eval { Time::Local::timelocal(0, 0, 0, $mday, $mon, $year) } || (time - 86400);
-            my @today_local = grep { ref $_ eq 'HASH' && ($_->{timestamp} || 0) >= $today_midnight } @$local_tracks;
+            my @today_local = grep { ref $_ eq 'HASH' && ($_->{timestamp} || 0) >= $today_midnight && !_is_audiobook_or_podcast_track($_) } @$local_tracks;
 
             if (@today_local) {
                 if (!$today_tab) {
@@ -291,6 +349,9 @@ sub _parse_history_context_item {
         my $alb = (ref $full->{album} eq 'HASH') ? $full->{album} : $full;
         my $alb_id = (ref $alb eq 'HASH' && $alb->{id}) ? $alb->{id} : (ref $item_id eq 'HASH' ? $item_id->{id} : $item_id);
         return undef unless $alb_id;
+
+        my $alb_type = (ref $alb eq 'HASH') ? ($alb->{type} || $alb->{metaType} || '') : '';
+        return undef if $alb_type =~ /podcast|audiobook/i;
 
         my $alb_title = (ref $alb eq 'HASH' && $alb->{title}) ? $alb->{title} : 'Album';
         my $art_name = '';
@@ -509,6 +570,7 @@ sub handleMusicHistoryDayTracks {
                 my $full = (ref $tr_data->{fullModel} eq 'HASH') ? $tr_data->{fullModel} : $tr_data;
 
                 if ($full->{id} && $full->{title}) {
+                    next if _is_audiobook_or_podcast_track($full);
                     my $tr_item = _format_history_track_item($client, $full);
                     push @menu_items, $tr_item if $tr_item;
                 } else {
@@ -552,6 +614,7 @@ sub handleMusicHistoryDayTracks {
                         my $tid = $it->{_placeholder_track_id};
                         my $resolved_tr = $map{$tid};
                         if ($resolved_tr) {
+                            next if _is_audiobook_or_podcast_track($resolved_tr);
                             my $tr_item = _format_history_track_item($client, $resolved_tr);
                             push @final_items, $tr_item if $tr_item;
                         } else {
