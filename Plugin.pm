@@ -450,9 +450,7 @@ sub _handleTrackSwitch {
             # Chapter completed naturally
             _mark_chapter_finished($client, $prev_track_id, $prev_dur);
             _save_current_progress($client, $prev_track_id, $prev_dur, $prev_dur, 1);
-        }
-        # Both music and audiobook chapter plays should be reported to history if >= 30s
-        if ($played_seconds >= 30 && !$prev_play_sent) {
+        } elsif ($played_seconds >= 30 && !$prev_play_sent) {
             _send_music_play($client, $prev_track_id, $prev_album_id, $played_seconds, $prev_dur);
         }
     }
@@ -562,8 +560,7 @@ sub _handle_pause_or_stop {
 
     if ($is_chapter) {
         _save_current_progress($client, $track_id, $pos, $dur, 0);
-    }
-    if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+    } elsif ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
         $client->pluginData('yandex_curr_play_sent', 1);
         _send_music_play($client, $track_id, $album_id, $pos, $dur);
     }
@@ -584,8 +581,7 @@ sub _progress_timer_tick {
 
     if ($is_chapter) {
         _save_current_progress($client, $track_id, $pos, $dur, 0);
-    }
-    if ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
+    } elsif ($pos >= 30 && !$client->pluginData('yandex_curr_play_sent')) {
         $client->pluginData('yandex_curr_play_sent', 1);
         _send_music_play($client, $track_id, $album_id, $pos, $dur);
     }
@@ -719,6 +715,17 @@ sub _send_music_play {
     my $api = getAPIForClient($client);
     return unless $api;
 
+    # Never record or report audiobook/podcast chapters as music
+    my $is_chapter = $client ? $client->pluginData('yandex_curr_is_chapter') : undef;
+    my $cache = Slim::Utils::Cache->new();
+    my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
+    if (!$is_chapter && $meta && ref $meta eq 'HASH') {
+        if ($meta->{is_podcast} || ($meta->{album_type} && $meta->{album_type} =~ /podcast|audiobook/i)) {
+            $is_chapter = 1;
+        }
+    }
+    return if $is_chapter;
+
     # Clean numeric trackId (never concatenate "trackId:albumId")
     if ($track_id =~ /^(\d+):(\d+)$/) {
         $track_id = $1;
@@ -727,8 +734,6 @@ sub _send_music_play {
         $track_id = $1;
     }
 
-    my $cache = Slim::Utils::Cache->new();
-    my $meta = eval { $cache->get('yandex_meta_' . $track_id) };
     if ($meta && ref $meta eq 'HASH') {
         $dur ||= $meta->{duration};
         $album_id ||= $meta->{album_id};
