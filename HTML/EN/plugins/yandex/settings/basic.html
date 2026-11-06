@@ -42,41 +42,671 @@
 [% END %]
 [% END %]
 
-[% WRAPPER setting title="PLUGIN_YANDEX_ADD_ACCOUNT" desc="PLUGIN_YANDEX_ADD_ACCOUNT_DESC" %]
+[% WRAPPER setting title="PLUGIN_YANDEX_AUTH_QR" desc="PLUGIN_YANDEX_AUTH_QR_DESC" %]
 <div class="prefDesc">
-    <input type="password" name="new_account_token" id="new_account_token" value="" class="stdedit"
-        placeholder="[% 'PLUGIN_YANDEX_TOKEN_PLACEHOLDER' | string %]">
+    <!-- Initial State: Log in with QR Code button -->
+    <div id="yandex_qr_init">
+        <button type="button" id="yandex_qr_start_btn" class="stdbutton"
+            style="display:inline-flex; align-items:center; gap:8px; padding:8px 20px; font-size:1.1em; font-weight:700; background:#ffdb4d; color:#1a1a1a; border:1px solid #e0c200; border-radius:6px; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" fill="#fc3f1d"/>
+                <path d="M13.32 7.666h-.924c-1.694 0-2.585.858-2.585 2.123 0 1.43.616 2.1 1.881 2.959l1.045.704-3.003 4.487H7.49l2.695-4.014c-1.55-1.111-2.42-2.19-2.42-4.015 0-2.288 1.595-3.85 4.62-3.85h3.003v11.868H13.32V7.666z" fill="#fff"/>
+            </svg>
+            [% "PLUGIN_YANDEX_AUTH_QR_START" | string %]
+        </button>
+        <p style="margin:8px 0 0; color:#666; font-size:0.9em;">
+            [% "PLUGIN_YANDEX_AUTH_QR_HINT" | string %]
+        </p>
+    </div>
+
+    <!-- Active QR Flow: Dynamic QR code, timer, spinner -->
+    <div id="yandex_qr_flow" style="display:none; max-width:520px; border:2px solid #ffdb4d; border-radius:12px; padding:18px; background:#fffcf0; box-shadow:0 3px 12px rgba(0,0,0,0.06); margin-top:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; border-bottom:1px solid #fae287; padding-bottom:10px;">
+            <span style="font-weight:700; font-size:1.1em; color:#333;">[% "PLUGIN_YANDEX_AUTH_QR" | string %]</span>
+            <span style="font-size:0.85em; font-weight:600; color:#d32f2f; background:#ffebee; padding:3px 10px; border-radius:12px; border:1px solid #ffcdd2;">
+                [% "PLUGIN_YANDEX_AUTH_QR_EXPIRES" | string %] <span id="yandex_qr_timer">05:00</span>
+            </span>
+        </div>
+
+        <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">
+            <!-- Dynamic QR canvas/svg container -->
+            <div style="text-align:center; background:#fff; padding:12px; border:1px solid #fae287; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.04); flex-shrink:0;">
+                <div id="yandex_qr_code_box" style="width:160px; height:160px; display:flex; align-items:center; justify-content:center;"></div>
+            </div>
+
+            <div style="flex:1; min-width:200px;">
+                <p style="margin:0 0 10px; font-weight:600; color:#444; font-size:1em; line-height:1.4;">
+                    [% "PLUGIN_YANDEX_AUTH_QR_SCAN_HINT" | string %]
+                </p>
+                <div id="yandex_qr_waiting" style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#fff; border-radius:6px; border:1px solid #fae287;">
+                    <div class="yandex-pulse-dot" style="width:10px; height:10px; border-radius:50%; background:#f57c00;"></div>
+                    <span id="yandex_qr_status_text" style="font-size:0.88em; color:#555;">
+                        [% "PLUGIN_YANDEX_AUTH_QR_WAITING" | string %]
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <button type="button" id="yandex_qr_cancel_btn" class="stdbutton" style="color:#666;">
+                [% "PLUGIN_YANDEX_AUTH_DEVICE_CANCEL" | string %]
+            </button>
+        </div>
+    </div>
+
+    <!-- QR Success state -->
+    <div id="yandex_qr_success" style="display:none; max-width:520px; border:1px solid #4caf50; background:#e8f5e9; border-radius:8px; padding:15px; margin-top:10px; color:#1b5e20;">
+        <b style="font-size:1.05em;">✓ [% "PLUGIN_YANDEX_AUTH_QR_SUCCESS" | string %]</b>
+        <p id="yandex_qr_user_info" style="margin:8px 0; font-weight:600;"></p>
+        <p style="margin:0; font-size:0.85em; color:#388e3c;">[% "PLUGIN_YANDEX_AUTH_DEVICE_RELOADING" | string %]</p>
+    </div>
+
+    <!-- QR Error state -->
+    <div id="yandex_qr_error" style="display:none; max-width:520px; border:1px solid #f44336; background:#ffebee; border-radius:8px; padding:15px; margin-top:10px; color:#c62828;">
+        <b id="yandex_qr_error_title">[% "PLUGIN_YANDEX_AUTH_FAILED" | string %]</b>
+        <p id="yandex_qr_error_msg" style="margin:8px 0; font-size:0.9em;"></p>
+        <button type="button" id="yandex_qr_retry_btn" class="stdbutton" style="margin-top:5px; font-weight:600;">
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_RETRY" | string %]
+        </button>
+        <button type="button" id="yandex_qr_error_close_btn" class="stdbutton" style="margin-top:5px; margin-left:8px;">
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_CANCEL" | string %]
+        </button>
+    </div>
 </div>
 [% END %]
 
-[% WRAPPER setting title="PLUGIN_YANDEX_AUTH_BROWSER" desc="PLUGIN_YANDEX_AUTH_BROWSER_DESC" %]
+[% WRAPPER setting title="PLUGIN_YANDEX_AUTH_DEVICE" desc="PLUGIN_YANDEX_AUTH_DEVICE_DESC" %]
 <div class="prefDesc">
-    <a href="https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d"
-        target="_blank" class="stdbutton"
-        style="text-decoration:none; display:inline-block; padding:5px 15px; margin-bottom:10px;">
-        [% "PLUGIN_YANDEX_AUTH_LOGIN" | string %]
-    </a>
-    <br>
-    <a id="yandex_bookmarklet" href="#" class="stdbutton"
-        style="text-decoration:none; display:inline-block; padding:5px 15px; background-color:#444; color:#fff;"
-        onclick="alert('Drag this button to your bookmarks bar!'); return false;">
-        Capture Token
-    </a>
+    <!-- Initial State: Device Code flow start button -->
+    <div id="yandex_device_init">
+        <button type="button" id="yandex_device_start_btn" class="stdbutton"
+            style="display:inline-flex; align-items:center; gap:8px; padding:8px 20px; font-size:1.1em; font-weight:700; background:#f5f5f5; color:#1a1a1a; border:1px solid #ccc; border-radius:6px; cursor:pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="3" width="20" height="14" rx="2" stroke="#444" stroke-width="2"/>
+                <line x1="8" y1="21" x2="16" y2="21" stroke="#444" stroke-width="2" stroke-linecap="round"/>
+                <line x1="12" y1="17" x2="12" y2="21" stroke="#444" stroke-width="2"/>
+            </svg>
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_START" | string %]
+        </button>
+        <p style="margin:8px 0 0; color:#666; font-size:0.9em;">
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_HINT" | string %]
+        </p>
+    </div>
 
-    <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 10px;">
-        <p><b>[% "PLUGIN_YANDEX_AUTH_DRAG_DROP" | string %]</b></p>
-        <p style="font-size: 0.9em; color: #666;">[% "PLUGIN_YANDEX_AUTH_DRAG_DROP_DESC" | string %]</p>
-        <div id="yandex_drop_zone"
-            style="border: 2px dashed #ccc; border-radius: 8px; padding: 20px; text-align: center; color: #999; cursor: pointer; background-color: #fafafa; transition: all 0.3s ease;">
-            [% "PLUGIN_YANDEX_AUTH_DRAG_ZONE" | string %]
+    <!-- Active Device Flow: 3-step clean layout without static QR -->
+    <div id="yandex_device_flow" style="display:none; max-width:560px; border:2px solid #ddd; border-radius:12px; padding:18px; background:#fafafa; box-shadow:0 3px 12px rgba(0,0,0,0.04); margin-top:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; border-bottom:1px solid #eee; padding-bottom:10px;">
+            <span style="font-weight:700; font-size:1.1em; color:#333;">[% "PLUGIN_YANDEX_AUTH_DEVICE" | string %]</span>
+            <span style="font-size:0.85em; font-weight:600; color:#d32f2f; background:#ffebee; padding:3px 10px; border-radius:12px; border:1px solid #ffcdd2;">
+                [% "PLUGIN_YANDEX_AUTH_DEVICE_EXPIRES" | string %] <span id="yandex_device_timer">05:00</span>
+            </span>
+        </div>
+
+        <div style="margin-bottom:16px;">
+            <div style="margin-bottom:14px;">
+                <div style="font-weight:600; margin-bottom:5px; color:#444;">[% "PLUGIN_YANDEX_AUTH_DEVICE_STEP1" | string %]</div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <a id="yandex_device_url" href="https://ya.ru/device" target="_blank"
+                        style="font-size:1.15em; font-weight:700; color:#d32f2f; text-decoration:underline;">https://ya.ru/device</a>
+                    <a id="yandex_device_url_btn" href="https://ya.ru/device" target="_blank" class="stdbutton"
+                        style="text-decoration:none; padding:3px 8px; font-size:0.85em; background:#f0f0f0;">
+                        [% "PLUGIN_YANDEX_AUTH_DEVICE_OPEN_LINK" | string %] &nearr;
+                    </a>
+                </div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+                <div style="font-weight:600; margin-bottom:3px; color:#444;">[% "PLUGIN_YANDEX_AUTH_DEVICE_STEP2" | string %]</div>
+                <div style="font-size:0.88em; color:#666; line-height:1.35;">
+                    [% "PLUGIN_YANDEX_AUTH_DEVICE_STEP2_DESC" | string %]
+                </div>
+            </div>
+
+            <div>
+                <div style="font-weight:600; margin-bottom:5px; color:#444;">[% "PLUGIN_YANDEX_AUTH_DEVICE_STEP3" | string %]</div>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <div id="yandex_device_code"
+                        style="font-family:monospace, Courier; font-size:1.8em; font-weight:800; letter-spacing:4px; padding:6px 14px; background:#fff; border:2px dashed #f57c00; border-radius:8px; color:#1a1a1a; user-select:all; cursor:pointer;"
+                        title="Click to copy">
+                        --------
+                    </div>
+                    <button type="button" id="yandex_copy_code_btn" class="stdbutton" style="padding:5px 12px; font-size:0.9em;">
+                        [% "PLUGIN_YANDEX_AUTH_DEVICE_COPY" | string %]
+                    </button>
+                    <span id="yandex_copied_notice" style="display:none; color:#2e7d32; font-weight:600; font-size:0.9em;">
+                        [% "PLUGIN_YANDEX_AUTH_DEVICE_COPIED" | string %]
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Waiting spinner / status -->
+        <div id="yandex_device_waiting" style="display:flex; align-items:center; gap:10px; padding:10px; background:#fff; border-radius:6px; border:1px solid #e0e0e0; margin-bottom:14px;">
+            <div class="yandex-pulse-dot" style="width:12px; height:12px; border-radius:50%; background:#f57c00;"></div>
+            <span id="yandex_device_status_text" style="font-size:0.9em; color:#555;">
+                [% "PLUGIN_YANDEX_AUTH_DEVICE_WAITING" | string %]
+            </span>
+        </div>
+
+        <div>
+            <button type="button" id="yandex_device_cancel_btn" class="stdbutton" style="color:#666;">
+                [% "PLUGIN_YANDEX_AUTH_DEVICE_CANCEL" | string %]
+            </button>
         </div>
     </div>
-</div>
-<script type="text/javascript">
-    (function () {
-        var callbackUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
 
-        // Bookmarklet generation
+    <!-- Success state -->
+    <div id="yandex_device_success" style="display:none; max-width:540px; border:1px solid #4caf50; background:#e8f5e9; border-radius:8px; padding:15px; margin-top:10px; color:#1b5e20;">
+        <b style="font-size:1.05em;">✓ [% "PLUGIN_YANDEX_AUTH_DEVICE_SUCCESS" | string %]</b>
+        <p id="yandex_device_user_info" style="margin:8px 0; font-weight:600;"></p>
+        <p style="margin:0; font-size:0.85em; color:#388e3c;">[% "PLUGIN_YANDEX_AUTH_DEVICE_RELOADING" | string %]</p>
+    </div>
+
+    <!-- Error / Expired state -->
+    <div id="yandex_device_error" style="display:none; max-width:540px; border:1px solid #f44336; background:#ffebee; border-radius:8px; padding:15px; margin-top:10px; color:#c62828;">
+        <b id="yandex_device_error_title">[% "PLUGIN_YANDEX_AUTH_FAILED" | string %]</b>
+        <p id="yandex_device_error_msg" style="margin:8px 0; font-size:0.9em;"></p>
+        <button type="button" id="yandex_device_retry_btn" class="stdbutton" style="margin-top:5px; font-weight:600;">
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_RETRY" | string %]
+        </button>
+        <button type="button" id="yandex_device_error_close_btn" class="stdbutton" style="margin-top:5px; margin-left:8px;">
+            [% "PLUGIN_YANDEX_AUTH_DEVICE_CANCEL" | string %]
+        </button>
+    </div>
+</div>
+<style type="text/css">
+@keyframes yandexPulse {
+    0% { transform: scale(0.95); opacity: 0.6; }
+    50% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(0.95); opacity: 0.6; }
+}
+.yandex-pulse-dot {
+    animation: yandexPulse 1.5s infinite ease-in-out;
+}
+</style>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_AUTH_FALLBACK_TITLE" desc="PLUGIN_YANDEX_AUTH_FALLBACK_DESC" %]
+<div class="prefDesc">
+    <details style="border: 1px solid #ddd; border-radius: 8px; padding: 10px 14px; background: #fafafa; max-width:680px;">
+        <summary style="cursor: pointer; font-weight: 600; color: #444; padding: 4px 0;">
+            [% "PLUGIN_YANDEX_AUTH_FALLBACK_TOGGLE" | string %]
+        </summary>
+        <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
+            <p><b>[% "PLUGIN_YANDEX_ADD_ACCOUNT" | string %]</b></p>
+            <p style="font-size:0.9em; color:#666;">[% "PLUGIN_YANDEX_ADD_ACCOUNT_DESC" | string %]</p>
+            <input type="password" name="new_account_token" id="new_account_token" value="" class="stdedit"
+                placeholder="[% 'PLUGIN_YANDEX_TOKEN_PLACEHOLDER' | string %]" style="width:340px;">
+
+            <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                <p><b>[% "PLUGIN_YANDEX_AUTH_BROWSER" | string %]</b></p>
+                <p style="font-size: 0.9em; color: #666;">[% "PLUGIN_YANDEX_AUTH_BROWSER_DESC" | string %]</p>
+                <a href="https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d"
+                    target="_blank" class="stdbutton"
+                    style="text-decoration:none; display:inline-block; padding:5px 15px; margin-bottom:10px;">
+                    [% "PLUGIN_YANDEX_AUTH_LOGIN" | string %]
+                </a>
+                <br>
+                <a id="yandex_bookmarklet" href="#" class="stdbutton"
+                    style="text-decoration:none; display:inline-block; padding:5px 15px; background-color:#444; color:#fff;"
+                    onclick="alert('Drag this button to your bookmarks bar!'); return false;">
+                    Capture Token
+                </a>
+
+                <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 10px;">
+                    <p><b>[% "PLUGIN_YANDEX_AUTH_DRAG_DROP" | string %]</b></p>
+                    <p style="font-size: 0.9em; color: #666;">[% "PLUGIN_YANDEX_AUTH_DRAG_DROP_DESC" | string %]</p>
+                    <div id="yandex_drop_zone"
+                        style="border: 2px dashed #ccc; border-radius: 8px; padding: 20px; text-align: center; color: #999; cursor: pointer; background-color: #fff; transition: all 0.3s ease;">
+                        [% "PLUGIN_YANDEX_AUTH_DRAG_ZONE" | string %]
+                    </div>
+                </div>
+            </div>
+        </div>
+    </details>
+</div>
+
+<script type="text/javascript">
+[% PROCESS plugins/yandex/settings/qrcode.min.js %]
+</script>
+<script type="text/javascript">
+(function () {
+    var callbackUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+
+    // -------------------------------------------------------------------------
+    // OAuth Device Flow JavaScript
+    // -------------------------------------------------------------------------
+    var initBox    = document.getElementById('yandex_device_init');
+    var flowBox    = document.getElementById('yandex_device_flow');
+    var successBox = document.getElementById('yandex_device_success');
+    var errorBox   = document.getElementById('yandex_device_error');
+
+    var startBtn   = document.getElementById('yandex_device_start_btn');
+    var cancelBtn  = document.getElementById('yandex_device_cancel_btn');
+    var retryBtn   = document.getElementById('yandex_device_retry_btn');
+    var closeErrBtn= document.getElementById('yandex_device_error_close_btn');
+    var copyBtn    = document.getElementById('yandex_copy_code_btn');
+
+    var codeEl     = document.getElementById('yandex_device_code');
+    var urlEl      = document.getElementById('yandex_device_url');
+    var urlBtn     = document.getElementById('yandex_device_url_btn');
+    var timerEl    = document.getElementById('yandex_device_timer');
+    var copiedNote = document.getElementById('yandex_copied_notice');
+    var userInfoEl = document.getElementById('yandex_device_user_info');
+    var errMsgEl   = document.getElementById('yandex_device_error_msg');
+
+    var activeDeviceCode = null;
+    var pollIntervalId   = null;
+    var timerIntervalId  = null;
+    var secondsRemaining = 0;
+
+    function resetDeviceUI() {
+        if (pollIntervalId)  { clearInterval(pollIntervalId); pollIntervalId = null; }
+        if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+        activeDeviceCode = null;
+
+        if (initBox)    initBox.style.display    = 'block';
+        if (flowBox)    flowBox.style.display    = 'none';
+        if (successBox) successBox.style.display = 'none';
+        if (errorBox)   errorBox.style.display   = 'none';
+
+        if (startBtn) {
+            startBtn.disabled = false;
+            startBtn.style.opacity = '1';
+        }
+    }
+
+    function showDeviceError(msg) {
+        if (pollIntervalId)  { clearInterval(pollIntervalId); pollIntervalId = null; }
+        if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+
+        if (initBox)    initBox.style.display    = 'none';
+        if (flowBox)    flowBox.style.display    = 'none';
+        if (successBox) successBox.style.display = 'none';
+        if (errorBox) {
+            errorBox.style.display = 'block';
+            if (errMsgEl) errMsgEl.textContent = msg || 'An error occurred during device authorization.';
+        }
+    }
+
+    function startTimer(seconds) {
+        if (timerIntervalId) clearInterval(timerIntervalId);
+        secondsRemaining = seconds;
+
+        function updateDisplay() {
+            var m = Math.floor(secondsRemaining / 60);
+            var s = secondsRemaining % 60;
+            if (timerEl) {
+                timerEl.textContent = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+            }
+            if (secondsRemaining <= 0) {
+                clearInterval(timerIntervalId);
+                timerIntervalId = null;
+                showDeviceError('[% "PLUGIN_YANDEX_AUTH_DEVICE_EXPIRED" | string %]');
+            }
+            secondsRemaining--;
+        }
+
+        updateDisplay();
+        timerIntervalId = setInterval(updateDisplay, 1000);
+    }
+
+    function getCsrfParam() {
+        var el = document.querySelector('input[name="pageAntiCSRFToken"]');
+        return (el && el.value) ? '&pageAntiCSRFToken=' + encodeURIComponent(el.value) : '';
+    }
+
+    var ajaxHeaders = {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+    };
+
+    function startDeviceFlow() {
+        resetDeviceUI();
+        cancelQrFlow();
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.style.opacity = '0.6';
+        }
+
+        var reqUrl = callbackUrl + '?device_action=start&rand=' + Math.random() + getCsrfParam();
+        fetch(reqUrl, { credentials: 'same-origin', headers: ajaxHeaders })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data || !data.success) {
+                    showDeviceError((data && data.error) ? data.error : 'Failed to start device flow');
+                    return;
+                }
+
+                activeDeviceCode = data.device_code;
+                var userCode = data.user_code;
+                var verifUrl = data.verification_url || 'https://ya.ru/device';
+                var interval = (data.interval || 5) * 1000;
+                var expiresIn = data.expires_in || 300;
+
+                if (codeEl) codeEl.textContent = userCode;
+                if (urlEl) {
+                    urlEl.textContent = verifUrl;
+                    urlEl.setAttribute('href', verifUrl);
+                }
+                if (urlBtn) {
+                    urlBtn.setAttribute('href', verifUrl);
+                }
+
+                if (initBox) initBox.style.display = 'none';
+                if (flowBox) flowBox.style.display = 'block';
+
+                startTimer(expiresIn);
+                startPolling(activeDeviceCode, interval);
+            })
+            .catch(function (err) {
+                showDeviceError('Network error starting device flow: ' + err);
+            });
+    }
+
+    function cancelDeviceFlow() {
+        if (activeDeviceCode) {
+            var cancelUrl = callbackUrl + '?device_action=cancel&device_code=' + encodeURIComponent(activeDeviceCode) + '&rand=' + Math.random() + getCsrfParam();
+            fetch(cancelUrl, { credentials: 'same-origin', headers: ajaxHeaders }).catch(function () {});
+        }
+        resetDeviceUI();
+    }
+
+    function startPolling(deviceCode, intervalMs) {
+        if (pollIntervalId) clearInterval(pollIntervalId);
+
+        pollIntervalId = setInterval(function () {
+            if (!activeDeviceCode || activeDeviceCode !== deviceCode) {
+                clearInterval(pollIntervalId);
+                pollIntervalId = null;
+                return;
+            }
+
+            var pollUrl = callbackUrl + '?device_action=poll&device_code=' + encodeURIComponent(deviceCode) + '&rand=' + Math.random() + getCsrfParam();
+            fetch(pollUrl, { credentials: 'same-origin', headers: ajaxHeaders })
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    if (!data) return;
+                    if (!activeDeviceCode || activeDeviceCode !== deviceCode) return;
+
+                    if (data.status === 'pending') {
+                        // Keep polling
+                        return;
+                    }
+
+                    if (data.status === 'ok') {
+                        // Success!
+                        clearInterval(pollIntervalId);
+                        pollIntervalId = null;
+                        if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+
+                        if (flowBox) flowBox.style.display = 'none';
+                        if (successBox) {
+                            successBox.style.display = 'block';
+                            if (userInfoEl) {
+                                userInfoEl.textContent = (data.name || 'Account') + (data.login ? ' (' + data.login + ')' : '');
+                            }
+                        }
+
+                        // Auto-refresh settings page to show updated accounts list
+                        setTimeout(function () {
+                            window.location.reload();
+                        }, 1500);
+                        return;
+                    }
+
+                    if (data.status === 'error') {
+                        showDeviceError(data.message || data.error || 'Device authorization failed');
+                    }
+                })
+                .catch(function (err) {
+                    // Transient network error on poll - do not kill loop immediately
+                    console.warn('Yandex Device Poll transient error:', err);
+                });
+        }, intervalMs);
+    }
+
+    function copyCodeToClipboard() {
+        var text = codeEl ? codeEl.textContent.trim() : '';
+        if (!text) return;
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(showCopiedNotice).catch(fallbackCopy);
+        } else {
+            fallbackCopy();
+        }
+
+        function fallbackCopy() {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                showCopiedNotice();
+            } catch (e) {
+                alert('Code: ' + text);
+            }
+            document.body.removeChild(ta);
+        }
+
+        function showCopiedNotice() {
+            if (copiedNote) {
+                copiedNote.style.display = 'inline';
+                setTimeout(function () { copiedNote.style.display = 'none'; }, 2000);
+            }
+        }
+    }
+
+    if (startBtn)    startBtn.addEventListener('click', startDeviceFlow);
+    if (retryBtn)    retryBtn.addEventListener('click', startDeviceFlow);
+    if (cancelBtn)   cancelBtn.addEventListener('click', cancelDeviceFlow);
+    if (closeErrBtn) closeErrBtn.addEventListener('click', resetDeviceUI);
+    if (copyBtn)     copyBtn.addEventListener('click', copyCodeToClipboard);
+    if (codeEl)      codeEl.addEventListener('click', copyCodeToClipboard);
+
+    // -------------------------------------------------------------------------
+    // Native Yandex Passport QR Flow JavaScript (METHOD_QR)
+    // -------------------------------------------------------------------------
+    var qrInitBox     = document.getElementById('yandex_qr_init');
+    var qrFlowBox     = document.getElementById('yandex_qr_flow');
+    var qrSuccessBox  = document.getElementById('yandex_qr_success');
+    var qrErrorBox    = document.getElementById('yandex_qr_error');
+
+    var qrStartBtn    = document.getElementById('yandex_qr_start_btn');
+    var qrCancelBtn   = document.getElementById('yandex_qr_cancel_btn');
+    var qrRetryBtn    = document.getElementById('yandex_qr_retry_btn');
+    var qrCloseErrBtn = document.getElementById('yandex_qr_error_close_btn');
+
+    var qrCodeBox     = document.getElementById('yandex_qr_code_box');
+    var qrTimerEl     = document.getElementById('yandex_qr_timer');
+    var qrUserInfoEl  = document.getElementById('yandex_qr_user_info');
+    var qrErrMsgEl    = document.getElementById('yandex_qr_error_msg');
+
+    var activeQrTrackId   = null;
+    var qrPollIntervalId  = null;
+    var qrTimerIntervalId = null;
+    var qrSecondsLeft     = 0;
+    var qrCodeInstance    = null;
+
+    function resetQrUI() {
+        if (qrPollIntervalId)  { clearInterval(qrPollIntervalId); qrPollIntervalId = null; }
+        if (qrTimerIntervalId) { clearInterval(qrTimerIntervalId); qrTimerIntervalId = null; }
+        activeQrTrackId = null;
+
+        if (qrInitBox)    qrInitBox.style.display    = 'block';
+        if (qrFlowBox)    qrFlowBox.style.display    = 'none';
+        if (qrSuccessBox) qrSuccessBox.style.display = 'none';
+        if (qrErrorBox)   qrErrorBox.style.display   = 'none';
+
+        if (qrStartBtn) {
+            qrStartBtn.disabled = false;
+            qrStartBtn.style.opacity = '1';
+        }
+    }
+
+    function showQrError(msg) {
+        if (qrPollIntervalId)  { clearInterval(qrPollIntervalId); qrPollIntervalId = null; }
+        if (qrTimerIntervalId) { clearInterval(qrTimerIntervalId); qrTimerIntervalId = null; }
+
+        if (qrInitBox)    qrInitBox.style.display    = 'none';
+        if (qrFlowBox)    qrFlowBox.style.display    = 'none';
+        if (qrSuccessBox) qrSuccessBox.style.display = 'none';
+        if (qrErrorBox) {
+            qrErrorBox.style.display = 'block';
+            if (qrErrMsgEl) qrErrMsgEl.textContent = msg || 'An error occurred during QR authorization.';
+        }
+    }
+
+    function startQrTimer(seconds) {
+        if (qrTimerIntervalId) clearInterval(qrTimerIntervalId);
+        qrSecondsLeft = seconds;
+
+        function updateQrTimerDisplay() {
+            var m = Math.floor(qrSecondsLeft / 60);
+            var s = qrSecondsLeft % 60;
+            if (qrTimerEl) {
+                qrTimerEl.textContent = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+            }
+            if (qrSecondsLeft <= 0) {
+                clearInterval(qrTimerIntervalId);
+                qrTimerIntervalId = null;
+                showQrError('[% "PLUGIN_YANDEX_AUTH_QR_EXPIRED" | string %]');
+            }
+            qrSecondsLeft--;
+        }
+
+        updateQrTimerDisplay();
+        qrTimerIntervalId = setInterval(updateQrTimerDisplay, 1000);
+    }
+
+    function renderQr(url) {
+        if (!qrCodeBox) return;
+        qrCodeBox.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+            qrCodeInstance = new QRCode(qrCodeBox, {
+                text: url,
+                width: 160,
+                height: 160,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M
+            });
+        } else {
+            qrCodeBox.innerHTML = '<a href="' + url + '" target="_blank" style="word-break:break-all; font-size:0.85em; color:#d32f2f;">' + url + '</a>';
+        }
+    }
+
+    function startQrFlow() {
+        resetQrUI();
+        // Also cancel/reset Device flow if active so flows do not conflict
+        cancelDeviceFlow();
+
+        if (qrStartBtn) {
+            qrStartBtn.disabled = true;
+            qrStartBtn.style.opacity = '0.6';
+        }
+
+        var reqUrl = callbackUrl + '?qr_action=start&rand=' + Math.random() + getCsrfParam();
+        fetch(reqUrl, { credentials: 'same-origin', headers: ajaxHeaders })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data || !data.success) {
+                    showQrError((data && data.error) ? data.error : 'Failed to start QR flow');
+                    return;
+                }
+
+                activeQrTrackId = data.track_id;
+                var qrUrl = data.qr_url;
+                var interval = (data.interval || 3) * 1000;
+                var expiresIn = data.expires_in || 300;
+
+                renderQr(qrUrl);
+
+                if (qrInitBox) qrInitBox.style.display = 'none';
+                if (qrFlowBox) qrFlowBox.style.display = 'block';
+
+                startQrTimer(expiresIn);
+                startQrPolling(activeQrTrackId, interval);
+            })
+            .catch(function (err) {
+                showQrError('Network error starting QR flow: ' + err);
+            });
+    }
+
+    function cancelQrFlow() {
+        if (activeQrTrackId) {
+            var cancelUrl = callbackUrl + '?qr_action=cancel&track_id=' + encodeURIComponent(activeQrTrackId) + '&rand=' + Math.random() + getCsrfParam();
+            fetch(cancelUrl, { credentials: 'same-origin', headers: ajaxHeaders }).catch(function () {});
+        }
+        resetQrUI();
+    }
+
+    function startQrPolling(trackId, intervalMs) {
+        if (qrPollIntervalId) clearInterval(qrPollIntervalId);
+
+        qrPollIntervalId = setInterval(function () {
+            if (!activeQrTrackId || activeQrTrackId !== trackId) {
+                clearInterval(qrPollIntervalId);
+                qrPollIntervalId = null;
+                return;
+            }
+
+            var pollUrl = callbackUrl + '?qr_action=poll&track_id=' + encodeURIComponent(trackId) + '&rand=' + Math.random() + getCsrfParam();
+            fetch(pollUrl, { credentials: 'same-origin', headers: ajaxHeaders })
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    if (!data) return;
+                    if (!activeQrTrackId || activeQrTrackId !== trackId) return;
+
+                    if (data.status === 'pending') {
+                        // User hasn't scanned yet, keep polling
+                        return;
+                    }
+
+                    if (data.status === 'ok') {
+                        // Success!
+                        clearInterval(qrPollIntervalId);
+                        qrPollIntervalId = null;
+                        if (qrTimerIntervalId) { clearInterval(qrTimerIntervalId); qrTimerIntervalId = null; }
+
+                        if (qrFlowBox) qrFlowBox.style.display = 'none';
+                        if (qrSuccessBox) {
+                            qrSuccessBox.style.display = 'block';
+                            if (qrUserInfoEl) {
+                                qrUserInfoEl.textContent = (data.name || 'Account') + (data.login ? ' (' + data.login + ')' : '');
+                            }
+                        }
+
+                        // Auto-refresh settings page to show updated accounts list
+                        setTimeout(function () {
+                            window.location.reload();
+                        }, 1500);
+                        return;
+                    }
+
+                    if (data.status === 'error') {
+                        showQrError(data.message || data.error || 'QR authorization failed');
+                    }
+                })
+                .catch(function (err) {
+                    console.warn('Yandex QR Poll transient error:', err);
+                });
+        }, intervalMs);
+    }
+
+    if (qrStartBtn)    qrStartBtn.addEventListener('click', startQrFlow);
+    if (qrRetryBtn)    qrRetryBtn.addEventListener('click', startQrFlow);
+    if (qrCancelBtn)   qrCancelBtn.addEventListener('click', cancelQrFlow);
+    if (qrCloseErrBtn) qrCloseErrBtn.addEventListener('click', resetQrUI);
+
+    // -------------------------------------------------------------------------
+    // Fallback Methods: Bookmarklet & Drag-and-Drop
+    // -------------------------------------------------------------------------
+    var bookmarkletEl = document.getElementById('yandex_bookmarklet');
+    if (bookmarkletEl) {
         var jsCode = "javascript:(function(){" +
             "var hash = location.hash;" +
             "if (hash.includes('access_token=')) {" +
@@ -88,11 +718,11 @@
             "alert('Token not found in URL. Make sure you are on the result page.');" +
             "}" +
             "})();";
+        bookmarkletEl.setAttribute('href', jsCode);
+    }
 
-        document.getElementById('yandex_bookmarklet').setAttribute('href', jsCode);
-
-        // Drag and Drop logic
-        var zone = document.getElementById('yandex_drop_zone');
+    var zone = document.getElementById('yandex_drop_zone');
+    if (zone) {
         zone.addEventListener('dragover', function (e) {
             e.preventDefault();
             this.style.borderColor = '#00a000';
@@ -103,14 +733,14 @@
         zone.addEventListener('dragleave', function (e) {
             e.preventDefault();
             this.style.borderColor = '#ccc';
-            this.style.backgroundColor = '#fafafa';
+            this.style.backgroundColor = '#fff';
             this.style.color = '#999';
         });
 
         zone.addEventListener('drop', function (e) {
             e.preventDefault();
             this.style.borderColor = '#ccc';
-            this.style.backgroundColor = '#fafafa';
+            this.style.backgroundColor = '#fff';
 
             var text = e.dataTransfer.getData('text');
             if (text && text.indexOf('access_token=') !== -1) {
@@ -127,7 +757,8 @@
                 alert('No token found in the dropped content. Please drag the full URL of the result page.');
             }
         });
-    })();
+    }
+})();
 </script>
 [% END %]
 

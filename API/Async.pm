@@ -24,7 +24,25 @@ Stream resolution entry point: C<get_track_direct_url()>.
 use strict;
 use warnings;
 use URI;
-use JSON::XS::VersionOneAndTwo;
+BEGIN {
+    eval {
+        require JSON::XS::VersionOneAndTwo;
+        JSON::XS::VersionOneAndTwo->import;
+        1;
+    } || eval {
+        require JSON::PP;
+        JSON::PP->import(qw(encode_json decode_json to_json from_json));
+        1;
+    };
+    if (!defined &decode_json) {
+        require JSON::PP;
+        *decode_json = \&JSON::PP::decode_json;
+    }
+    if (!defined &encode_json) {
+        require JSON::PP;
+        *encode_json = \&JSON::PP::encode_json;
+    }
+}
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 use Slim::Networking::SimpleAsyncHTTP;

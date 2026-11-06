@@ -22,6 +22,7 @@ use base qw(Slim::Plugin::OPMLBased);
 
 use Plugins::yandex::ProtocolHandler;
 use Plugins::yandex::API::Async;
+use Plugins::yandex::API::Common;
 use Plugins::yandex::Browse;
 use Plugins::yandex::Browse::InfoMenu;
 use Slim::Player::ProtocolHandlers;
@@ -263,6 +264,56 @@ sub _init_api_client {
         sub {
             my $error = shift;
             $log->error("YANDEX: API init failed for userId=$userId: $error");
+
+            # Attempt silent token refresh if account has a refresh_token or x_token
+            if ($account->{refresh_token}) {
+                $log->info("YANDEX: Attempting silent token refresh for userId=$userId via refresh_token");
+                require Plugins::yandex::API::DeviceAuth;
+                Plugins::yandex::API::DeviceAuth->refresh_access_token(
+                    $account->{refresh_token},
+                    sub {
+                        my $res = shift;
+                        if ($res && $res->{access_token}) {
+                            $log->info("YANDEX: Token successfully refreshed for userId=$userId");
+                            my $accs = $prefs->get('accounts') || {};
+                            if ($accs->{$userId}) {
+                                $accs->{$userId}->{token} = $res->{access_token};
+                                $accs->{$userId}->{refresh_token} = $res->{refresh_token} if $res->{refresh_token};
+                                $prefs->set('accounts', $accs);
+                                delete $api_clients{$userId};
+                                _init_api_client($userId);
+                            }
+                        }
+                    },
+                    sub {
+                        my $rerr = shift;
+                        $log->error("YANDEX: Silent token refresh failed for userId=$userId: $rerr");
+                    }
+                );
+            } elsif ($account->{x_token}) {
+                $log->info("YANDEX: Attempting silent token refresh for userId=$userId via x_token");
+                require Plugins::yandex::API::QRAuth;
+                Plugins::yandex::API::QRAuth->refresh_access_token(
+                    $account->{x_token},
+                    sub {
+                        my $res = shift;
+                        if ($res && $res->{access_token}) {
+                            $log->info("YANDEX: Token successfully refreshed for userId=$userId via x_token");
+                            my $accs = $prefs->get('accounts') || {};
+                            if ($accs->{$userId}) {
+                                $accs->{$userId}->{token} = $res->{access_token};
+                                $prefs->set('accounts', $accs);
+                                delete $api_clients{$userId};
+                                _init_api_client($userId);
+                            }
+                        }
+                    },
+                    sub {
+                        my $rerr = shift;
+                        $log->error("YANDEX: Silent token refresh via x_token failed for userId=$userId: $rerr");
+                    }
+                );
+            }
         }
     );
 }
@@ -371,8 +422,8 @@ sub _handleRotorFeedback {
 
     if ($action eq 'trackStarted') {
         my $song = $client->playingSong();
-        return unless $song;
-        my $url = $song->track()->url;
+        return unless $song && $song->track();
+        my $url = $song->track()->url();
 
         if ($url && $url =~ /rotor_session=([^&]+)/) {
             my $radio_session_id = URI::Escape::uri_unescape($1);
@@ -381,8 +432,7 @@ sub _handleRotorFeedback {
 
             return unless $track_id;
 
-            require Plugins::yandex::ProtocolHandler;
-            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
+            my $timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
 
             $log->info("YANDEX NEW ROTOR SESSION: Track started. batch: " . ($batch_id||'none') . ", track: $track_id");
             $yandex_client->rotor_session_feedback($radio_session_id, $batch_id, 'trackStarted', $track_id, 0, $timestamp, sub {}, sub {});
@@ -431,8 +481,7 @@ sub _handleRotorFeedback {
                 return;
             }
 
-            require Plugins::yandex::ProtocolHandler;
-            my $timestamp = Plugins::yandex::ProtocolHandler::_get_current_timestamp();
+            my $timestamp = Plugins::yandex::API::Common::get_iso_timestamp();
             $log->info("YANDEX ROTOR SESSION: Sending '$type' feedback. Played: $played_seconds s. batch: " . ($batch_id||'none') . ", track: $track_id");
             $yandex_client->rotor_session_feedback($station_or_session_id, $batch_id, $type, $track_id, $played_seconds, $timestamp, sub {}, sub {});
 

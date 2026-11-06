@@ -783,9 +783,129 @@ PLUGIN_YANDEX_ACCOUNT_NAME
 	EN	Account
 	RU	Аккаунт
 
+PLUGIN_YANDEX_AUTH_DEVICE
+	EN	Yandex Sign-in (Device Code)
+	RU	Вход через Яндекс (Код устройства)
+
+PLUGIN_YANDEX_AUTH_DEVICE_DESC
+	EN	Authorization via Device Code. Open the link on any device and enter the confirmation code.
+	RU	Авторизация по коду устройства. Откройте ссылку на любом устройстве и введите код подтверждения.
+
+PLUGIN_YANDEX_AUTH_DEVICE_START
+	EN	Sign in with Device Code
+	RU	Войти по коду устройства
+
+PLUGIN_YANDEX_AUTH_DEVICE_HINT
+	EN	Open ya.ru/device on your computer, phone or TV and enter code.
+	RU	Откройте ya.ru/device на компьютере, телефоне или ТВ и введите код.
+
+PLUGIN_YANDEX_AUTH_DEVICE_STEP1
+	EN	1. Open in a browser or on your phone:
+	RU	1. Откройте в браузере или на телефоне:
+
+PLUGIN_YANDEX_AUTH_DEVICE_STEP2
+	EN	2. Sign in to your Yandex account (if needed):
+	RU	2. Авторизуйтесь в Яндексе (при необходимости):
+
+PLUGIN_YANDEX_AUTH_DEVICE_STEP2_DESC
+	EN	If you are not logged in yet, sign in via the Yandex app or on the website.
+	RU	Если вы ещё не вошли, авторизуйтесь в приложении Яндекса или на сайте.
+
+PLUGIN_YANDEX_AUTH_DEVICE_STEP3
+	EN	3. Enter this code:
+	RU	3. Введите этот код:
+
+PLUGIN_YANDEX_AUTH_DEVICE_OPEN_LINK
+	EN	Open ya.ru/device
+	RU	Открыть ya.ru/device
+
+PLUGIN_YANDEX_AUTH_DEVICE_COPY
+	EN	Copy Code
+	RU	Скопировать код
+
+PLUGIN_YANDEX_AUTH_DEVICE_COPIED
+	EN	Copied!
+	RU	Скопировано!
+
+PLUGIN_YANDEX_AUTH_DEVICE_WAITING
+	EN	Waiting for confirmation on Yandex...
+	RU	Ожидание подтверждения входа на Яндексе...
+
+PLUGIN_YANDEX_AUTH_DEVICE_EXPIRES
+	EN	Code expires in:
+	RU	Код действителен:
+
+PLUGIN_YANDEX_AUTH_DEVICE_EXPIRED
+	EN	The confirmation code has expired. Please try again.
+	RU	Время действия кода подтверждения истекло. Пожалуйста, попробуйте снова.
+
+PLUGIN_YANDEX_AUTH_DEVICE_CANCEL
+	EN	Cancel
+	RU	Отмена
+
+PLUGIN_YANDEX_AUTH_DEVICE_SUCCESS
+	EN	Authorization successful! Added account:
+	RU	Авторизация успешна! Добавлен аккаунт:
+
+PLUGIN_YANDEX_AUTH_DEVICE_RELOADING
+	EN	Refreshing settings...
+	RU	Обновление настроек...
+
+PLUGIN_YANDEX_AUTH_DEVICE_RETRY
+	EN	Try Again
+	RU	Попробовать снова
+
+PLUGIN_YANDEX_AUTH_QR
+	EN	Yandex Sign-in (QR Code)
+	RU	Вход по QR-коду Яндекса
+
+PLUGIN_YANDEX_AUTH_QR_DESC
+	EN	Instant login with your camera or Yandex app. Scan the dynamic QR code on screen.
+	RU	Быстрый вход камерой телефона или приложением Яндекса. Отсканируйте QR-код на экране.
+
+PLUGIN_YANDEX_AUTH_QR_START
+	EN	Log in with QR Code
+	RU	Войти по QR-коду
+
+PLUGIN_YANDEX_AUTH_QR_HINT
+	EN	Scan the dynamic QR code with your phone camera or Yandex app to confirm sign-in.
+	RU	Отсканируйте динамический QR-код камерой телефона или приложением Яндекса для подтверждения входа.
+
+PLUGIN_YANDEX_AUTH_QR_SCAN_HINT
+	EN	Point your phone's camera or Yandex app at the QR code and tap to confirm login.
+	RU	Наведите камеру смартфона или приложение Яндекса на QR-код и подтвердите вход.
+
+PLUGIN_YANDEX_AUTH_QR_WAITING
+	EN	Waiting for QR scan and confirmation...
+	RU	Ожидание сканирования и подтверждения...
+
+PLUGIN_YANDEX_AUTH_QR_EXPIRES
+	EN	QR expires in:
+	RU	QR-код действителен:
+
+PLUGIN_YANDEX_AUTH_QR_EXPIRED
+	EN	QR code has expired. Please try again.
+	RU	Время действия QR-кода истекло. Пожалуйста, попробуйте снова.
+
+PLUGIN_YANDEX_AUTH_QR_SUCCESS
+	EN	QR authorization successful! Added account:
+	RU	Вход по QR-коду успешен! Добавлен аккаунт:
+
+PLUGIN_YANDEX_AUTH_FALLBACK_TITLE
+	EN	Alternative Login Methods (Fallback)
+	RU	Резервные методы входа (Альтернативные)
+
+PLUGIN_YANDEX_AUTH_FALLBACK_DESC
+	EN	Use manual token entry or browser bookmarklet if Device Code authorization is unavailable.
+	RU	Используйте ручной ввод токена или закладку браузера, если авторизация по коду устройства недоступна.
+
+PLUGIN_YANDEX_AUTH_FALLBACK_TOGGLE
+	EN	Show fallback methods (Manual token / Browser bookmarklet)
+	RU	Показать резервные методы (Ручной ввод токена / Закладка браузера)
+
 PLUGIN_YANDEX_ADD_ACCOUNT
-	EN	Add Account
-	RU	Добавить аккаунт
+	EN	Add Account (Manual Token)
+	RU	Добавить аккаунт (Токен вручную)
 
 PLUGIN_YANDEX_ADD_ACCOUNT_DESC
 	EN	Enter an OAuth token to add another Yandex Music account.
