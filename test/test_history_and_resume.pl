@@ -1902,7 +1902,7 @@ use Plugins::yandex::ProtocolHandler;
                         id    => 99999999,
                         title => 'New Mobile Book',
                     },
-                    listeningDate => '2026-11-05T12:00:00Z', # Newer than local_time
+                    listeningDate => '2035-01-01T12:00:00Z', # Newer than local_time
                 }
             ]
         });

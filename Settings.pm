@@ -23,6 +23,28 @@ use Slim::Utils::Strings qw(string);
 use Slim::Utils::Prefs;
 use Slim::Utils::Log;
 
+use Scalar::Util qw(blessed);
+
+BEGIN {
+    eval {
+        require JSON::XS::VersionOneAndTwo;
+        JSON::XS::VersionOneAndTwo->import;
+        1;
+    } || eval {
+        require JSON::PP;
+        JSON::PP->import(qw(encode_json decode_json to_json from_json));
+        1;
+    };
+    if (!defined &decode_json) {
+        require JSON::PP;
+        *decode_json = \&JSON::PP::decode_json;
+    }
+    if (!defined &encode_json) {
+        require JSON::PP;
+        *encode_json = \&JSON::PP::encode_json;
+    }
+}
+
 my $log   = logger('plugin.yandex');
 my $prefs = preferences('plugin.yandex');
 
@@ -55,6 +77,380 @@ sub handler {
 		}
 	}
 
+	# -------------------------------------------------------------------------
+	# OAuth Device Flow AJAX endpoints (Primary authentication method)
+	# -------------------------------------------------------------------------
+	if ($params->{device_action}) {
+		my $action = $params->{device_action};
+
+		# 1. Start Device Flow: request user_code & verification_url
+		if ($action eq 'start') {
+			$log->info("Yandex Settings: Starting OAuth Device Flow");
+			require Plugins::yandex::API::DeviceAuth;
+
+			Plugins::yandex::API::DeviceAuth->request_device_code(
+				sub {
+					my $res = shift;
+					$log->info("Yandex Settings: Device code obtained: user_code=$res->{user_code}");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							success          => 1,
+							user_code        => $res->{user_code},
+							device_code      => $res->{device_code},
+							verification_url => $res->{verification_url} || 'https://ya.ru/device',
+							expires_in       => $res->{expires_in} || 300,
+							interval         => $res->{interval} || 5,
+						},
+						@args
+					);
+				},
+				sub {
+					my $err = shift;
+					$log->error("Yandex Settings: Failed to request device code: $err");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							success => 0,
+							error   => "$err",
+						},
+						@args
+					);
+				}
+			);
+			return;
+		}
+
+		# 2. Poll Device Flow: check if user confirmed on ya.ru/device
+		if ($action eq 'poll') {
+			my $device_code = $params->{device_code};
+			unless ($device_code) {
+				return _send_json_response(
+					$class, $client, $params, $callback,
+					{
+						status  => 'error',
+						error   => 'missing_device_code',
+						message => 'Missing device_code',
+					},
+					@args
+				);
+			}
+
+			require Plugins::yandex::API::DeviceAuth;
+			Plugins::yandex::API::DeviceAuth->poll_device_token(
+				$device_code,
+				sub {
+					my $poll_res = shift;
+
+					if ($poll_res->{status} eq 'pending') {
+						_send_json_response(
+							$class, $client, $params, $callback,
+							{
+								status => 'pending',
+							},
+							@args
+						);
+						return;
+					}
+
+					if ($poll_res->{status} eq 'ok') {
+						my $token = $poll_res->{access_token};
+						my $refreshToken = $poll_res->{refresh_token};
+
+						$log->info("Yandex Settings: Device token received, validating account...");
+
+						require Plugins::yandex::API::Async;
+						my $yandex_client = Plugins::yandex::API::Async->new($token);
+						$yandex_client->init(
+							sub {
+								my $client_instance = shift;
+								my $me     = $client_instance->{me} || {};
+								my $userId = $me->{uid};
+								my $name   = _format_full_name($me);
+
+								if ($userId) {
+									my $accounts = $prefs->get('accounts') || {};
+									$accounts->{$userId} = {
+										token         => $token,
+										refresh_token => $refreshToken || '',
+										login         => $me->{login} || '',
+										name          => $name || 'Account',
+										uid           => $userId,
+										auth_method   => 'device_code',
+									};
+									$prefs->set('accounts', $accounts);
+									$log->info("Yandex Settings: Account added via Device Flow: userId=$userId ($name)");
+									Plugins::yandex::Plugin::_remove_api_client($userId);
+									Plugins::yandex::Plugin::_init_api_client($userId);
+
+									_send_json_response(
+										$class, $client, $params, $callback,
+										{
+											status => 'ok',
+											userId => $userId,
+											login  => $me->{login} || '',
+											name   => $name,
+										},
+										@args
+									);
+								} else {
+									$log->error("Yandex Settings: Device Flow validation failed: no uid in account status");
+									_send_json_response(
+										$class, $client, $params, $callback,
+										{
+											status  => 'error',
+											message => 'Failed to obtain user ID from account status',
+										},
+										@args
+									);
+								}
+							},
+							sub {
+								my $err = shift;
+								$log->error("Yandex Settings: Device Flow token validation failed: $err");
+								_send_json_response(
+									$class, $client, $params, $callback,
+									{
+										status  => 'error',
+										message => "Token validation failed: $err",
+									},
+									@args
+								);
+							}
+						);
+						return;
+					}
+
+					# Error from Yandex OAuth (e.g. expired_token, access_denied)
+					$log->warn("Yandex Settings: Device Flow poll error: " . ($poll_res->{error} || ''));
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							status  => 'error',
+							error   => $poll_res->{error} || 'unknown',
+							message => $poll_res->{error_description} || $poll_res->{error} || 'Device authorization failed',
+						},
+						@args
+					);
+				},
+				sub {
+					my $err = shift;
+					$log->error("Yandex Settings: Device Flow polling network error: $err");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							status  => 'error',
+							message => "$err",
+						},
+						@args
+					);
+				}
+			);
+			return;
+		}
+
+		# 3. Cancel Device Flow
+		if ($action eq 'cancel') {
+			_send_json_response(
+				$class, $client, $params, $callback,
+				{
+					status => 'cancelled',
+				},
+				@args
+			);
+			return;
+		}
+	}
+
+	# -------------------------------------------------------------------------
+	# Native Yandex Passport QR Flow AJAX endpoints (METHOD_QR)
+	# -------------------------------------------------------------------------
+	if ($params->{qr_action}) {
+		my $action = $params->{qr_action};
+
+		# 1. Start QR Flow: obtain dynamic magic QR link
+		if ($action eq 'start') {
+			$log->info("Yandex Settings: Starting native Yandex Passport QR login flow");
+			require Plugins::yandex::API::QRAuth;
+
+			Plugins::yandex::API::QRAuth->start_qr_login(
+				sub {
+					my $res = shift;
+					$log->info("Yandex Settings: QR login session created, track_id=$res->{track_id}");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							success    => 1,
+							track_id   => $res->{track_id},
+							qr_url     => $res->{qr_url},
+							expires_in => $res->{expires_in} || 300,
+							interval   => $res->{interval} || 3,
+						},
+						@args
+					);
+				},
+				sub {
+					my $err = shift;
+					$log->error("Yandex Settings: Failed to start QR login: $err");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							success => 0,
+							error   => "$err",
+						},
+						@args
+					);
+				}
+			);
+			return;
+		}
+
+		# 2. Poll QR Flow: check if user confirmed via Yandex App
+		if ($action eq 'poll') {
+			my $track_id = $params->{track_id};
+			unless ($track_id) {
+				return _send_json_response(
+					$class, $client, $params, $callback,
+					{
+						status  => 'error',
+						error   => 'missing_track_id',
+						message => 'Missing track_id',
+					},
+					@args
+				);
+			}
+
+			require Plugins::yandex::API::QRAuth;
+			Plugins::yandex::API::QRAuth->poll_qr_token(
+				$track_id,
+				sub {
+					my $poll_res = shift;
+
+					if ($poll_res->{status} eq 'pending') {
+						_send_json_response(
+							$class, $client, $params, $callback,
+							{
+								status => 'pending',
+							},
+							@args
+						);
+						return;
+					}
+
+					if ($poll_res->{status} eq 'ok') {
+						my $token   = $poll_res->{access_token};
+						my $x_token = $poll_res->{x_token};
+
+						$log->info("Yandex Settings: QR login confirmed, validating account...");
+
+						require Plugins::yandex::API::Async;
+						my $yandex_client = Plugins::yandex::API::Async->new($token);
+						$yandex_client->init(
+							sub {
+								my $client_instance = shift;
+								my $me     = $client_instance->{me} || {};
+								my $userId = $me->{uid};
+								my $name   = _format_full_name($me);
+
+								if ($userId) {
+									my $accounts = $prefs->get('accounts') || {};
+									$accounts->{$userId} = {
+										token         => $token,
+										x_token       => $x_token || '',
+										refresh_token => '',
+										login         => $me->{login} || '',
+										name          => $name || 'Account',
+										uid           => $userId,
+										auth_method   => 'qr',
+									};
+									$prefs->set('accounts', $accounts);
+									$log->info("Yandex Settings: Account added via QR Flow: userId=$userId ($name)");
+									Plugins::yandex::Plugin::_remove_api_client($userId);
+									Plugins::yandex::Plugin::_init_api_client($userId);
+
+									_send_json_response(
+										$class, $client, $params, $callback,
+										{
+											status => 'ok',
+											userId => $userId,
+											login  => $me->{login} || '',
+											name   => $name,
+										},
+										@args
+									);
+								} else {
+									$log->error("Yandex Settings: QR Flow validation failed: no uid in account status");
+									_send_json_response(
+										$class, $client, $params, $callback,
+										{
+											status  => 'error',
+											message => 'Failed to obtain user ID from account status',
+										},
+										@args
+									);
+								}
+							},
+							sub {
+								my $err = shift;
+								$log->error("Yandex Settings: QR Flow token validation failed: $err");
+								_send_json_response(
+									$class, $client, $params, $callback,
+									{
+										status  => 'error',
+										message => "Token validation failed: $err",
+									},
+									@args
+								);
+							}
+						);
+						return;
+					}
+
+					$log->warn("Yandex Settings: QR Flow poll error: " . ($poll_res->{error} || ''));
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							status  => 'error',
+							error   => $poll_res->{error} || 'unknown',
+							message => $poll_res->{message} || $poll_res->{error} || 'QR authorization failed',
+						},
+						@args
+					);
+				},
+				sub {
+					my $err = shift;
+					$log->error("Yandex Settings: QR Flow polling network error: $err");
+					_send_json_response(
+						$class, $client, $params, $callback,
+						{
+							status  => 'error',
+							message => "$err",
+						},
+						@args
+					);
+				}
+			);
+			return;
+		}
+
+		# 3. Cancel QR Flow
+		if ($action eq 'cancel') {
+			my $track_id = $params->{track_id};
+			if ($track_id) {
+				require Plugins::yandex::API::QRAuth;
+				Plugins::yandex::API::QRAuth->cancel_qr_login($track_id);
+			}
+			_send_json_response(
+				$class, $client, $params, $callback,
+				{
+					status => 'cancelled',
+				},
+				@args
+			);
+			return;
+		}
+	}
+
 	# OAuth callback — token arrives via URL parameter (bookmarklet/drag-drop)
 	if ($params->{save_token}) {
 		my $token = $params->{token};
@@ -76,10 +472,12 @@ sub handler {
 							token => $token,
 							login => $me->{login} || '',
 							name  => $name || 'Account',
+							uid   => $userId,
 						};
 						$prefs->set('accounts', $accounts);
 						$log->info("Yandex Settings: Account added/updated: userId=$userId name=$name");
-						# Initialize API client for this account
+						# Re-initialize API client for this account
+						Plugins::yandex::Plugin::_remove_api_client($userId);
 						Plugins::yandex::Plugin::_init_api_client($userId);
 					}
 				},
@@ -139,9 +537,11 @@ sub handler {
 							token => $newToken,
 							login => $me->{login} || '',
 							name  => $name || 'Account',
+							uid   => $userId,
 						};
 						$prefs->set('accounts', $accounts);
 						$log->info("Yandex Settings: Account added: userId=$userId ($name)");
+						Plugins::yandex::Plugin::_remove_api_client($userId);
 						Plugins::yandex::Plugin::_init_api_client($userId);
 					}
 
@@ -205,10 +605,36 @@ sub _format_full_name {
 		if ($second && (!$display || index($display, $second) == -1)) {
 			$full .= ($full ? ' ' : '') . $second;
 		}
-		$name .= " ($full)";
+		$name .= ($name ? ' ' : '') . "($full)";
 	}
 
-	return $name;
+	return $name || $me->{fullName} || $me->{name} || 'Account';
+}
+
+sub _send_json_response {
+	my ($class, $client, $params, $callback, $data, @args) = @_;
+
+	my $json_str;
+	if (defined &encode_json) {
+		$json_str = eval { encode_json($data) };
+	}
+	if (!defined $json_str && eval { require JSON::PP; 1 }) {
+		$json_str = eval { JSON::PP::encode_json($data) };
+	}
+	if (!defined $json_str) {
+		$json_str = '{"status":"error","message":"JSON encode error"}';
+	}
+
+	# In Slim::Web::HTTP, $args[1] is the HTTP::Response object
+	if ($args[1] && blessed($args[1]) && $args[1]->can('content_type')) {
+		$args[1]->content_type('application/json; charset=utf-8');
+	}
+
+	if ($callback) {
+		$callback->($client, $params, \$json_str, @args);
+		return;
+	}
+	return \$json_str;
 }
 
 1;
