@@ -1,1 +1,0 @@
-{"msg":{"error":{"grpc_code":14,"details":{"ynison-go-away-for-seconds":"3600","ynison-error-code":"500140000"},"message":"Ynison service is temporary unavailable.","http_status":"Service Unavailable","http_code":503}},"num":1,"ts":"13:45:04.471"}
