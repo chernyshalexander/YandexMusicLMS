@@ -102,4 +102,29 @@ sub get_iso_timestamp {
     return sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", $year + 1900, $mon + 1, $mday, $hour, $min, $s_part, $millis);
 }
 
+use constant VALID_QUALITIES => {
+    efficient => 1,
+    balanced  => 1,
+    high      => 1,
+    superb    => 1,
+};
+
+# Normalize quality setting (including legacy bitrate values) to one of:
+# efficient | balanced | high | superb. Defaults to 'high'.
+sub normalize_quality {
+    my ($val) = @_;
+    return 'high' unless defined $val;
+
+    my $norm = lc($val);
+    $norm =~ s/^\s+|\s+$//g;
+
+    return $norm if VALID_QUALITIES->{$norm};
+    return 'efficient' if $norm eq '64';
+    return 'balanced'  if $norm eq '128' || $norm eq '192';
+    return 'high'      if $norm eq '320';
+    return 'superb'    if $norm eq 'flac' || $norm eq 'lossless';
+
+    return 'high';
+}
+
 1;

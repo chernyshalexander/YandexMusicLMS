@@ -126,6 +126,22 @@ PLUGIN_YANDEX_MAX_BITRATE_DESC
 	EN	Select the maximum allowed quality for streaming tracks.
 	RU	Выберите максимальное качество для стриминга.
 
+PLUGIN_YANDEX_QUALITY_EFFICIENT
+	EN	Efficient
+	RU	Экономичное
+
+PLUGIN_YANDEX_QUALITY_BALANCED
+	EN	Balanced
+	RU	Оптимальное
+
+PLUGIN_YANDEX_QUALITY_HIGH
+	EN	High
+	RU	Высокое
+
+PLUGIN_YANDEX_QUALITY_SUPERB
+	EN	Superb
+	RU	Превосходное
+
 PLUGIN_YANDEX_SEARCH
 	EN	Search
 	RU	Поиск

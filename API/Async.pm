@@ -58,6 +58,25 @@ use constant LONG_TTL      => 86400;
 use constant HISTORY_TTL   => 300; # 5 minutes cache for listening history
 use constant BOOKSHELF_TTL => 180; # 3 minutes cache for bookshelf recently-played
 
+use constant QUALITY_FILE_INFO_PARAMS => {
+    superb => {
+        quality => 'lossless',
+        codecs  => 'flac-mp4,flac,aac-mp4,aac,he-aac,mp3,he-aac-mp4',
+    },
+    high => {
+        quality => 'lossless',
+        codecs  => 'mp3',
+    },
+    balanced => {
+        quality => 'nq',
+        codecs  => 'aac-mp4,aac,mp3,he-aac,he-aac-mp4',
+    },
+    efficient => {
+        quality => 'lq',
+        codecs  => 'he-aac-mp4,he-aac,aac,mp3',
+    },
+};
+
 # Cached result of Crypt::Rijndael availability check (undef = not yet tested).
 my $HAS_RIJNDAEL;
 
@@ -1017,35 +1036,63 @@ sub check_dependencies {
 # Resolve the direct CDN URL for a track via the /get-file-info endpoint.
 # This endpoint supports lossless codecs (flac, flac-mp4, aac-mp4) and returns
 # an AES-128 key when transport=encraw is used.
-#
-# Request signing: HMAC-SHA256 over "${ts}${trackId}lossless${codecs_nosep}encraw"
+# Request signing: HMAC-SHA256 over "${ts}${trackId}${fi_quality}${codecs_nosep}encraw"
 # with key 'p93jhgh689SBReK6ghtw62', base64-encoded, first 43 chars.
 # Source: https://github.com/MarshalX/yandex-music-api/issues/656
-#
-# Calls $cb->($url, $error, $codec, $bitrate_kbps, $aes_key_hex).
-sub get_track_file_info {
-    my ($self, $track_id, $cb) = @_;
+sub _build_file_info_request {
+    my ($track_id, $quality_profile, $ts, $codecs_override) = @_;
 
     require Digest::SHA;
     require MIME::Base64;
 
-    my $sign_key  = 'p93jhgh689SBReK6ghtw62';
-    my $codecs    = 'flac,flac-mp4,aac-mp4,aac,he-aac,mp3,he-aac-mp4';
+    $quality_profile = Plugins::yandex::API::Common::normalize_quality($quality_profile);
+    my $fi_params = QUALITY_FILE_INFO_PARAMS->{$quality_profile}
+                 || QUALITY_FILE_INFO_PARAMS->{high};
+    my $fi_quality = $fi_params->{quality};
 
-    my $ts            = int(time());
-    my $codecs_nosep  = $codecs;
-    $codecs_nosep     =~ s/,//g;
-    my $param_string  = "${ts}${track_id}lossless${codecs_nosep}encraw";
-    my $hmac_bytes    = Digest::SHA::hmac_sha256($param_string, $sign_key);
-    my $sign          = substr(MIME::Base64::encode_base64($hmac_bytes, ''), 0, 43);
+    my $codecs = $fi_params->{codecs};
+    if (defined $codecs_override && $codecs_override =~ /\S/) {
+        $codecs = $codecs_override;
+        $codecs =~ s/^\s+|\s+$//g;
+    }
+
+    $ts = defined $ts ? $ts : int(time());
+    my $sign_key     = 'p93jhgh689SBReK6ghtw62';
+    my $codecs_nosep = $codecs;
+    $codecs_nosep    =~ s/,//g;
+    my $param_string = "${ts}${track_id}${fi_quality}${codecs_nosep}encraw";
+    my $hmac_bytes   = Digest::SHA::hmac_sha256($param_string, $sign_key);
+    my $sign         = substr(MIME::Base64::encode_base64($hmac_bytes, ''), 0, 43);
 
     my $url = Plugins::yandex::API::Common::BASE_URL . '/get-file-info'
             . '?ts='         . $ts
             . '&trackId='    . $track_id
-            . '&quality=lossless'
+            . '&quality='    . uri_escape_utf8($fi_quality)
             . '&codecs='     . uri_escape_utf8($codecs)
             . '&transports=encraw'
             . '&sign='       . uri_escape_utf8($sign);
+
+    return {
+        url          => $url,
+        quality      => $fi_quality,
+        codecs       => $codecs,
+        sign         => $sign,
+        ts           => $ts,
+        param_string => $param_string,
+    };
+}
+
+# Calls $cb->($url, $error, $codec, $bitrate_kbps, $aes_key_hex).
+sub get_track_file_info {
+    my ($self, $track_id, $quality_profile, $cb) = @_;
+    if (ref $quality_profile eq 'CODE') {
+        $cb = $quality_profile;
+        $quality_profile = undef;
+    }
+
+    my $codecs_override = Slim::Utils::Prefs::preferences('plugin.yandex')->get('codecs');
+    my $req = _build_file_info_request($track_id, $quality_profile, undef, $codecs_override);
+    my $url = $req->{url};
 
     # Android client header works for encraw (Desktop returns 403)
     my %headers = %{$self->{default_headers}};
@@ -1102,65 +1149,131 @@ sub get_track_download_info {
 sub get_track_direct_url {
     my ($self, $track_id, $cb) = @_;
 
-    my $max_bitrate = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate') || 320;
+    my $raw_quality     = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate');
+    my $quality_profile = Plugins::yandex::API::Common::normalize_quality($raw_quality);
 
-    # For FLAC: use /get-file-info with encraw transport
-    if ($max_bitrate eq 'flac') {
-        $self->get_track_file_info($track_id, sub {
-            my ($url, $error, $codec, $bitrate_kbps, $aes_key) = @_;
-            unless ($url) {
-                $log->warn("YANDEX: get-file-info failed ($error), falling back to MP3");
-                $self->_get_track_mp3_url($track_id, 320, $cb);
+    # Use /get-file-info with encraw transport for all 4 quality categories
+    $self->get_track_file_info($track_id, $quality_profile, sub {
+        my ($url, $error, $codec, $bitrate_kbps, $aes_key) = @_;
+        unless ($url) {
+            $log->warn("YANDEX: get-file-info failed ($error), falling back to download-info (quality=$quality_profile)");
+            $self->_get_track_download_info_url($track_id, $quality_profile, $cb);
+            return;
+        }
+
+        $log->info("YANDEX: get-file-info OK quality=$quality_profile codec=$codec bitrate=$bitrate_kbps encrypted=" . ($aes_key ? 'yes' : 'no'));
+
+        # Fallback to /download-info if codec requires FFmpeg and it's missing
+        if ($codec =~ /-mp4$/) {
+            my $needs_fallback = 0;
+            my $demux = Slim::Utils::Prefs::preferences('plugin.yandex')->get('demux_backend') || 'ffmpeg';
+
+            # Both flac-mp4 and aac-mp4 are supported by the internal pure-Perl demuxer.
+            if ($demux eq 'ffmpeg' && !_find_ffmpeg()) {
+                $needs_fallback = 1;
+            }
+
+            if ($needs_fallback) {
+                $log->warn("YANDEX: Codec=$codec requires FFmpeg but it's missing, falling back to download-info (quality=$quality_profile)");
+                $self->_get_track_download_info_url($track_id, $quality_profile, $cb, { exclude_mp4 => 1 });
                 return;
             }
+        }
 
-            $log->info("YANDEX: get-file-info OK codec=$codec bitrate=$bitrate_kbps encrypted=" . ($aes_key ? 'yes' : 'no'));
+        my $bitrate = ($bitrate_kbps || 0) * 1000;
 
-            # Fallback to MP3 if codec requires FFmpeg and it's missing
-            if ($codec =~ /-mp4$/) {
-                my $needs_fallback = 0;
-                my $demux = Slim::Utils::Prefs::preferences('plugin.yandex')->get('demux_backend') || 'ffmpeg';
-                
-                # Both flac-mp4 and aac-mp4 are supported by the internal pure-Perl demuxer.
-                if ($demux eq 'ffmpeg' && !_find_ffmpeg()) {
-                    $needs_fallback = 1;
-                }
+        unless ($aes_key) {
+            # Unencrypted stream – use directly
+            $cb->($url, undef, $bitrate, $codec, undef);
+            return;
+        }
 
-                if ($needs_fallback) {
-                    $log->warn("YANDEX: High-quality codec=$codec requires FFmpeg but it's missing, falling back to MP3");
-                    $self->_get_track_mp3_url($track_id, 320, $cb);
-                    return;
-                }
-            }
-
-            my $bitrate = ($bitrate_kbps || 0) * 1000;
-
-            unless ($aes_key) {
-                # Unencrypted stream – use directly
-                $cb->($url, undef, $bitrate, $codec, undef);
-                return;
-            }
-
-            # Encrypted stream: AES backend is always available (Rijndael or internal pure-Perl)
-            my $backend = Slim::Utils::Prefs::preferences('plugin.yandex')->get('aes_backend') || 'auto';
-            $log->info("YANDEX FLAC: Streaming decryption for codec=$codec (aes_backend=$backend)");
-            $cb->($url, undef, $bitrate, $codec, $aes_key);
-        });
-        return;
-    }
-
-    $self->_get_track_mp3_url($track_id, $max_bitrate, $cb);
+        # Encrypted stream: AES backend is always available (Rijndael or internal pure-Perl)
+        my $backend = Slim::Utils::Prefs::preferences('plugin.yandex')->get('aes_backend') || 'auto';
+        $log->info("YANDEX: Streaming decryption for codec=$codec (aes_backend=$backend)");
+        $cb->($url, undef, $bitrate, $codec, $aes_key);
+    });
 }
 
-# Resolve a plain MP3 (or legacy FLAC) CDN URL via the /download-info endpoint.
+# Select best matching downloadInfo entry for fallback /tracks/{id}/download-info
+# (mirrors ma-provider-yandex-music _select_best_quality).
+sub _select_best_quality {
+    my ($download_infos, $preferred_quality, $opts) = @_;
+    return undef unless $download_infos && ref($download_infos) eq 'ARRAY' && @$download_infos;
+
+    my @candidates = @$download_infos;
+    if ($opts && $opts->{exclude_mp4}) {
+        my @non_mp4 = grep { !defined $_->{codec} || lc($_->{codec}) !~ /-mp4$/ } @candidates;
+        @candidates = @non_mp4 if @non_mp4;
+    }
+
+    my $preferred = Plugins::yandex::API::Common::normalize_quality($preferred_quality);
+    my @sorted_desc = sort { ($b->{bitrateInKbps} || 0) <=> ($a->{bitrateInKbps} || 0) } @candidates;
+
+    if ($preferred eq 'superb') {
+        for my $codec ('flac-mp4', 'flac') {
+            for my $info (@sorted_desc) {
+                return $info if defined $info->{codec} && lc($info->{codec}) eq $codec;
+            }
+        }
+        $log->warn("YANDEX: Superb quality (FLAC) requested but not available; using best available");
+        return $sorted_desc[0];
+    }
+
+    if ($preferred eq 'efficient') {
+        my $inf = 1e12;
+        my @sorted_asc = sort {
+            (($a->{bitrateInKbps} || $inf) <=> ($b->{bitrateInKbps} || $inf))
+        } @candidates;
+        for my $codec ('aac-mp4', 'aac', 'he-aac-mp4', 'he-aac', 'mp3') {
+            for my $info (@sorted_asc) {
+                return $info if defined $info->{codec} && lc($info->{codec}) eq $codec;
+            }
+        }
+        return $sorted_asc[0];
+    }
+
+    if ($preferred eq 'high') {
+        my @high_mp3 = grep {
+            defined $_->{codec} && lc($_->{codec}) eq 'mp3'
+            && $_->{bitrateInKbps} && $_->{bitrateInKbps} >= 256
+        } @sorted_desc;
+        return $high_mp3[0] if @high_mp3;
+
+        for my $info (@sorted_desc) {
+            return $info if defined $info->{codec} && lc($info->{codec}) eq 'mp3';
+        }
+        for my $info (@sorted_desc) {
+            return $info if defined $info->{codec} && lc($info->{codec}) ne 'flac' && lc($info->{codec}) ne 'flac-mp4';
+        }
+        return $sorted_desc[0];
+    }
+
+    # balanced
+    my @balanced = grep {
+        $_->{bitrateInKbps} && $_->{bitrateInKbps} >= 128 && $_->{bitrateInKbps} <= 256
+    } @sorted_desc;
+    if (@balanced) {
+        for my $codec ('aac-mp4', 'aac', 'he-aac-mp4', 'he-aac', 'mp3') {
+            for my $info (@balanced) {
+                return $info if defined $info->{codec} && lc($info->{codec}) eq $codec;
+            }
+        }
+        return $balanced[0];
+    }
+
+    return $sorted_desc[0];
+}
+
+# Resolve a fallback CDN URL via the /tracks/{id}/download-info endpoint.
 # Two-step process:
 #   1. GET /tracks/{id}/download-info → list of codec/bitrate entries with downloadInfoUrl
 #   2. GET downloadInfoUrl?format=json → JSON (or legacy XML) with {host, path, ts, s}
 #      Final URL: https://{host}/get-{codec}/{sign}/{ts}{path}
 #      where sign = MD5("XGRlBW9FXlekgbPrRHuSiA" + path[1:] + s)
 # The CDN may redirect; we do one HEAD to resolve any redirect before returning.
-sub _get_track_mp3_url {
-    my ($self, $track_id, $max_bitrate, $cb) = @_;
+sub _get_track_download_info_url {
+    my ($self, $track_id, $quality_profile, $cb, $opts) = @_;
 
     $self->get_track_download_info($track_id, sub {
         my ($info, $error) = @_;
@@ -1170,27 +1283,16 @@ sub _get_track_mp3_url {
             return;
         }
 
-        my $target_info;
-        my @sorted_info = sort { $b->{bitrateInKbps} <=> $a->{bitrateInKbps} }
-                          grep { $_->{codec} eq 'mp3' }
-                          @{$info->{result}};
-        foreach my $info_item (@sorted_info) {
-            if ($info_item->{bitrateInKbps} <= $max_bitrate) {
-                $target_info = $info_item;
-                last;
-            }
-        }
-        if (!$target_info && @sorted_info) {
-            $target_info = $sorted_info[-1];
-        }
+        my $target_info = _select_best_quality($info->{result}, $quality_profile, $opts);
 
         unless ($target_info && $target_info->{downloadInfoUrl}) {
-            $cb->(undef, "No suitable MP3 stream found");
+            $cb->(undef, "No suitable stream found in download-info");
             return;
         }
 
         my $codec = $target_info->{codec} || 'mp3';
-        my $dw_url = $target_info->{downloadInfoUrl} . '&format=json';
+        my $sep = ($target_info->{downloadInfoUrl} =~ /\?/) ? '&' : '?';
+        my $dw_url = $target_info->{downloadInfoUrl} . $sep . 'format=json';
 
         $self->get_raw(
             $dw_url,

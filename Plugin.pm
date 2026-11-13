@@ -65,7 +65,7 @@ sub initPlugin {
     $prefs->init({
         accounts => {},
         dontImportAccounts => {},
-        max_bitrate => 320,
+        max_bitrate => 'high',
         remove_duplicates => 1,
         show_chart => 0,
         show_new_releases => 0,
@@ -93,6 +93,9 @@ sub initPlugin {
     # Preserve compatibility with the old single-token preference by moving
     # that token into the new accounts structure.
     _migrate_legacy_token();
+
+    # Migrate legacy max_bitrate values (64/128/192/320/flac/lossless) to quality categories.
+    _migrate_legacy_quality();
 
     # Keep Ynison creation/cleanup in step with the enable_ynison preference.
     $prefs->setChange(\&_on_enable_ynison_change, 'enable_ynison');
@@ -217,6 +220,21 @@ sub _migrate_legacy_token {
     $log->info("YANDEX: Migrating legacy token to accounts hash");
     $accounts->{'migrating'} = { token => $token, name => 'Account', login => '' };
     $prefs->set('accounts', $accounts);
+}
+
+sub normalize_quality {
+    my ($val) = @_;
+    return Plugins::yandex::API::Common::normalize_quality($val);
+}
+
+# Migrate legacy max_bitrate values (64/128/192/320/flac/lossless) to quality categories.
+sub _migrate_legacy_quality {
+    my $raw_quality = $prefs->get('max_bitrate');
+    if (!defined $raw_quality || !Plugins::yandex::API::Common::VALID_QUALITIES->{$raw_quality}) {
+        my $migrated = normalize_quality($raw_quality);
+        $prefs->set('max_bitrate', $migrated);
+        $log->info("YANDEX: Migrated max_bitrate '" . (defined $raw_quality ? $raw_quality : 'undef') . "' -> '$migrated'");
+    }
 }
 
 # Initialize or refresh the Yandex API client for a specific account.
