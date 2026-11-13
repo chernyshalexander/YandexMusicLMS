@@ -176,9 +176,9 @@ sub cache_track_metadata {
         is_podcast => $is_podcast || $existing->{is_podcast} || 0,
         duration   => $duration_ms ? int($duration_ms / 1000) : ($existing->{duration} || 0),
         cover      => $icon,
-        bitrate    => $existing->{bitrate} || 192000,                        # keep real bitrate if available
         _complete  => 1,                                                     # mark as complete (full metadata)
     };
+    delete $meta->{bitrate} unless $meta->{bitrate};
 
     $cache->set('yandex_meta_' . $track_id, $meta, '90d');                 # 90 days 
 

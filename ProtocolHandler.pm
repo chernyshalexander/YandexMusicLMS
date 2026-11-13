@@ -33,6 +33,7 @@ encraw streams regardless of codec.
 use strict;
 use warnings;
 use Slim::Utils::Log;
+use Plugins::yandex::API::Common;
 use Slim::Utils::Cache;
 use Plugins::yandex::Browse;
 
@@ -85,8 +86,10 @@ sub new {
                 $content_type = 'audio/mp4';
             } elsif ($meta->{codec} eq 'flac') {
                 $content_type = 'audio/flac';
-            } elsif ($meta->{codec} =~ /^(?:aac|he-aac|mp3)$/) {
-                $content_type = 'audio/mpeg';  # AAC, HE-AAC, MP3 default
+            } elsif ($meta->{codec} =~ /^(?:aac|he-aac)$/) {
+                $content_type = 'audio/aac';
+            } elsif ($meta->{codec} eq 'mp3') {
+                $content_type = 'audio/mpeg';
             }
 
             # Determine the byte offset for resume/seek BEFORE the stream is
@@ -188,7 +191,7 @@ sub new {
          # Use original track URL (yandexmusic://...) to search in cache
          my $original_url = $song->currentTrack ? $song->currentTrack->url : $streamUrl;
          
-         if (!$duration && $original_url =~ /yandexmusic:\/\/(\d+)/) {
+         if (!$duration && $original_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
              my $track_id = $1;
              my $cache = Slim::Utils::Cache->new();
              my $meta = $cache->get('yandex_meta_' . $track_id);
@@ -550,9 +553,15 @@ sub _resolveStreamUrl {
                 $cached_meta->{bitrate} = $bitrate || 900000;
             } elsif ($bitrate) {
                 $cached_meta->{bitrate} = $bitrate;
+            } else {
+                delete $cached_meta->{bitrate};
             }
-            $cached_meta->{codec}   = $codec   if $codec;
-            $cached_meta->{aes_key} = $aes_key if $aes_key;
+            $cached_meta->{codec} = $codec if $codec;
+            if ($aes_key) {
+                $cached_meta->{aes_key} = $aes_key;
+            } else {
+                delete $cached_meta->{aes_key};
+            }
             # Codec and AES key are constants of the track (Deezer derives its
             # key from the track id forever, Tidal/Qobuz cache track meta for
             # 30-90 days) - keep them for a day instead of an hour. The CDN URL
@@ -564,21 +573,15 @@ sub _resolveStreamUrl {
             my $track_url = $song->track()->url();
             eval {
                 # Determine correct content_type and bitrate based on actual codec
-                my ($ct, $est_bitrate, $is_vbr);
-                if ($codec eq 'flac') {
-                    $ct          = 'flc';
+                my $ct = _content_type_for_codec($codec);
+                my ($est_bitrate, $is_vbr);
+                if ($codec eq 'flac' || $codec eq 'flac-mp4') {
                     $est_bitrate = $bitrate || 900000;
                     $is_vbr      = 1;
-                } elsif ($codec eq 'flac-mp4') {
-                    $ct          = 'flac-MP4';  # stored directly: not 'unk' → no typeFromPath fallback → shown as-is
-                    $est_bitrate = $bitrate || 900000;
-                    $is_vbr      = 1;
-                } elsif ($codec =~ /-mp4$/) {
-                    $ct          = 'aac-MP4';  # shown as-is, like flac-MP4
-                    $est_bitrate = $bitrate || 192000;  # already in bps
+                } elsif ($codec =~ /-mp4$/ || $codec =~ /^(?:aac|he-aac)$/) {
+                    $est_bitrate = $bitrate || 192000;
                     $is_vbr      = undef;
                 } else {
-                    $ct          = 'mp3';
                     $est_bitrate = $bitrate || 128000;
                     $is_vbr      = undef;
                 }
@@ -590,11 +593,11 @@ sub _resolveStreamUrl {
                         commit     => 1,
                         attributes => { CONTENT_TYPE => $ct },
                     });
-                    # RemoteTrack::updateOrCreate does NOT update Slim::Schema::contentTypeCache,
-                    # so we must clear the stale entry manually (e.g. 'mp3' from a previous play).
-                    # After clearing, the next contentType() call re-reads from the RemoteTrack
-                    # object (which now has $ct), and infoContentType() falls back to
-                    # getMetadataFor() when $ct eq 'unk' — returning our 'flac-MP4' string.
+                    my $track_obj = $song->track();
+                    if ($track_obj && $track_obj->can('content_type') && ($track_obj->content_type || '') ne $ct) {
+                        $track_obj->content_type($ct);
+                        $track_obj->update() if $track_obj->can('update');
+                    }
                     Slim::Schema->clearContentTypeCache($track_url);
                     Slim::Music::Info::setBitrate($track_url, $est_bitrate, $is_vbr);
                     $log->info("YANDEX: Set content_type=$ct bitrate=$est_bitrate vbr=" . ($is_vbr ? 1 : 0) . " for $codec track");
@@ -665,6 +668,11 @@ sub formatOverride {
                 $log->info("YANDEX: formatOverride -> flc for $url (plain flac)");
                 return 'flc';
             }
+            # Raw AAC / HE-AAC (ADTS): no container demux needed
+            if ($codec =~ /^(?:aac|he-aac)$/) {
+                $log->info("YANDEX: formatOverride -> aac for $url ($codec)");
+                return 'aac';
+            }
         }
     }
     return undef;
@@ -674,25 +682,63 @@ sub getFormatForURL {
     my ($class, $url) = @_;
     # Pre-demuxed FLAC temp file
     return 'flc' if $url =~ /^file:\/\//;
-    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+    if ($url && $url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
         my $cache = Slim::Utils::Cache->new();
         my $meta  = $cache->get('yandex_meta_' . $1);
         if ($meta && $meta->{codec}) {
-            # flac-mp4: internal demux → flc, ffmpeg demux → ymf
+            # flac-mp4: internal demux → flc, ffmpeg demux → flac-MP4 (formatOverride selects ymf)
             if ($meta->{codec} eq 'flac-mp4') {
                 return 'flc' if ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal';
-                return 'ymf';
+                return 'flac-MP4';
             }
-            # aac-mp4, he-aac-mp4: pure-Perl demux -> aac, ffmpeg transcoding -> yma
+            # aac-mp4, he-aac-mp4: pure-Perl demux -> aac, ffmpeg transcoding -> aac-MP4 (formatOverride selects yma)
             if ($meta->{codec} =~ /-mp4$/) {
                 return 'aac' if ($prefs->get('demux_backend') || 'ffmpeg') eq 'internal';
-                return 'yma';
+                return 'aac-MP4';
             }
             # plain FLAC: decrypted via _sysread()
             return 'flc' if $meta->{codec} eq 'flac';
+            # raw AAC / HE-AAC (ADTS)
+            return 'aac' if $meta->{codec} =~ /^(?:aac|he-aac)$/;
         }
     }
+    my $quality = Plugins::yandex::API::Common::normalize_quality($prefs->get('max_bitrate'));
+    return 'flc' if $quality eq 'superb';
+    return 'aac' if $quality eq 'balanced' || $quality eq 'efficient';
     return 'mp3';
+}
+
+sub _content_type_for_codec {
+    my ($codec) = @_;
+    return 'mp3' unless $codec;
+    return 'flc'      if $codec eq 'flac';
+    return 'flac-MP4' if $codec eq 'flac-mp4';
+    return 'aac-MP4'  if $codec =~ /-mp4$/;
+    return 'aac'      if $codec =~ /^(?:aac|he-aac)$/;
+    return 'mp3';
+}
+
+# HTTP::parseHeaders calls parseDirectHeaders and then Slim::Music::Info::setContentType($url, $contentType).
+# Yandex CDN often returns Content-Type: application/octet-stream for encraw streams, which causes
+# HTTP::parseDirectHeaders to default $contentType to 'mp3' and overwrite aac-MP4 / flac-MP4 / flc / aac.
+sub parseDirectHeaders {
+    my ($class, $client, $url, @headers) = @_;
+    my ($title, $bitrate, $metaint, $redir, $contentType, $length, $body)
+        = $class->SUPER::parseDirectHeaders($client, $url, @headers);
+
+    my $track_url = (ref($url) && eval { $url->can('url') }) ? $url->url : $url;
+    if ((!$track_url || $track_url !~ /yandexmusic:\/\/(?:track\/)?(\d+)/) && ref($class) && ${*$class}{'song'}) {
+        my $s = ${*$class}{'song'};
+        $track_url = $s->currentTrack->url if $s->can('currentTrack') && $s->currentTrack;
+    }
+    if ($track_url && $track_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
+        if ($meta && $meta->{codec}) {
+            $contentType = _content_type_for_codec($meta->{codec});
+        }
+    }
+
+    return ($title, $bitrate, $metaint, $redir, $contentType, $length, $body);
 }
 sub isRemote { 1 }
 sub isAudio { 1 }
@@ -701,15 +747,15 @@ sub getMetadataFor {
     my ($class, $client, $url) = @_;
 
     # Try to find in cache
-    if ($url =~ /yandexmusic:\/\/(\d+)/) {
+    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
         my $cached_meta = $cache->get('yandex_meta_' . $track_id);
         if ($cached_meta) {
             
-            my $bitrate    = $cached_meta->{bitrate} || 0;
-            my $codec      = $cached_meta->{codec} || '';
-            my $max_bitrate = $prefs->get('max_bitrate') || 320;
+            my $bitrate = $cached_meta->{bitrate} || 0;
+            my $codec   = $cached_meta->{codec} || '';
+            my $quality = Plugins::yandex::API::Common::normalize_quality($prefs->get('max_bitrate'));
 
             # Determine type: use actual codec if known, otherwise infer from quality setting
             my ($type, $display_type);
@@ -717,10 +763,12 @@ sub getMetadataFor {
                 $type = $display_type = 'flac-MP4';
             } elsif ($codec eq 'flac') {
                 $type = $display_type = 'flc';
-            } elsif (!$codec && $max_bitrate eq 'flac') {
+            } elsif (!$codec && $quality eq 'superb') {
                 $type = $display_type = 'flc';  # not yet resolved, but will be FLAC
             } elsif ($codec =~ /-mp4$/) {
                 $type = $display_type = 'aac-MP4';
+            } elsif ($codec =~ /^(?:aac|he-aac)$/ || (!$codec && ($quality eq 'balanced' || $quality eq 'efficient'))) {
+                $type = $display_type = 'aac';
             } else {
                 $type = $display_type = 'mp3';
             }
@@ -739,15 +787,23 @@ sub getMetadataFor {
             
             # If we have complete metadata (or not currently playing), return immediately without API request
             if ($cached_meta->{_complete} || !$is_playing_this) {
-                # Save values to LMS DB for correct seeking (canSeek) operation
+                # Save duration to LMS DB if not yet set or changed (for seeking / UI)
                 eval {
-                    Slim::Music::Info::setBitrate($url, $bitrate);
-                    Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
+                    if ($cached_meta->{duration}) {
+                        my $cur_dur = Slim::Music::Info->can('getDuration')
+                            ? Slim::Music::Info::getDuration($url)
+                            : undef;
+                        if (!$cur_dur || $cur_dur != $cached_meta->{duration}) {
+                            Slim::Music::Info::setDuration($url, $cached_meta->{duration});
+                        }
+                    }
 
-                    # Also update track objects if something is playing right now
-                    if ($is_playing_this) {
-                        $client->playingSong()->bitrate($bitrate);
-                        $client->playingSong()->duration($cached_meta->{duration}) if $cached_meta->{duration};
+                    # Also update playing song duration if missing or changed
+                    if ($is_playing_this && $cached_meta->{duration}) {
+                        my $song = $client->playingSong();
+                        if ($song && $song->can('duration') && (!$song->duration() || $song->duration() != $cached_meta->{duration})) {
+                            $song->duration($cached_meta->{duration});
+                        }
                     }
                 };
 
@@ -785,15 +841,27 @@ sub getMetadataFor {
             }
             
             # Determine type
-            my $display_type = ($codec eq 'flac-mp4') ? 'flac-MP4'
-                             : ($codec eq 'flac')     ? 'flc'
-                             : ($codec =~ /-mp4$/)    ? 'aac-MP4'
-                             :                          'mp3';
+            my $quality = Plugins::yandex::API::Common::normalize_quality($prefs->get('max_bitrate'));
+            my $display_type = ($codec eq 'flac-mp4')                                                    ? 'flac-MP4'
+                             : ($codec eq 'flac' || (!$codec && $quality eq 'superb'))                   ? 'flc'
+                             : ($codec =~ /-mp4$/)                                                       ? 'aac-MP4'
+                             : ($codec =~ /^(?:aac|he-aac)$/ || (!$codec && ($quality eq 'balanced' || $quality eq 'efficient'))) ? 'aac'
+                             :                                                                             'mp3';
 
             eval {
-                Slim::Music::Info::setBitrate($url, $bitrate);
-                Slim::Music::Info::setDuration($url, $cached_meta->{duration}) if $cached_meta->{duration};
+                if ($cached_meta->{duration}) {
+                    my $cur_dur = Slim::Music::Info->can('getDuration')
+                        ? Slim::Music::Info::getDuration($url)
+                        : undef;
+                    if (!$cur_dur || $cur_dur != $cached_meta->{duration}) {
+                        Slim::Music::Info::setDuration($url, $cached_meta->{duration});
+                    }
+                }
             };
+
+            my $bitrate_str = ($display_type =~ /flac|flc/)
+                ? (!$cached_meta->{bitrate} ? 'FLAC' : sprintf("~%.0fkbps FLAC", $bitrate / 1000))
+                : sprintf("%.0fkbps", $bitrate / 1000);
 
             return {
                 title    => $cached_meta->{title},
@@ -802,7 +870,7 @@ sub getMetadataFor {
                 duration => $cached_meta->{duration},
                 cover    => $cached_meta->{cover} || $default_icon,
                 icon     => $cached_meta->{cover} || $default_icon,
-                bitrate  => ($display_type =~ /flac|flc/) ? 'FLAC' : sprintf("%.0fkbps", $bitrate/1000),
+                bitrate  => $bitrate_str,
                 type     => $display_type,
             };
         }
@@ -852,7 +920,7 @@ sub getMetadataFor {
 sub getIcon {
     my ($class, $url) = @_;
     
-    if ($url =~ /yandexmusic:\/\/(\d+)/) {
+    if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
         my $track_id = $1;
         my $cache = Slim::Utils::Cache->new();
         if (my $cached_meta = $cache->get('yandex_meta_' . $track_id)) {

@@ -765,11 +765,10 @@
 [% WRAPPER setting title="PLUGIN_YANDEX_MAX_BITRATE" desc="PLUGIN_YANDEX_MAX_BITRATE_DESC" %]
 <div class="prefDesc">
     <select name="pref_max_bitrate" id="pref_max_bitrate" class="stdedit">
-        <option value="64" [% IF prefs.max_bitrate==64 %]selected[% END %]>64 kbps MP3</option>
-        <option value="128" [% IF prefs.max_bitrate==128 %]selected[% END %]>128 kbps MP3</option>
-        <option value="192" [% IF prefs.max_bitrate==192 %]selected[% END %]>192 kbps MP3</option>
-        <option value="320" [% IF prefs.max_bitrate==320 %]selected[% END %]>320 kbps MP3</option>
-        <option value="flac" [% IF prefs.max_bitrate == 'flac' %]selected[% END %]>FLAC (Lossless)/256 kbps AAC</option>
+        <option value="efficient" [% IF prefs.max_bitrate == 'efficient' %]selected[% END %]>[% "PLUGIN_YANDEX_QUALITY_EFFICIENT" | string %]</option>
+        <option value="balanced" [% IF prefs.max_bitrate == 'balanced' %]selected[% END %]>[% "PLUGIN_YANDEX_QUALITY_BALANCED" | string %]</option>
+        <option value="high" [% IF prefs.max_bitrate == 'high' || !prefs.max_bitrate %]selected[% END %]>[% "PLUGIN_YANDEX_QUALITY_HIGH" | string %]</option>
+        <option value="superb" [% IF prefs.max_bitrate == 'superb' %]selected[% END %]>[% "PLUGIN_YANDEX_QUALITY_SUPERB" | string %]</option>
     </select>
 </div>
 [% END %]
