@@ -773,6 +773,12 @@
 </div>
 [% END %]
 
+[% WRAPPER setting title="PLUGIN_YANDEX_USE_RAW_TRANSPORT" desc="PLUGIN_YANDEX_USE_RAW_TRANSPORT_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_use_raw_transport" id="pref_use_raw_transport" [% IF prefs.use_raw_transport %]checked[% END %]>
+</div>
+[% END %]
+
 
 [% WRAPPER setting title="PLUGIN_YANDEX_AES_BACKEND" desc="PLUGIN_YANDEX_AES_BACKEND_DESC" %]
 <div class="prefDesc">

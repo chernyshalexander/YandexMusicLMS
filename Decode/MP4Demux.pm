@@ -78,7 +78,10 @@ sub new {
         is_fmp4        => 0,
 
         # FLAC specific
-        flac_header    => undef,
+        flac_header     => undef,
+        # Length of the reconstructed fLaC header, kept even after flac_header
+        # is replaced by 'SENT' so resume/seek can preserve it.
+        flac_header_len => 0,
 
         # AAC specific
         aac_asc        => undef,
@@ -348,6 +351,7 @@ sub _parse_moov {
             my $meta_blocks = _extract_flac_metadata($data_ref, $stbl_off, $stbl_off + $stbl_size, \$err);
             if (defined $meta_blocks) {
                 $self->{flac_header} = "fLaC" . $meta_blocks;
+                $self->{flac_header_len} = length($self->{flac_header});
             }
         }
     } else {

@@ -58,7 +58,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation translitSearch max_bitrate remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection show_history show_resume_quick_item progress_save_interval search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play aes_backend demux_backend));
+    return ($prefs, qw(menuLocation translitSearch max_bitrate use_raw_transport remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection show_history show_resume_quick_item progress_save_interval search_podcasts search_waves enable_ynison ynison_debug show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play aes_backend demux_backend));
 }
 
 sub handler {
@@ -499,6 +499,7 @@ sub handler {
 	if ($params->{saveSettings}) {
 		# Handle checkbox values
 		$params->{pref_remove_duplicates}              ||= 0;
+		$params->{pref_use_raw_transport}              ||= 0;
 		$params->{pref_show_chart}                     ||= 0;
 		$params->{pref_show_new_releases}              ||= 0;
 		$params->{pref_show_new_playlists}             ||= 0;

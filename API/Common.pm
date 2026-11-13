@@ -23,6 +23,14 @@ Yandex Music API base URL: C<https://api.music.yandex.net>
 
 Spoofed Android client version for API access (required for C<encraw> lossless transport)
 
+=item B<DESKTOP_CLIENT_VERSION>
+
+Spoofed Desktop client header used locally for C<raw> (unencrypted) streaming
+
+=item B<DESKTOP_SIGN_KEY>
+
+HMAC key paired with C<DESKTOP_CLIENT_VERSION> for C<raw> stream requests
+
 =item B<USER_AGENT>
 
 User agent string for HTTP requests
@@ -44,6 +52,12 @@ use Time::HiRes qw(gettimeofday);
 use constant CLIENT_VERSION => '24023621';
 use constant USER_AGENT     => 'Yandex-Music-API';
 use constant BASE_URL       => 'https://api.music.yandex.net';
+
+# Desktop client credentials. Used ONLY locally for /get-file-info with
+# transports=raw; the global Android header must stay in place for rotor,
+# recommendations and other personal endpoints.
+use constant DESKTOP_CLIENT_VERSION => 'YandexMusicDesktopAppWindows/5.95.0';
+use constant DESKTOP_SIGN_KEY       => 'kzqU4XhfCaY6B6JTHODeq5';
 
 # Shared function to generate standard Yandex API headers
 sub get_default_headers {

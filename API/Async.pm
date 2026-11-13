@@ -12,10 +12,12 @@ Thin async HTTP wrapper around the Yandex Music API (api.music.yandex.net).
 All methods are non-blocking: they accept a success callback and an error
 callback, both called from the LMS event loop.
 
-Authentication uses OAuth tokens passed in the C<Authorization: OAuth> header
-with a spoofed C<X-Yandex-Music-Client: YandexMusicAndroid/...> header — the
-Android client identity is required to access the C<encraw> transport for
-lossless streams (the Desktop identity returns HTTP 403).
+Authentication uses OAuth tokens passed in the C<Authorization: OAuth> header.
+The default identity is the Android client. For C</get-file-info> the client
+first tries the Desktop identity with C<transports=raw> (unencrypted, no AES
+decryption in Perl) and automatically falls back to Android/C<encraw>. The
+Desktop header is applied only to that single request; all other API calls
+keep the Android identity.
 
 Stream resolution entry point: C<get_track_direct_url()>.
 
@@ -57,6 +59,9 @@ use constant SEARCH_TTL    => 3600;
 use constant LONG_TTL      => 86400;
 use constant HISTORY_TTL   => 300; # 5 minutes cache for listening history
 use constant BOOKSHELF_TTL => 180; # 3 minutes cache for bookshelf recently-played
+
+use constant ANDROID_SIGN_KEY    => 'p93jhgh689SBReK6ghtw62';
+use constant RAW_BLOCK_TTL       => 600; # seconds to skip raw after HTTP 401/403
 
 use constant QUALITY_FILE_INFO_PARAMS => {
     superb => {
@@ -1034,16 +1039,31 @@ sub check_dependencies {
 }
 
 # Resolve the direct CDN URL for a track via the /get-file-info endpoint.
-# This endpoint supports lossless codecs (flac, flac-mp4, aac-mp4) and returns
-# an AES-128 key when transport=encraw is used.
-# Request signing: HMAC-SHA256 over "${ts}${trackId}${fi_quality}${codecs_nosep}encraw"
-# with key 'p93jhgh689SBReK6ghtw62', base64-encoded, first 43 chars.
-# Source: https://github.com/MarshalX/yandex-music-api/issues/656
+# This endpoint supports lossless codecs (flac, flac-mp4, aac-mp4).
+#
+# Transport selection:
+#   raw    - Desktop client identity + unencrypted CDN stream (no AES key)
+#   encraw - Android client identity + AES-128-CTR encrypted stream
+#
+# Request signing: HMAC-SHA256 over
+# "${ts}${trackId}${fi_quality}${codecs_nosep}${transport}" with the sign key
+# belonging to the selected client, base64-encoded, first 43 chars.
 sub _build_file_info_request {
-    my ($track_id, $quality_profile, $ts, $codecs_override) = @_;
+    my ($track_id, $quality_profile, $ts, $codecs_override, $transport) = @_;
 
     require Digest::SHA;
     require MIME::Base64;
+
+    $transport = 'encraw' unless defined $transport && $transport =~ /^(?:raw|encraw)$/;
+
+    my ($sign_key, $client_header);
+    if ($transport eq 'raw') {
+        $sign_key      = Plugins::yandex::API::Common::DESKTOP_SIGN_KEY;
+        $client_header = Plugins::yandex::API::Common::DESKTOP_CLIENT_VERSION;
+    } else {
+        $sign_key      = ANDROID_SIGN_KEY;
+        $client_header = 'YandexMusicAndroid/' . Plugins::yandex::API::Common::CLIENT_VERSION;
+    }
 
     $quality_profile = Plugins::yandex::API::Common::normalize_quality($quality_profile);
     my $fi_params = QUALITY_FILE_INFO_PARAMS->{$quality_profile}
@@ -1057,10 +1077,9 @@ sub _build_file_info_request {
     }
 
     $ts = defined $ts ? $ts : int(time());
-    my $sign_key     = 'p93jhgh689SBReK6ghtw62';
     my $codecs_nosep = $codecs;
     $codecs_nosep    =~ s/,//g;
-    my $param_string = "${ts}${track_id}${fi_quality}${codecs_nosep}encraw";
+    my $param_string = "${ts}${track_id}${fi_quality}${codecs_nosep}${transport}";
     my $hmac_bytes   = Digest::SHA::hmac_sha256($param_string, $sign_key);
     my $sign         = substr(MIME::Base64::encode_base64($hmac_bytes, ''), 0, 43);
 
@@ -1069,20 +1088,130 @@ sub _build_file_info_request {
             . '&trackId='    . $track_id
             . '&quality='    . uri_escape_utf8($fi_quality)
             . '&codecs='     . uri_escape_utf8($codecs)
-            . '&transports=encraw'
+            . '&transports=' . uri_escape_utf8($transport)
             . '&sign='       . uri_escape_utf8($sign);
 
     return {
-        url          => $url,
-        quality      => $fi_quality,
-        codecs       => $codecs,
-        sign         => $sign,
-        ts           => $ts,
-        param_string => $param_string,
+        url           => $url,
+        quality       => $fi_quality,
+        codecs        => $codecs,
+        sign          => $sign,
+        ts            => $ts,
+        transport     => $transport,
+        client_header => $client_header,
+        sign_key      => $sign_key,
+        param_string  => $param_string,
     };
 }
 
-# Calls $cb->($url, $error, $codec, $bitrate_kbps, $aes_key_hex).
+# Build per-request headers. The Desktop identity is applied locally and only
+# for the raw transport; the shared default headers remain Android so rotor,
+# recommendations and personal API endpoints keep working.
+sub _file_info_headers {
+    my ($self, $transport) = @_;
+    my %headers = %{$self->{default_headers} || {}};
+    $headers{'X-Yandex-Music-Client'} = ($transport && $transport eq 'raw')
+        ? Plugins::yandex::API::Common::DESKTOP_CLIENT_VERSION
+        : 'YandexMusicAndroid/' . Plugins::yandex::API::Common::CLIENT_VERSION;
+    return \%headers;
+}
+
+# Perform one /get-file-info attempt with a fixed transport.
+# Calls $cb->($result, $error, $http_code, $request).
+sub _request_file_info_once {
+    my ($self, $track_id, $quality_profile, $transport, $codecs_override, $cb) = @_;
+
+    my $req = _build_file_info_request($track_id, $quality_profile, undef, $codecs_override, $transport);
+    my $headers = $self->_file_info_headers($transport);
+
+    my $http = Slim::Networking::SimpleAsyncHTTP->new(
+        sub {
+            my $http = shift;
+            my $code = ($http && $http->can('code')) ? $http->code : undef;
+            my $content = $http->content();
+            my $json = eval { decode_json($content) };
+
+            if ($@ || !$json || ref $json ne 'HASH' || !$json->{result}) {
+                my $err = "Invalid response from get-file-info";
+                if (ref $json eq 'HASH' && ref $json->{result} eq 'HASH' && $json->{result}{message}) {
+                    $err = $json->{result}{message};
+                }
+                $cb->(undef, $err, $code, $req);
+                return;
+            }
+
+            my $di = (ref $json->{result} eq 'HASH') ? $json->{result}{downloadInfo} : undef;
+            unless ($di && ($di->{url} || (ref $di->{urls} eq 'ARRAY' && @{$di->{urls}}))) {
+                $cb->(undef, "No downloadInfo in get-file-info response", $code, $req);
+                return;
+            }
+
+            $cb->({
+                di       => $di,
+                req      => $req,
+                track_id => $track_id,
+                http     => $http,
+            }, undef, $code, $req);
+        },
+        sub {
+            my ($http, $error, $response) = @_;
+            # SimpleAsyncHTTP::onError passes the HTTP response as the third
+            # argument and does not set $http->code on failures.
+            my $code;
+            if ($response && $response->can('code')) {
+                $code = $response->code;
+            } elsif ($http && $http->can('code')) {
+                $code = $http->code;
+            }
+            $cb->(undef, $error, $code, $req);
+        },
+        { headers => $headers },
+    );
+
+    $http->get($req->{url}, %$headers);
+}
+
+sub _quality_for_codec_bitrate {
+    my ($codec, $kbps) = @_;
+    return 'lossless' if defined $codec && $codec =~ /^flac/;
+    return 'hq' if $kbps && $kbps >= 256;
+    return 'nq';
+}
+
+# Convert a successful file-info response into the extended callback contract.
+sub _deliver_file_info {
+    my ($result, $requested_transport, $requested_quality, $cb) = @_;
+
+    my $di = $result->{di};
+
+    my $url = $di->{url};
+    if (!$url && ref $di->{urls} eq 'ARRAY' && @{$di->{urls}}) {
+        $url = $di->{urls}[0];
+    }
+
+    my @urls = ref $di->{urls} eq 'ARRAY' ? @{$di->{urls}} : ();
+    @urls = ($url) if !@urls && $url;
+
+    my $bitrate_kbps = $di->{bitrate} || 0;
+    my $info = {
+        quality             => $di->{quality} || $requested_quality,
+        real_id             => $di->{realId} || $di->{trackId} || $result->{track_id},
+        gain                => $di->{gain} ? 1 : 0,
+        transport           => $di->{transport} || $requested_transport,
+        urls                => \@urls,
+        requested_quality   => $requested_quality,
+        requested_transport => $requested_transport,
+        bitrate_source      => ($bitrate_kbps > 0 ? 'api' : undef),
+    };
+
+    # $di->{key} is a hex AES-128 key present only for encrypted streams.
+    # A raw request normally omits it; if present, decryption still applies.
+    $cb->($url, undef, $di->{codec} || 'mp3', $bitrate_kbps, $di->{key}, $info);
+}
+
+# Calls $cb->($url, $error, $codec, $bitrate_kbps, $aes_key_hex, $info).
+# Tries the Desktop/raw transport first when enabled, then retries once with
+# Android/encraw. If both fail, the caller falls back to /download-info.
 sub get_track_file_info {
     my ($self, $track_id, $quality_profile, $cb) = @_;
     if (ref $quality_profile eq 'CODE') {
@@ -1090,37 +1219,50 @@ sub get_track_file_info {
         $quality_profile = undef;
     }
 
-    my $codecs_override = Slim::Utils::Prefs::preferences('plugin.yandex')->get('codecs');
-    my $req = _build_file_info_request($track_id, $quality_profile, undef, $codecs_override);
-    my $url = $req->{url};
+    my $prefs = Slim::Utils::Prefs::preferences('plugin.yandex');
+    my $codecs_override = $prefs->get('codecs');
+    my $requested_quality = Plugins::yandex::API::Common::normalize_quality($quality_profile);
 
-    # Android client header works for encraw (Desktop returns 403)
-    my %headers = %{$self->{default_headers}};
+    my $use_raw = $prefs->get('use_raw_transport');
+    $use_raw = 1 unless defined $use_raw;
+    my $raw_blocked = $self->{raw_blocked_until} && $self->{raw_blocked_until} > time();
 
-    my $http = Slim::Networking::SimpleAsyncHTTP->new(
-        sub {
-            my $http = shift;
-            my $json = eval { decode_json($http->content()) };
-            if ($@ || !$json || !$json->{result}) {
-                $cb->(undef, "Invalid response from get-file-info");
+    my $try_encraw = sub {
+        my ($raw_error) = @_;
+        _request_file_info_once($self, $track_id, $requested_quality, 'encraw', $codecs_override, sub {
+            my ($result, $error) = @_;
+            if (!$result) {
+                my $msg = $raw_error
+                    ? "raw failed ($raw_error); encraw failed ($error)"
+                    : $error;
+                $cb->(undef, $msg);
                 return;
             }
-            my $di = $json->{result}{downloadInfo};
-            unless ($di && $di->{url}) {
-                $cb->(undef, "No downloadInfo in get-file-info response");
+            _deliver_file_info($result, 'encraw', $requested_quality, $cb);
+        });
+    };
+
+    if ($use_raw && !$raw_blocked) {
+        _request_file_info_once($self, $track_id, $requested_quality, 'raw', $codecs_override, sub {
+            my ($result, $error, $code) = @_;
+            if ($result) {
+                _deliver_file_info($result, 'raw', $requested_quality, $cb);
                 return;
             }
-            # $di->{key} is a hex AES-128 key present when transport=encraw
-            $cb->($di->{url}, undef, $di->{codec} || 'mp3', $di->{bitrate} || 0, $di->{key});
-        },
-        sub {
-            my ($http, $error) = @_;
-            $cb->(undef, $error);
-        },
-        { headers => \%headers },
-    );
 
-    $http->get($url, %headers);
+            if (defined $code && ($code == 401 || $code == 403)) {
+                $self->{raw_blocked_until} = time() + RAW_BLOCK_TTL;
+                $log->warn("YANDEX: raw transport blocked (HTTP $code); using encraw for " . RAW_BLOCK_TTL . "s");
+            } else {
+                $log->warn("YANDEX: raw transport failed ($error); retrying with encraw");
+            }
+            $try_encraw->($error);
+        });
+        return;
+    }
+
+    $log->info("YANDEX: raw transport disabled" . ($raw_blocked ? ' (temporary block)' : '') . "; using encraw");
+    $try_encraw->(undef);
 }
 
 sub get_track_download_info {
@@ -1152,16 +1294,24 @@ sub get_track_direct_url {
     my $raw_quality     = Slim::Utils::Prefs::preferences('plugin.yandex')->get('max_bitrate');
     my $quality_profile = Plugins::yandex::API::Common::normalize_quality($raw_quality);
 
-    # Use /get-file-info with encraw transport for all 4 quality categories
+    # Use /get-file-info for all 4 quality categories. The client tries raw
+    # first (Desktop identity), then encraw (Android identity).
     $self->get_track_file_info($track_id, $quality_profile, sub {
-        my ($url, $error, $codec, $bitrate_kbps, $aes_key) = @_;
+        my ($url, $error, $codec, $bitrate_kbps, $aes_key, $info) = @_;
+        $info ||= {};
         unless ($url) {
             $log->warn("YANDEX: get-file-info failed ($error), falling back to download-info (quality=$quality_profile)");
             $self->_get_track_download_info_url($track_id, $quality_profile, $cb);
             return;
         }
 
-        $log->info("YANDEX: get-file-info OK quality=$quality_profile codec=$codec bitrate=$bitrate_kbps encrypted=" . ($aes_key ? 'yes' : 'no'));
+        my $actual_quality = $info->{quality} || $quality_profile;
+        my $transport      = $info->{transport} || 'unknown';
+        my $real_id        = $info->{real_id} || $track_id;
+        my $gain           = $info->{gain} ? 1 : 0;
+        $log->info("YANDEX: get-file-info OK requested_quality=$quality_profile actual_quality=$actual_quality"
+            . " transport=$transport codec=$codec bitrate=$bitrate_kbps realId=$real_id gain=$gain"
+            . " encrypted=" . ($aes_key ? 'yes' : 'no'));
 
         # Fallback to /download-info if codec requires FFmpeg and it's missing
         if ($codec =~ /-mp4$/) {
@@ -1184,14 +1334,14 @@ sub get_track_direct_url {
 
         unless ($aes_key) {
             # Unencrypted stream – use directly
-            $cb->($url, undef, $bitrate, $codec, undef);
+            $cb->($url, undef, $bitrate, $codec, undef, $info);
             return;
         }
 
         # Encrypted stream: AES backend is always available (Rijndael or internal pure-Perl)
         my $backend = Slim::Utils::Prefs::preferences('plugin.yandex')->get('aes_backend') || 'auto';
         $log->info("YANDEX: Streaming decryption for codec=$codec (aes_backend=$backend)");
-        $cb->($url, undef, $bitrate, $codec, $aes_key);
+        $cb->($url, undef, $bitrate, $codec, $aes_key, $info);
     });
 }
 
@@ -1320,6 +1470,17 @@ sub _get_track_download_info_url {
                     ? 0
                     : ($target_info->{bitrateInKbps} || 0) * 1000;
 
+                my $stream_info = {
+                    quality             => _quality_for_codec_bitrate($codec, $target_info->{bitrateInKbps}),
+                    real_id             => $track_id,
+                    gain                => 0,
+                    transport           => 'download-info',
+                    urls                => [$initial_direct_url],
+                    requested_quality   => Plugins::yandex::API::Common::normalize_quality($quality_profile),
+                    requested_transport => 'download-info',
+                    bitrate_source      => (($target_info->{bitrateInKbps} || 0) > 0 ? 'api' : undef),
+                };
+
                 my $http_resolver = Slim::Networking::SimpleAsyncHTTP->new(
                     sub {
                         my $http = shift;
@@ -1333,15 +1494,16 @@ sub _get_track_download_info_url {
                                 $location = $http->params->{headers}->{'Location'};
                             }
                             if ($location) {
-                                $cb->($location, undef, $bitrate, $codec);
+                                $stream_info->{urls} = [$location];
+                                $cb->($location, undef, $bitrate, $codec, undef, $stream_info);
                                 return;
                             }
                         }
-                        $cb->($initial_direct_url, undef, $bitrate, $codec);
+                        $cb->($initial_direct_url, undef, $bitrate, $codec, undef, $stream_info);
                     },
                     sub {
                         my ($http, $error) = @_;
-                        $cb->($initial_direct_url, undef, $bitrate, $codec);
+                        $cb->($initial_direct_url, undef, $bitrate, $codec, undef, $stream_info);
                     },
                     { maxRedirects => 0, timeout => 10, }
                 );

@@ -16,7 +16,8 @@ Handles streaming of Yandex Music tracks to LMS players. The full pipeline:
                             file to a .buf temp file at max speed, avoiding Yandex CDN
                             connection resets that happen with slow per-bitrate reads
        ↓
-  new() / _sysread()      — intercepts every read to decrypt bytes via AES-CTR on the fly
+  new() / _sysread()      — raw transport: passes bytes through (or feeds MP4Demux);
+                            encraw: decrypts bytes via AES-CTR on the fly
        ↓
   [if codec is *-mp4]
   MP4Demux->process()     — strips the MP4 container, outputs raw FLAC or ADTS-AAC
@@ -149,7 +150,12 @@ sub new {
             # ftyp/moov from byte 0), while requestString() has already switched this
             # connection to a from-byte-0 fetch, so the internal demuxer is the only
             # way to reach the resume position.
-            if ($meta->{codec} && ($meta->{codec} eq 'flac-mp4' || $meta->{codec} =~ /-mp4$/) && ${*$sock}{yandex_cipher}) {
+            #
+            # Raw (unencrypted) streams have no cipher, but the internal demuxer is
+            # still required when demux_backend=internal or on resume. Do NOT gate
+            # this on yandex_cipher: raw+internal would otherwise send MP4 bytes to
+            # a player that formatOverride() told to expect raw FLAC/AAC.
+            if ($meta->{codec} && $meta->{codec} =~ /-mp4$/) {
                 my $demux_backend = $prefs->get('demux_backend') || 'ffmpeg';
                 if ($demux_skip || $demux_backend eq 'internal') {
                     if (!$demux_skip && $initial_offset > 0) {
@@ -416,14 +422,19 @@ sub getSeekData {
     my ($class, $client, $song, $newtime) = @_;
     return unless defined $newtime && $newtime >= 0;
 
-    my $bitrate = ($song && $song->can('bitrate')) ? $song->bitrate() : 0;
-    if (!$bitrate && $song) {
+    # Prefer the plugin cache for Yandex tracks: it holds the codec-specific
+    # estimate or the measured stream bitrate. Song::bitrate() falls back to
+    # the LMS DB, which may still contain a stale bitrate from a previous
+    # MP3/AAC resolution of the same track and would corrupt seek offsets.
+    my $bitrate = 0;
+    if ($song) {
         my $url = ($song->can('currentTrack') && $song->currentTrack) ? $song->currentTrack->url : '';
         if ($url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
             my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
-            $bitrate = $meta->{bitrate} if $meta;
+            $bitrate = $meta->{bitrate} if $meta && $meta->{bitrate};
         }
     }
+    $bitrate ||= ($song && $song->can('bitrate')) ? $song->bitrate() : 0;
     $bitrate ||= 900000;
 
     my $offset = int((($bitrate) / 8) * $newtime);
@@ -539,29 +550,72 @@ sub _resolveStreamUrl {
 
     # Request track stream URL directly using API.pm
     $yandex_client->get_track_direct_url($track_id, sub {
-        my ($final_url, $error, $bitrate, $codec, $aes_key) = @_;
+        my ($final_url, $error, $bitrate, $codec, $aes_key, $info) = @_;
+        $info ||= {};
 
         if ($final_url) {
-            $log->info("YANDEX: URL resolved codec=" . ($codec||'mp3') . " bitrate=" . ($bitrate||0) . " encrypted=" . ($aes_key ? 'yes' : 'no'));
+            $log->info("YANDEX: URL resolved codec=" . ($codec||'mp3')
+                . " bitrate=" . ($bitrate||0)
+                . " quality=" . ($info->{quality} || 'unknown')
+                . " transport=" . ($info->{transport} || 'unknown')
+                . " realId=" . ($info->{real_id} || $track_id)
+                . " gain=" . ($info->{gain} ? 1 : 0)
+                . " encrypted=" . ($aes_key ? 'yes' : 'no'));
 
-            # Save bitrate, codec and AES key to cache for use in new() / _sysread()
-            # Use existing entry if available (preserves title/artist/duration), otherwise create one.
+            # Save bitrate, codec, transport metadata and AES key to cache for
+            # new() / _sysread() / getMetadataFor(). Preserve existing title,
+            # artist, album, duration and cover fields.
             my $cache = Slim::Utils::Cache->new();
             my $cached_meta = $cache->get('yandex_meta_' . $track_id) || {};
-            # For FLAC codecs the API always returns bitrate=0 — store the estimate
+            my $prev_codec  = $cached_meta->{codec};
+
+            $cached_meta->{codec} = $codec if $codec;
+            if (defined $prev_codec && defined $codec && $prev_codec ne $codec) {
+                # A different codec means a different container/file size.
+                delete $cached_meta->{content_length};
+            }
+
+            # MP3/AAC: the API returns the real nominal bitrate. FLAC: the API
+            # always returns 0, so keep an estimate for seek math until
+            # parseDirectHeaders() computes the real average bitrate.
             if ($codec && $codec =~ /^flac/) {
-                $cached_meta->{bitrate} = $bitrate || 900000;
+                if ($bitrate && $bitrate > 0) {
+                    $cached_meta->{bitrate} = $bitrate;
+                    $cached_meta->{bitrate_source} = $info->{bitrate_source} || 'api';
+                } else {
+                    $cached_meta->{bitrate} = 900000;
+                    $cached_meta->{bitrate_source} = 'estimate';
+                }
             } elsif ($bitrate) {
                 $cached_meta->{bitrate} = $bitrate;
+                $cached_meta->{bitrate_source} = $info->{bitrate_source} || 'api';
             } else {
                 delete $cached_meta->{bitrate};
+                delete $cached_meta->{bitrate_source};
             }
-            $cached_meta->{codec} = $codec if $codec;
+
+            $cached_meta->{quality} = $info->{quality} if $info->{quality};
+            $cached_meta->{requested_quality} = $info->{requested_quality} if $info->{requested_quality};
+            $cached_meta->{real_id} = $info->{real_id} if $info->{real_id};
+            $cached_meta->{gain} = $info->{gain} ? 1 : 0 if exists $info->{gain};
+            $cached_meta->{transport} = $info->{transport} if $info->{transport};
+            $cached_meta->{requested_transport} = $info->{requested_transport} if $info->{requested_transport};
+
+            if (ref $info->{urls} eq 'ARRAY' && @{$info->{urls}}) {
+                my $last = $#{$info->{urls}} < 2 ? $#{$info->{urls}} : 2;
+                $cached_meta->{urls} = [ @{$info->{urls}}[0 .. $last] ];
+            } else {
+                delete $cached_meta->{urls};
+            }
+
             if ($aes_key) {
                 $cached_meta->{aes_key} = $aes_key;
             } else {
+                # Raw/direct streams have no key. Remove a stale key left by a
+                # previous encraw playback of the same track.
                 delete $cached_meta->{aes_key};
             }
+
             # Codec and AES key are constants of the track (Deezer derives its
             # key from the track id forever, Tidal/Qobuz cache track meta for
             # 30-90 days) - keep them for a day instead of an hour. The CDN URL
@@ -572,26 +626,19 @@ sub _resolveStreamUrl {
             # Explicitly set metadata in LMS DB for proper UI display
             my $track_url = $song->track()->url();
             eval {
-                # Determine correct content_type and bitrate based on actual codec
-                my $ct = _content_type_for_codec($codec);
-                my ($est_bitrate, $is_vbr);
-                if ($codec eq 'flac' || $codec eq 'flac-mp4') {
-                    $est_bitrate = $bitrate || 900000;
-                    $is_vbr      = 1;
-                } elsif ($codec =~ /-mp4$/ || $codec =~ /^(?:aac|he-aac)$/) {
-                    $est_bitrate = $bitrate || 192000;
-                    $is_vbr      = undef;
-                } else {
-                    $est_bitrate = $bitrate || 128000;
-                    $is_vbr      = undef;
-                }
+                my $ct          = _content_type_for_codec($codec);
+                my $is_lossless = ($codec && $codec =~ /^flac/) ? 1 : 0;
+                my $is_vbr      = $is_lossless ? 1 : undef;
 
                 if ($ct) {
                     Slim::Schema->updateOrCreate({
                         url        => $track_url,
                         readTags   => 0,
                         commit     => 1,
-                        attributes => { CONTENT_TYPE => $ct },
+                        attributes => {
+                            CONTENT_TYPE => $ct,
+                            LOSSLESS     => $is_lossless,
+                        },
                     });
                     my $track_obj = $song->track();
                     if ($track_obj && $track_obj->can('content_type') && ($track_obj->content_type || '') ne $ct) {
@@ -599,8 +646,24 @@ sub _resolveStreamUrl {
                         $track_obj->update() if $track_obj->can('update');
                     }
                     Slim::Schema->clearContentTypeCache($track_url);
-                    Slim::Music::Info::setBitrate($track_url, $est_bitrate, $is_vbr);
-                    $log->info("YANDEX: Set content_type=$ct bitrate=$est_bitrate vbr=" . ($is_vbr ? 1 : 0) . " for $codec track");
+
+                    # Never publish the 900000 FLAC estimate: it would show up
+                    # as a fake "900 kbps" in LMS. Real FLAC bitrate is filled
+                    # in later by _update_real_bitrate().
+                    my $publish_bitrate = 0;
+                    if ($is_lossless) {
+                        $publish_bitrate = $bitrate || 0
+                            if ($cached_meta->{bitrate_source} || '') ne 'estimate';
+                    } else {
+                        $publish_bitrate = $bitrate || 0;
+                    }
+
+                    if ($publish_bitrate > 0) {
+                        Slim::Music::Info::setBitrate($track_url, $publish_bitrate, $is_vbr);
+                        $log->info("YANDEX: Set content_type=$ct bitrate=$publish_bitrate vbr=" . ($is_vbr ? 1 : 0) . " for $codec track");
+                    } else {
+                        $log->info("YANDEX: Set content_type=$ct (bitrate pending real measurement) for $codec track");
+                    }
                 }
             };
             $log->warn("YANDEX: metadata update failed: $@") if $@;
@@ -727,21 +790,182 @@ sub parseDirectHeaders {
         = $class->SUPER::parseDirectHeaders($client, $url, @headers);
 
     my $track_url = (ref($url) && eval { $url->can('url') }) ? $url->url : $url;
-    if ((!$track_url || $track_url !~ /yandexmusic:\/\/(?:track\/)?(\d+)/) && ref($class) && ${*$class}{'song'}) {
-        my $s = ${*$class}{'song'};
-        $track_url = $s->currentTrack->url if $s->can('currentTrack') && $s->currentTrack;
+    if (!$track_url || $track_url !~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
+        my $s = ref($class) ? eval { ${*$class}{'song'} } : undef;
+        if (!$s && $client && $client->can('playingSong')) {
+            $s = $client->playingSong;
+        }
+        $track_url = $s->currentTrack->url if $s && $s->can('currentTrack') && $s->currentTrack;
     }
     if ($track_url && $track_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/) {
         my $meta = Slim::Utils::Cache->new()->get('yandex_meta_' . $1);
         if ($meta && $meta->{codec}) {
             $contentType = _content_type_for_codec($meta->{codec});
         }
+
+        # Content-Length/Content-Range lets us replace the FLAC bitrate
+        # estimate with the real average stream bitrate. Skip redirect
+        # responses: their small HTML body is not the media stream.
+        unless ($redir) {
+            my ($has_content_range) = grep { /^Content-Range:/i } @headers;
+            my ($range_total) = map {
+                /^Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i ? $1 : ()
+            } @headers;
+            _update_real_bitrate($class, $client, $track_url, $length, $has_content_range, $range_total);
+        }
     }
 
     return ($title, $bitrate, $metaint, $redir, $contentType, $length, $body);
 }
+
+# Compute average stream bitrate in bps from the total byte length and
+# duration. Returns undef for invalid or implausible inputs.
+sub _compute_bitrate_bps {
+    my ($length, $duration) = @_;
+    return undef unless defined $length && defined $duration;
+
+    $length   =~ s/\s+//g if !ref $length;
+    $duration =~ s/\s+//g if !ref $duration;
+    return undef unless $length =~ /^\d+$/ && $duration =~ /^\d+(?:\.\d+)?$/;
+    return undef unless $length > 0 && $duration > 0;
+
+    my $bps = int($length * 8 / $duration);
+    return undef if $bps < 64000 || $bps > 5000000;
+    return $bps;
+}
+
+# Fill in the real average bitrate once the stream response has supplied the
+# total length. MP3/AAC already have a real nominal bitrate from the API;
+# FLAC always reports 0, so this is where its display value comes from.
+sub _update_real_bitrate {
+    my ($sock, $client, $track_url, $length, $has_content_range, $range_total) = @_;
+    return unless $track_url && $track_url =~ /yandexmusic:\/\/(?:track\/)?(\d+)/;
+    my $track_id = $1;
+
+    my $cache = Slim::Utils::Cache->new();
+    my $meta  = $cache->get('yandex_meta_' . $track_id);
+    return unless $meta && $meta->{codec};
+
+    # API bitrate for MP3/AAC is already the real nominal bitrate.
+    return if ($meta->{bitrate_source} || '') eq 'api' && $meta->{codec} !~ /^flac/;
+
+    if ($has_content_range) {
+        # 206: only the numeric total from Content-Range is the whole file.
+        # "Content-Range: bytes N-M/*" (unknown total) must not be used.
+        $range_total =~ s/\s+//g if defined $range_total && !ref $range_total;
+        return unless defined $range_total && $range_total =~ /^\d+$/ && $range_total > 0;
+        $length = $range_total;
+    } else {
+        # 200: Content-Length is the whole file, even when the request asked
+        # for Range: bytes=0- and seekdata still carries a nonzero offset.
+        $length =~ s/\s+//g if defined $length && !ref $length;
+        return unless defined $length && $length =~ /^\d+$/ && $length > 0;
+    }
+
+    my $song = ref($sock) ? eval { ${*$sock}{'song'} } : undef;
+    if (!$song && $client && $client->can('playingSong')) {
+        $song = $client->playingSong;
+    }
+
+    if (($meta->{content_length} || 0) != $length) {
+        $meta->{content_length} = $length;
+        $cache->set('yandex_meta_' . $track_id, $meta, 86400);
+    }
+
+    my $duration = $meta->{duration}
+        || ($song && $song->can('duration') ? $song->duration : 0)
+        || 0;
+    return unless $duration > 0;
+
+    my $bps = _compute_bitrate_bps($length, $duration);
+    return unless $bps;
+
+    return if ($meta->{bitrate_source} || '') eq 'content-length'
+           && ($meta->{bitrate} || 0) == $bps;
+
+    $meta->{bitrate}           = $bps;
+    $meta->{bitrate_source}    = 'content-length';
+    $meta->{bitrate_estimated} = 0;
+    $cache->set('yandex_meta_' . $track_id, $meta, 86400);
+
+    my $is_lossless = ($meta->{codec} || '') =~ /^flac/ ? 1 : 0;
+    eval { Slim::Music::Info::setBitrate($track_url, $bps, $is_lossless ? 1 : undef) };
+
+    if ($song && $song->can('bitrate')) {
+        eval { $song->bitrate($bps) };
+    }
+
+    $log->info("YANDEX: real stream bitrate for $track_id codec=$meta->{codec}: "
+        . int($bps / 1000) . " kbps (length=$length duration=${duration}s)");
+
+    if ($client && $client->can('currentPlaylistUpdateTime')) {
+        eval {
+            $client->currentPlaylistUpdateTime(Time::HiRes::time());
+            Slim::Control::Request::notifyFromArray($client, ['newmetadata']);
+        };
+    }
+}
+
 sub isRemote { 1 }
 sub isAudio { 1 }
+
+# If the stream length was captured before the track duration was known,
+# promote the FLAC estimate to the real average bitrate on the next metadata
+# poll. No notification here: the caller is already building the metadata.
+sub _promote_stored_bitrate {
+    my ($track_id, $url, $meta) = @_;
+    return unless $meta && $meta->{codec};
+    return if ($meta->{bitrate_source} || '') eq 'api';
+    return if ($meta->{bitrate_source} || '') eq 'content-length';
+    return unless $meta->{content_length} && $meta->{duration};
+
+    my $bps = _compute_bitrate_bps($meta->{content_length}, $meta->{duration});
+    return unless $bps;
+
+    my $is_lossless = $meta->{codec} =~ /^flac/ ? 1 : 0;
+    $meta->{bitrate}           = $bps;
+    $meta->{bitrate_source}    = 'content-length';
+    $meta->{bitrate_estimated} = 0;
+    Slim::Utils::Cache->new()->set('yandex_meta_' . $track_id, $meta, 86400);
+    eval { Slim::Music::Info::setBitrate($url, $bps, $is_lossless ? 1 : undef) };
+    return $bps;
+}
+
+# Return the display type and bitrate string from the actual codec and the
+# best available bitrate. No invented 900/192/320 kbps values: FLAC shows a
+# real measured bitrate when known, otherwise "Lossless".
+sub _display_quality {
+    my ($codec, $meta) = @_;
+    $codec ||= '';
+    $meta  ||= {};
+
+    my $bitrate = $meta->{bitrate} || 0;
+    my $source  = $meta->{bitrate_source} || '';
+
+    my $type;
+    if ($codec eq 'flac' || $codec eq 'flac-mp4') {
+        $type = 'FLAC';
+    } elsif ($codec =~ /^(?:aac|he-aac)/ || $codec =~ /-mp4$/) {
+        $type = 'AAC';
+    } elsif ($codec eq 'mp3') {
+        $type = 'MP3';
+    } else {
+        $type = '';
+    }
+
+    my $bitrate_str = '';
+    if ($type eq 'FLAC') {
+        # Only trust explicitly measured/API bitrates. Missing source means an
+        # old cache entry or the 900000 seek estimate — show "Lossless".
+        $bitrate_str = ($bitrate > 0 && $source =~ /^(?:api|content-length)$/)
+            ? sprintf('%d kbps', int($bitrate / 1000))
+            : 'Lossless';
+    } elsif ($bitrate > 0) {
+        $bitrate_str = sprintf('%d kbps', int($bitrate / 1000));
+    }
+
+    return ($type, $bitrate_str);
+}
 
 sub getMetadataFor {
     my ($class, $client, $url) = @_;
@@ -752,35 +976,9 @@ sub getMetadataFor {
         my $cache = Slim::Utils::Cache->new();
         my $cached_meta = $cache->get('yandex_meta_' . $track_id);
         if ($cached_meta) {
-            
-            my $bitrate = $cached_meta->{bitrate} || 0;
-            my $codec   = $cached_meta->{codec} || '';
-            my $quality = Plugins::yandex::API::Common::normalize_quality($prefs->get('max_bitrate'));
-
-            # Determine type: use actual codec if known, otherwise infer from quality setting
-            my ($type, $display_type);
-            if ($codec eq 'flac-mp4') {
-                $type = $display_type = 'flac-MP4';
-            } elsif ($codec eq 'flac') {
-                $type = $display_type = 'flc';
-            } elsif (!$codec && $quality eq 'superb') {
-                $type = $display_type = 'flc';  # not yet resolved, but will be FLAC
-            } elsif ($codec =~ /-mp4$/) {
-                $type = $display_type = 'aac-MP4';
-            } elsif ($codec =~ /^(?:aac|he-aac)$/ || (!$codec && ($quality eq 'balanced' || $quality eq 'efficient'))) {
-                $type = $display_type = 'aac';
-            } else {
-                $type = $display_type = 'mp3';
-            }
-
-            # Bitrate display: FLAC is variable/lossless — show estimated bitrate or "FLAC"
-            my $bitrate_str;
-            if ($type =~ /flac|flc/) {
-                # For FLAC: show "FLAC" if bitrate unknown, otherwise estimated bitrate
-                $bitrate_str = !$bitrate ? 'FLAC' : sprintf("~%.0fkbps FLAC", ($bitrate || 900000) / 1000);
-            } else {
-                $bitrate_str = sprintf("%.0fkbps", ($bitrate || 192000) / 1000);
-            }
+            _promote_stored_bitrate($track_id, $url, $cached_meta);
+            my $codec = $cached_meta->{codec} || '';
+            my ($display_type, $bitrate_str) = _display_quality($codec, $cached_meta);
 
             # Helper to check if currently playing this track
             my $is_playing_this = $client && $client->playingSong() && $client->playingSong()->track() && $client->playingSong()->track()->url() eq $url;
@@ -827,26 +1025,14 @@ sub getMetadataFor {
             artist => "Yandex Music",
             cover  => $default_icon,
             icon   => $default_icon,
-            type   => 'mp3',
+            # Do not claim a codec/bitrate before the stream is resolved.
+            type   => '',
         };
 
         # If we have cached metadata (but not _complete), return it with default icon
         if ($cached_meta) {
-            my $codec   = $cached_meta->{codec} || '';
-            my $bitrate = $cached_meta->{bitrate};
-            
-            # Use appropriate bitrate fallback based on codec
-            if (!$bitrate) {
-                $bitrate = ($codec eq 'flac' || $codec eq 'flac-mp4') ? 900000 : 192000;
-            }
-            
-            # Determine type
-            my $quality = Plugins::yandex::API::Common::normalize_quality($prefs->get('max_bitrate'));
-            my $display_type = ($codec eq 'flac-mp4')                                                    ? 'flac-MP4'
-                             : ($codec eq 'flac' || (!$codec && $quality eq 'superb'))                   ? 'flc'
-                             : ($codec =~ /-mp4$/)                                                       ? 'aac-MP4'
-                             : ($codec =~ /^(?:aac|he-aac)$/ || (!$codec && ($quality eq 'balanced' || $quality eq 'efficient'))) ? 'aac'
-                             :                                                                             'mp3';
+            my $codec = $cached_meta->{codec} || '';
+            my ($display_type, $bitrate_str) = _display_quality($codec, $cached_meta);
 
             eval {
                 if ($cached_meta->{duration}) {
@@ -858,10 +1044,6 @@ sub getMetadataFor {
                     }
                 }
             };
-
-            my $bitrate_str = ($display_type =~ /flac|flc/)
-                ? (!$cached_meta->{bitrate} ? 'FLAC' : sprintf("~%.0fkbps FLAC", $bitrate / 1000))
-                : sprintf("%.0fkbps", $bitrate / 1000);
 
             return {
                 title    => $cached_meta->{title},
@@ -1234,16 +1416,24 @@ sub _sysread {
     $offset //= 0;
 
     my $cipher = ${*$self}{yandex_cipher};
-    unless ($cipher) {
+    my $demux  = ${*$self}{yandex_demux};
+
+    # Plain pass-through: neither encrypted nor container-demuxed.
+    unless ($cipher || $demux) {
         my $bytes = $self->SUPER::_sysread($_[1], $length, $offset);
+        if (defined $bytes && $bytes >= 4) {
+            my $magic = substr($_[1], $offset, 4);
+            if ($magic =~ /^(?:<\?xm|<err|<!do|<htm)/i) {
+                $log->error("YANDEX: Stream URL expired or denied. Received error page. Returning EOF.");
+                substr($_[1], $offset, $bytes) = '';
+                return 0;
+            }
+        }
         return $bytes;
     }
 
-    # --- AES cipher active ---
-
-    my $demux = ${*$self}{yandex_demux};
     if ($demux) {
-        # --- Internal streaming demux path (flac-mp4 → raw FLAC) ---
+        # --- Internal streaming demux path (flac-mp4/aac-mp4 → raw FLAC/AAC) ---
 
         # Ensure buffer is defined before using as lvalue substr target
         $_[1] //= '';
@@ -1257,8 +1447,8 @@ sub _sysread {
             return $take;
         }
 
-        # Read encrypted MP4 bytes from network, decrypt, demux → FLAC.
-        # Loop until StreamingDemux produces output or we hit true EOF.
+        # Read MP4 bytes from network (encrypted or raw), optionally decrypt,
+        # then demux → FLAC/AAC. Loop until the demuxer produces output or EOF.
         # (The loop runs at most a handful of times: moov is only ~13KB.)
         my $flac_out = '';
         while (length($flac_out) == 0) {
@@ -1276,24 +1466,23 @@ sub _sysread {
                 }
             }
 
-            my $sp    = ${*$self}{yandex_offset} // 0;
-            my $plain = Plugins::yandex::Decode::AES128::ctr_decrypt($cipher, $raw, $sp);
-            ${*$self}{yandex_offset} = $sp + $n;
+            my $plain;
+            if ($cipher) {
+                my $sp = ${*$self}{yandex_offset} // 0;
+                $plain = Plugins::yandex::Decode::AES128::ctr_decrypt($cipher, $raw, $sp);
+                ${*$self}{yandex_offset} = $sp + $n;
+            } else {
+                # raw transport: bytes are already plaintext
+                $plain = $raw;
+            }
 
             # Track how many file bytes have been fed to the demuxer while a resume
             # skip is pending (the skip is measured in input/file bytes, not output).
             my $skip = ${*$self}{yandex_demux_skip} || 0;
             my $fed_before = 0;
-            my $flac_hdr_len = 0;
             if ($skip) {
                 $fed_before = ${*$self}{yandex_demux_fed} || 0;
                 ${*$self}{yandex_demux_fed} = $fed_before + $n;
-                # The reconstructed FLAC header (fLaC + STREAMINFO) leads the first
-                # output after moov parsing — the player needs it even on resume.
-                if (($demux->{codec} || '') eq 'flac'
-                    && $demux->{flac_header} && $demux->{flac_header} ne 'SENT') {
-                    $flac_hdr_len = length($demux->{flac_header});
-                }
             }
 
             my $demuxed = $demux->process($plain);
@@ -1301,14 +1490,22 @@ sub _sysread {
             # Resume-in-MP4: discard decoded audio until the feed position passes the
             # resume offset stashed by requestString(). The demuxer emits per
             # fragment, so at most the fragment straddling the offset (~1s) is lost.
+            #
+            # Keep the reconstructed FLAC header (fLaC + metadata blocks) even while
+            # skipping. It can be emitted in the same process() call that parses moov,
+            # and MP4Demux replaces flac_header with 'SENT' immediately afterwards,
+            # so inspect the produced bytes and use the permanent header length.
             if ($skip && $fed_before < $skip) {
                 if (length($demuxed)) {
-                    $demuxed = $flac_hdr_len && length($demuxed) >= $flac_hdr_len
-                        ? substr($demuxed, 0, $flac_hdr_len)
-                        : '';
+                    my $keep = 0;
+                    if (($demux->{codec} || '') eq 'flac' && substr($demuxed, 0, 4) eq 'fLaC') {
+                        $keep = $demux->{flac_header_len} || 0;
+                        $keep = length($demuxed) if $keep > length($demuxed);
+                    }
+                    $demuxed = $keep ? substr($demuxed, 0, $keep) : '';
                     if (!${*$self}{yandex_demux_skip_logged}++) {
                         $log->info("YANDEX: demux skip: discarding decoded audio before byte $skip"
-                            . ($flac_hdr_len ? " (FLAC header kept)" : ""));
+                            . ($keep ? " (FLAC header kept)" : ""));
                     }
                 }
             }

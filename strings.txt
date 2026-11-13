@@ -142,6 +142,14 @@ PLUGIN_YANDEX_QUALITY_SUPERB
 	EN	Superb
 	RU	Превосходное
 
+PLUGIN_YANDEX_USE_RAW_TRANSPORT
+	EN	Use unencrypted (raw) stream
+	RU	Использовать незашифрованный (raw) поток
+
+PLUGIN_YANDEX_USE_RAW_TRANSPORT_DESC
+	EN	Uses the Desktop client identity only for /get-file-info and requests transports=raw. Skips AES decryption and reduces CPU load. Falls back to encraw automatically if raw is unavailable.
+	RU	Использует идентификатор Desktop-клиента только для /get-file-info и запрашивает transports=raw. Пропускает AES-расшифровку и снижает нагрузку на CPU. При недоступности raw автоматически используется encraw.
+
 PLUGIN_YANDEX_SEARCH
 	EN	Search
 	RU	Поиск

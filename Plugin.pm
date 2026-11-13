@@ -66,6 +66,8 @@ sub initPlugin {
         accounts => {},
         dontImportAccounts => {},
         max_bitrate => 'high',
+        use_raw_transport => 1,
+        demux_backend => 'ffmpeg',
         remove_duplicates => 1,
         show_chart => 0,
         show_new_releases => 0,
