@@ -322,6 +322,7 @@ sub connect {
 sub disconnect {
     my ($self) = @_;
     $self->{state} = STATE_DISCONNECTED;
+    $self->_log_state();
     $self->_disconnect_socket();
     $self->{async} = undef;  # Clean up async reference
     # Cancel any pending timers
@@ -378,6 +379,12 @@ sub send_command {
         $self->{command_counter},
         _detect_command_type($request_hash),
         $request_hash->{rid} // 'no-rid'));
+
+    $self->_log_frame('OUT', $json);
+    $self->{stats}->{frames_sent}++;
+    $self->{stats}->{bytes_sent} += length($json);
+    $self->{stats}->{last_activity} = time();
+
     $self->_queue_frame($frame);
 }
 
@@ -389,6 +396,7 @@ sub _connect_redirector {
     my ($self) = @_;
 
     $self->{state} = STATE_REDIRECTOR;
+    $self->_log_state();
     $log->info(sprintf('Ynison [%s]: Connecting to redirector...', $self->{client}->name()));
 
     $self->_open_ws('ynison.music.yandex.ru', '/redirector.YnisonRedirectService/GetRedirectToYnison');
@@ -586,6 +594,7 @@ sub _handle_redirector_upgrade {
 
     $log->info(sprintf('Ynison [%s]: Redirector upgrade OK', $self->{client}->name()));
     $self->{state} = STATE_STATE_SERVICE;
+    $self->_log_state('redirector_upgraded');
 
     Slim::Networking::IO::Select::removeRead($fh);
     Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
@@ -598,6 +607,7 @@ sub _handle_state_service_upgrade {
 
     $log->info(sprintf('Ynison [%s]: State service upgrade OK - ACTIVE', $self->{client}->name()));
     $self->{state} = STATE_ACTIVE;
+    $self->_log_state();
     $self->{reconnect_delay} = NORMAL_RECONNECT_MIN();
     $self->{error_count} = 0;
     $self->{last_error} = undef;
@@ -717,6 +727,11 @@ sub _process_state_frames {
 
         my $text = _decode_ws_frame($frame_data);
         next unless defined $text;
+
+        $self->_log_frame('IN', $text);
+        $self->{stats}->{frames_received}++;
+        $self->{stats}->{bytes_received} += length($text);
+        $self->{stats}->{last_activity} = time();
 
         my $state;
         eval { $state = JSON::XS::VersionOneAndTwo::decode_json($text) };
@@ -853,6 +868,7 @@ sub _handle_redirect {
 
     $self->_disconnect_socket();
     $self->{state} = STATE_STATE_SERVICE();
+    $self->_log_state("redirected_to_$msg->{host}");
     $self->_connect_state_service();
 }
 
@@ -951,6 +967,7 @@ sub _schedule_reconnect {
 
     $self->_disconnect_socket();
     $self->{state} = STATE_RECONNECT_WAIT();
+    $self->_log_state("reason: $reason");
     $self->{last_error} = $reason;
     $self->{error_count}++;
 
@@ -960,6 +977,8 @@ sub _schedule_reconnect {
     unless ($should_retry) {
         $log->error(sprintf('Ynison [%s]: Not retrying (%s), max attempts exceeded',
             $self->{client}->name(), $reason));
+        $self->{state} = STATE_DISCONNECTED;
+        $self->_log_state('max_attempts_exceeded');
         return;
     }
 
@@ -1475,9 +1494,11 @@ sub _log {
     my $timestamp = POSIX::strftime('%H:%M:%S', localtime());
     my $full_msg = "[$timestamp] Ynison[$client_name] $msg";
 
+    my $debug_mode = $prefs->get('ynison_debug') || $self->{debug_mode};
+
     # Log to LMS logger if appropriate level
     if ($level == LOG_LEVEL_TRACE() || $level == LOG_LEVEL_DEBUG()) {
-        $log->debug($full_msg) if $self->{debug_mode};
+        $log->debug($full_msg) if $debug_mode;
     } elsif ($level == LOG_LEVEL_INFO()) {
         $log->info($full_msg);
     } elsif ($level == LOG_LEVEL_WARN()) {
@@ -1502,23 +1523,32 @@ sub _log {
 
 sub _log_frame {
     my ($self, $direction, $frame_data) = @_;
-    return unless $self->{debug_mode};
+    return unless $prefs->get('ynison_debug') || $self->{debug_mode};
 
-    my $json;
-    eval { $json = JSON::XS::VersionOneAndTwo::decode_json($frame_data) };
+    if (ref($frame_data)) {
+        my $json_str = eval { JSON::XS::VersionOneAndTwo::encode_json($frame_data) };
+        if (defined $json_str) {
+            $self->_log(LOG_LEVEL_TRACE(), "$direction: $json_str");
+        } else {
+            $self->_log(LOG_LEVEL_TRACE(), "$direction: (unserializable data)");
+        }
+    } elsif (defined $frame_data) {
+        my $json;
+        eval { $json = JSON::XS::VersionOneAndTwo::decode_json($frame_data) };
 
-    if ($json) {
-        $self->_log(LOG_LEVEL_TRACE(),
-            "$direction: " . JSON::XS::VersionOneAndTwo::encode_json($json));
-    } else {
-        $self->_log(LOG_LEVEL_TRACE(),
-            "$direction: (binary data, " . length($frame_data) . " bytes)");
+        if ($json) {
+            $self->_log(LOG_LEVEL_TRACE(),
+                "$direction: " . JSON::XS::VersionOneAndTwo::encode_json($json));
+        } else {
+            $self->_log(LOG_LEVEL_TRACE(),
+                "$direction: (binary data, " . length($frame_data) . " bytes)");
+        }
     }
 }
 
 sub _log_state {
-    my ($self) = @_;
-    return unless $self->{debug_mode};
+    my ($self, $extra) = @_;
+    return unless $prefs->get('ynison_debug') || $self->{debug_mode};
 
     my $state_name = {
         0 => 'DISCONNECTED',
@@ -1528,7 +1558,9 @@ sub _log_state {
         4 => 'RECONNECT_WAIT',
     }->{$self->{state}} // 'UNKNOWN';
 
-    $self->_log(LOG_LEVEL_DEBUG(), "State: $state_name");
+    my $msg = "State: $state_name";
+    $msg .= " ($extra)" if defined $extra && length $extra;
+    $self->_log(LOG_LEVEL_DEBUG(), $msg);
 }
 
 sub get_debug_info {

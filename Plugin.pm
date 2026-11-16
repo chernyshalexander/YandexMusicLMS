@@ -101,6 +101,7 @@ sub initPlugin {
 
     # Keep Ynison creation/cleanup in step with the enable_ynison preference.
     $prefs->setChange(\&_on_enable_ynison_change, 'enable_ynison');
+    $prefs->setChange(\&_on_ynison_debug_change,  'ynison_debug');
 
     # Locate ffmpeg and expose its path to LMS so mp4-based media handling works.
     _register_ffmpeg_path();
@@ -735,6 +736,15 @@ sub _on_enable_ynison_change {
         }
         $log->info("YANDEX: Ynison disabled");
     }
+}
+
+sub _on_ynison_debug_change {
+    my ($pref, $new_value) = @_;
+    my $debug = $new_value ? 1 : 0;
+    foreach my $ynison (values %ynison_instances) {
+        $ynison->{debug_mode} = $debug;
+    }
+    $log->info(sprintf("YANDEX: Ynison debug mode %s", $debug ? "enabled" : "disabled"));
 }
 
 # Player event handler
