@@ -212,6 +212,23 @@ sub initPlugin {
     }
 }
 
+# Don't Stop The Music integration. postinitPlugin runs after every plugin's
+# initPlugin, so the DSTM core is loaded and can accept provider registrations.
+sub postinitPlugin {
+    my $class = shift;
+
+    if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::DontStopTheMusic::Plugin') ) {
+        eval {
+            require Plugins::yandex::DontStopTheMusic;
+            Plugins::yandex::DontStopTheMusic->init();
+            $log->info("YANDEX: DontStopTheMusic integration initialized successfully");
+        };
+        if ($@) {
+            $log->error("YANDEX: Failed to initialize DontStopTheMusic: $@");
+        }
+    }
+}
+
 # Migrate legacy single-token storage into the current multi-account format.
 sub _migrate_legacy_token {
     my $token = $prefs->get('token');
@@ -410,6 +427,14 @@ sub _remove_api_client {
 sub shutdownPlugin {
     my $class = shift;
 
+    # Unregister the DSTM providers before the plugin goes away.
+    if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::DontStopTheMusic::Plugin') ) {
+        eval {
+            require Plugins::yandex::DontStopTheMusic;
+            Plugins::yandex::DontStopTheMusic->shutdown();
+        };
+    }
+
     # Unsubscribe from player events and clean up any active Ynison sessions
     # before the plugin is unloaded.
     Slim::Control::Request::unsubscribe(\&playerEventCallback);
@@ -424,6 +449,20 @@ sub shutdownPlugin {
     %ynison_instances = ();
     %wheel_snapshots = ();
     %wheel_delivered_snapshots = ();
+}
+
+# LMS core "canConflictWithDSTM" hook: while a Rotor radio session is filling
+# the queue on its own, Don't Stop The Music must not add more tracks.
+sub disableDSTM {
+    my ($class, $client) = @_;
+
+    return 0 unless $client;
+
+    # Never let a failure here crash the core's eval-protected poll.
+    return eval {
+        require Plugins::yandex::DontStopTheMusic;
+        Plugins::yandex::DontStopTheMusic->isRotorActive($client);
+    } || 0;
 }
 
 # Handle incoming state updates from Yandex Ynison

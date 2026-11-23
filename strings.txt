@@ -1095,3 +1095,11 @@ PLUGIN_YANDEX_CURRENT
 	EN	Current
 	RU	Слушается
 
+PLUGIN_YANDEX_DSTM_MY_WAVE
+	EN	Yandex Music: My Wave
+	RU	Яндекс Музыка: Моя Волна
+
+PLUGIN_YANDEX_DSTM_PLAYLIST_WAVE
+	EN	Yandex Music: Station based on current playlist
+	RU	Яндекс Музыка: Похожее на текущий плейлист
+
