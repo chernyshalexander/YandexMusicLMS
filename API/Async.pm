@@ -115,6 +115,11 @@ sub new {
     return $self;
 }
 
+sub get_token {
+    my $self = shift;
+    return $self->{token};
+}
+
 # -----------------------------------------------------------------------------------------
 # CORE HTTP TRANSPORT METHODS (Ported from RequestAsync.pm)
 # -----------------------------------------------------------------------------------------
