@@ -316,8 +316,12 @@ sub _firstResultId {
 
 # Returns 1 when a Rotor radio session owns the player's queue, else 0:
 # - the playing song is a rotor track (yandexmusic://<id>?rotor_session=...),
-# - or the player carries an active yandex radio session in pluginData,
 # - or the last queue entry is a rotor track.
+#
+# yandex_curr_radio_session is deliberately not consulted: Plugin.pm "clears" it
+# by passing undef, which Slim::Player::Client::pluginData ignores, so it keeps
+# the last rotor track's session id for the lifetime of the player object and
+# would park Don't Stop The Music for good.
 sub isRotorActive {
     my ($class, $client) = @_;
 
@@ -330,10 +334,6 @@ sub isRotorActive {
         if ( defined $url && $url =~ ROTOR_URL_RE ) {
             return 1;
         }
-    }
-
-    if ( $client->pluginData('yandex_curr_radio_session') ) {
-        return 1;
     }
 
     my $playlist = Slim::Player::Playlist::playList($client);
