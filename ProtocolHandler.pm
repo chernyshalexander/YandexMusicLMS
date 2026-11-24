@@ -1156,10 +1156,11 @@ sub explodePlaylist {
 			@wheel_seeds = @$station_or_seeds;
 			$log->info("YANDEX VIBE: Exploding session for seeds: " . join(', ', @$station_or_seeds));
 
-			# Record CLICK feedback for the selected vibe wheel seeds
-			foreach my $seed (@wheel_seeds) {
-				Plugins::yandex::Plugin::add_wheel_feedback($client, 'CLICK', $seed);
-			}
+			# No CLICK feedback here: a genuine wheel click is already recorded
+			# at the click site (Browse/Radio::handleVibeWaveSelect), and a wave
+			# started from elsewhere (DSTM, search, favorites, info menu) is not
+			# a wheel interaction at all - synthetic CLICKs would pollute the
+			# wheel's personalization on the next wheel/new.
 		} else {
 			@wheel_seeds = ($station_id);
 			$log->info("YANDEX NEW ROTOR: Exploding session for station $station_id, settings: " .
