@@ -1103,3 +1103,10 @@ PLUGIN_YANDEX_DSTM_PLAYLIST_WAVE
 	EN	Yandex Music: Station based on current playlist
 	RU	Яндекс Музыка: Похожее на текущий плейлист
 
+PLUGIN_YANDEX_DSTM_WHEEL_REBUILD
+	EN	Rebuild Vibe Wheel for Don't Stop The Music sessions
+	RU	Перестраивать колесо при запуске сессий Don't Stop The Music
+
+PLUGIN_YANDEX_DSTM_WHEEL_REBUILD_DESC
+	EN	When Don't Stop The Music starts a radio session or a wave, rebuild the Vibe Wheel menu around its seeds like a manual wave launch. If disabled (default), DSTM sessions leave the Vibe Wheel untouched.
+	RU	Когда Don't Stop The Music запускает радиостанцию или волну, перестраивать меню Колеса вокруг её сидов, как при ручном запуске волны. Если выключено (по умолчанию), сессии DSTM не трогают Колесо.

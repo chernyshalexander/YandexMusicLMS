@@ -935,6 +935,13 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
         [% IF prefs.vibe_wheel_rebuild_on_play %]checked[% END %]>
 </div>
 [% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_DSTM_WHEEL_REBUILD" desc="PLUGIN_YANDEX_DSTM_WHEEL_REBUILD_DESC" %]
+<div class="prefDesc">
+    <input type="checkbox" name="pref_dstm_wheel_rebuild" id="pref_dstm_wheel_rebuild"
+        [% IF prefs.dstm_wheel_rebuild %]checked[% END %]>
+</div>
+[% END %]
 <hr>
 
 [% WRAPPER setting title="PLUGIN_YANDEX_ENABLE_YNISON" desc="PLUGIN_YANDEX_ENABLE_YNISON_DESC" %]

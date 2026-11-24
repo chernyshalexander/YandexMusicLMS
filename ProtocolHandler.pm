@@ -1180,8 +1180,13 @@ sub explodePlaylist {
 
 			# 2b. Rebuild the wheel around the launched wave (reference: POST wheel/new with the same seeds + accumulated wheel feedbacks).
 			# Fire-and-forget: playback must not wait for the wheel response.
+			# Sessions marked dstm=1 (started by Don't Stop The Music etc.) only
+			# rebuild the wheel when the dstm_wheel_rebuild preference is on.
 			my $rebuild_on_play = $prefs->get('vibe_wheel_rebuild_on_play') // 1;
-			if (@wheel_seeds && $rebuild_on_play) {
+			if ($settings{dstm} && !($prefs->get('dstm_wheel_rebuild') // 0)) {
+				$log->info("YANDEX DSTM: wheel rebuild skipped (dstm_wheel_rebuild is off)");
+			}
+			elsif (@wheel_seeds && $rebuild_on_play) {
 				my $pending_seed = $client ? $prefs->client($client)->get('yandex_wheel_pending_seed') : undef;
 				my $pending_time = $client ? ($prefs->client($client)->get('yandex_wheel_pending_time') || 0) : 0;
 				my $current_seeds_str = join(',', @wheel_seeds);

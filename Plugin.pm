@@ -85,6 +85,7 @@ sub initPlugin {
         yandex_wheel_seeds   => [],
         yandex_wheel_feedbacks => [],
         vibe_wheel_rebuild_on_play => 1,
+        dstm_wheel_rebuild         => 0,
         yandex_wheel_pending_seed  => undef,
         yandex_wheel_pending_time  => 0,
         show_history               => 1,

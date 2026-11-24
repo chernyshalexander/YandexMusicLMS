@@ -58,7 +58,9 @@ use Scalar::Util qw(blessed);
 use URI::Escape qw(uri_escape_utf8);
 use Slim::Utils::Log;
 
-use constant MY_WAVE_URL  => 'yandexmusic://rotor_session/user:onyourwave';
+# dstm=1 marks provider-launched sessions: explodePlaylist uses the flag to
+# leave the Vibe Wheel alone unless the dstm_wheel_rebuild preference is on.
+use constant MY_WAVE_URL  => 'yandexmusic://rotor_session/user:onyourwave?dstm=1';
 use constant SEED_TRACKS  => 20;
 use constant MAX_SEEDS    => 3;
 use constant ROTOR_URL_RE => qr/rotor_(?:session|station)=/;
@@ -179,7 +181,7 @@ sub _playlistWave {
     }
 
     if ( scalar @ids == 1 ) {
-        my $url = 'yandexmusic://rotor_session/track:' . $ids[0];
+        my $url = 'yandexmusic://rotor_session/track:' . $ids[0] . '?dstm=1';
         $log->info("YANDEX DSTM: single native seed, starting track radio: $url");
         $finish->($client, [$url]);
         return;
@@ -188,7 +190,7 @@ sub _playlistWave {
     if ( scalar @ids > 1 ) {
         splice(@ids, MAX_SEEDS) if scalar @ids > MAX_SEEDS;
         my $seeds_param = join(',', map { "track:$_" } @ids);
-        my $url = 'yandexmusic://rotor_session/_vibe_?seeds=' . uri_escape_utf8($seeds_param);
+        my $url = 'yandexmusic://rotor_session/_vibe_?seeds=' . uri_escape_utf8($seeds_param) . '&dstm=1';
         $log->info("YANDEX DSTM: multiple native seeds, starting vibe wave: $url");
         $finish->($client, [$url]);
         return;
@@ -215,7 +217,7 @@ sub _searchCascade {
                 my $result = shift;
                 my $id = _firstResultId($result, 'tracks');
                 if ( defined $id ) {
-                    my $url = 'yandexmusic://rotor_session/track:' . $id;
+                    my $url = 'yandexmusic://rotor_session/track:' . $id . '?dstm=1';
                     $log->info("YANDEX DSTM: matched catalog track, starting track radio: $url");
                     $finish->($client, [$url]);
                     return;
@@ -249,7 +251,7 @@ sub _artistFallback {
                 my $result = shift;
                 my $id = _firstResultId($result, 'artists');
                 if ( defined $id ) {
-                    my $url = 'yandexmusic://rotor_session/artist:' . $id;
+                    my $url = 'yandexmusic://rotor_session/artist:' . $id . '?dstm=1';
                     $log->info("YANDEX DSTM: matched artist, starting artist radio: $url");
                     $finish->($client, [$url]);
                     return;
