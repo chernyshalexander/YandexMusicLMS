@@ -801,7 +801,7 @@ sub playerEventCallback {
     if ($cmd0 eq 'power' || $command eq 'power') {
         if (!$client->power() || (defined $request->getRequest(1) && $request->getRequest(1) eq '0')) {
             _handle_pause_or_stop($client);
-            $client->pluginData('yandex_curr_track_id', undef);
+            $client->pluginData('yandex_curr_track_id', '');
             _stop_progress_timer($client);
         }
     }
@@ -815,7 +815,7 @@ sub playerEventCallback {
         }
         elsif ($sub_command eq 'disconnect' || $sub_command eq 'forget') {
             _handle_pause_or_stop($client);
-            $client->pluginData('yandex_curr_track_id', undef);
+            $client->pluginData('yandex_curr_track_id', '');
             _stop_progress_timer($client);
             if (exists $ynison_instances{$client->id()}) {
                 $ynison_instances{$client->id()}->disconnect();
@@ -846,7 +846,7 @@ sub playerEventCallback {
     elsif ($command eq 'jump' || $command eq 'stop' || $cmd0 eq 'stop' || $command eq 'clear' || $cmd0 eq 'clear') {
         _handleRotorFeedback($client, 'manual_skip_or_stop');
         _handle_pause_or_stop($client);
-        $client->pluginData('yandex_curr_track_id', undef);
+        $client->pluginData('yandex_curr_track_id', '');
         _stop_progress_timer($client);
     }
     elsif ($command eq 'pause' || $cmd0 eq 'pause' || $command eq 'play' || $cmd0 eq 'play') {
@@ -1050,8 +1050,11 @@ sub _handleTrackSwitch {
         $client->pluginData('yandex_curr_duration', $duration);
         $client->pluginData('yandex_curr_start_time', time());
         $client->pluginData('yandex_curr_play_sent', 0);
-        $client->pluginData('yandex_curr_radio_session', $rotor_session);
-        $client->pluginData('yandex_curr_batch_id', $batch_id);
+        # Defined-but-falsy for absent values: pluginData ignores undef, and a
+        # skipped write would leave the PREVIOUS track's session/batch ids in
+        # place, making ordinary plays report the old radio session.
+        $client->pluginData('yandex_curr_radio_session', $rotor_session // '');
+        $client->pluginData('yandex_curr_batch_id', $batch_id // '');
 
         if ($is_chapter && $new_album_id) {
             my $title = ($meta && ($meta->{album} || $meta->{album_title})) || '';
@@ -1103,9 +1106,12 @@ sub _handleTrackSwitch {
 
         _start_progress_timer($client);
     } else {
-        $client->pluginData('yandex_curr_track_id', undef);
-        $client->pluginData('yandex_curr_radio_session', undef);
-        $client->pluginData('yandex_curr_batch_id', undef);
+        $client->pluginData('yandex_curr_track_id', '');
+        # pluginData ignores undef values (Slim::Player::Client), so clearing
+        # must use a falsy but defined value or the key stays forever and
+        # _send_music_play keeps attributing plays to a dead radio session.
+        $client->pluginData('yandex_curr_radio_session', '');
+        $client->pluginData('yandex_curr_batch_id', '');
         _stop_progress_timer($client);
     }
 }
