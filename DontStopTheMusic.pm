@@ -42,9 +42,11 @@ Continues playback with My Wave (yandexmusic://rotor_session/user:onyourwave).
 
 Builds a Rotor radio session from the current queue. Native Yandex Music
 tracks are used as seeds directly (track radio for one id, a multi-seed
-vibe wave for several). Otherwise the catalog is searched: first for the
-best seed track ("<artist> <title>"), falling back to the most frequent
-seed artist, and finally to My Wave.
+vibe wave for several). Otherwise the catalog is searched candidate by
+candidate (the playing track first, then the queue tail) until up to three
+tracks match, and a wave is launched over everything that matched (one match
+-> track radio). If nothing matched, the most frequent candidate artist is
+searched, and finally My Wave is queued.
 
 =back
 
@@ -61,8 +63,8 @@ use Slim::Utils::Log;
 # dstm=1 marks provider-launched sessions: explodePlaylist uses the flag to
 # leave the Vibe Wheel alone unless the dstm_wheel_rebuild preference is on.
 use constant MY_WAVE_URL  => 'yandexmusic://rotor_session/user:onyourwave?dstm=1';
-use constant SEED_TRACKS  => 20;
 use constant MAX_SEEDS    => 3;
+use constant CANDIDATE_CAP => 5;   # catalog candidates: playing track + queue tail
 use constant ROTOR_URL_RE => qr/rotor_(?:session|station)=/;
 
 # logger() is not exported by Slim::Utils::Log, use the fully-qualified call.
@@ -162,17 +164,20 @@ sub _playlistWave {
         return;
     }
 
-    my $seeds = Slim::Plugin::DontStopTheMusic::Plugin->getMixableProperties($client, SEED_TRACKS);
-    if ( !$seeds || ref $seeds ne 'ARRAY' || !scalar @$seeds ) {
+    # Ordered seed candidates: the playing track first, then the queue from
+    # its tail (the freshest tracks first). The core's getMixableProperties
+    # would shuffle, so the catalog cascade must build its own order.
+    my $candidates = _orderedCandidates($client);
+    if ( !scalar @$candidates ) {
         $log->info("YANDEX DSTM: no mixable tracks, continuing with My Wave");
         $finish->($client, [MY_WAVE_URL]);
         return;
     }
 
-    # Native Yandex Music tracks are used directly as seeds. The seed list
-    # is shuffled by the core, so keep first-seen order when de-duplicating.
+    # Native Yandex Music tracks are used directly as seeds, in candidate
+    # order (playing track first), de-duplicated.
     my (@ids, %seen);
-    for my $seed (@$seeds) {
+    for my $seed (@$candidates) {
         next unless $seed && ref $seed eq 'HASH';
         my $extid = $seed->{extid} || '';
         if ( $extid =~ m{yandexmusic://(?:track/)?(\d+)} ) {
@@ -180,60 +185,131 @@ sub _playlistWave {
         }
     }
 
-    if ( scalar @ids == 1 ) {
-        my $url = 'yandexmusic://rotor_session/track:' . $ids[0] . '?dstm=1';
-        $log->info("YANDEX DSTM: single native seed, starting track radio: $url");
-        $finish->($client, [$url]);
+    if ( scalar @ids ) {
+        _finishSeedIds($client, $finish, \@ids);
         return;
     }
 
-    if ( scalar @ids > 1 ) {
-        splice(@ids, MAX_SEEDS) if scalar @ids > MAX_SEEDS;
-        my $seeds_param = join(',', map { "track:$_" } @ids);
-        my $url = 'yandexmusic://rotor_session/_vibe_?seeds=' . uri_escape_utf8($seeds_param) . '&dstm=1';
-        $log->info("YANDEX DSTM: multiple native seeds, starting vibe wave: $url");
-        $finish->($client, [$url]);
-        return;
-    }
-
-    # The queue holds no Yandex tracks (local files etc.): search the catalog.
-    _searchCascade($client, $api, $seeds, $finish, $protect);
+    # The queue holds no Yandex tracks (local files etc.): search the catalog,
+    # candidate by candidate, and launch a wave on whatever matches.
+    _searchCascade($client, $api, $candidates, $finish, $protect);
 }
 
-sub _searchCascade {
-    my ($client, $api, $seeds, $finish, $protect) = @_;
+# Finish a provider run with the given Yandex track ids: one id -> track radio,
+# several -> a multi-seed vibe wave (at most MAX_SEEDS seeds).
+sub _finishSeedIds {
+    my ($client, $finish, $ids) = @_;
 
-    # a) First seed (in the given order) that has both artist and title.
-    my ($candidate) = grep { ref $_ eq 'HASH' && $_->{artist} && $_->{title} } @$seeds;
+    splice(@$ids, MAX_SEEDS) if scalar @$ids > MAX_SEEDS;
 
-    if ($candidate) {
-        my $query = $candidate->{artist} . ' ' . $candidate->{title};
-        $log->info("YANDEX DSTM: searching catalog for seed track '$query'");
-
-        $api->search(
-            $query,
-            'track',
-            $protect->(sub {
-                my $result = shift;
-                my $id = _firstResultId($result, 'tracks');
-                if ( defined $id ) {
-                    my $url = 'yandexmusic://rotor_session/track:' . $id . '?dstm=1';
-                    $log->info("YANDEX DSTM: matched catalog track, starting track radio: $url");
-                    $finish->($client, [$url]);
-                    return;
-                }
-                _artistFallback($client, $api, $seeds, $finish, $protect);
-            }),
-            $protect->(sub {
-                my $error = shift;
-                $log->warn("YANDEX DSTM: track search failed ($error), falling back to artist radio");
-                _artistFallback($client, $api, $seeds, $finish, $protect);
-            }),
-        );
+    if ( scalar @$ids == 1 ) {
+        my $url = 'yandexmusic://rotor_session/track:' . $ids->[0] . '?dstm=1';
+        $log->info("YANDEX DSTM: single seed, starting track radio: $url");
+        $finish->($client, [$url]);
         return;
     }
 
-    _artistFallback($client, $api, $seeds, $finish, $protect);
+    my $seeds_param = join(',', map { "track:$_" } @$ids);
+    my $url = 'yandexmusic://rotor_session/_vibe_?seeds=' . uri_escape_utf8($seeds_param) . '&dstm=1';
+    $log->info("YANDEX DSTM: multi-seed vibe wave: $url");
+    $finish->($client, [$url]);
+}
+
+# Ordered seed candidates for the catalog cascade: the playing track first,
+# then the queue from its tail (the freshest tracks first), at most
+# CANDIDATE_CAP entries. Each candidate is a hash { artist, title, extid };
+# entries without usable metadata are skipped.
+sub _orderedCandidates {
+    my ($client) = @_;
+    my $core = 'Slim::Plugin::DontStopTheMusic::Plugin';
+
+    my (@candidates, %seen);
+    my $push = sub {
+        my ($track, $url) = @_;
+        return unless defined $url && length $url && !$seen{$url}++;
+        my ($artist, $title, undef, undef, undef, undef, $extid) =
+            $core->getMixablePropertiesFromTrack($client, $track);
+        $extid ||= '';
+        # A candidate needs metadata for the catalog search, but a native
+        # Yandex Music track is usable as a seed even without it.
+        return unless $extid =~ m{yandexmusic://(?:track/)?(\d+)}
+            || (defined $artist && defined $title && $artist ne '' && $title ne '');
+        push @candidates, { artist => $artist, title => $title, extid => $extid };
+    };
+
+    my $song = $client->playingSong();
+    if ( $song && $song->track ) {
+        my $track = $song->track;
+        $push->($track, blessed($track) ? $track->url : $track);
+    }
+
+    my $playlist = Slim::Player::Playlist::playList($client);
+    if ( $playlist && ref $playlist eq 'ARRAY' ) {
+        for my $entry ( reverse @$playlist ) {
+            last if @candidates >= CANDIDATE_CAP;
+            my $url = blessed($entry) ? $entry->url : $entry;
+            $push->($entry, $url);
+        }
+    }
+
+    return \@candidates;
+}
+
+# Sequential catalog cascade: search "artist title" for each candidate in
+# order (the playing track first), collect up to MAX_SEEDS catalog ids, then
+# launch a wave over everything that matched. Nothing matched -> artist
+# fallback. The callback is issued one search at a time: the next candidate is
+# only queried after the previous answer (or error) arrives.
+sub _searchCascade {
+    my ($client, $api, $candidates, $finish, $protect) = @_;
+
+    my @matched;
+    my $i = 0;
+
+    my $done;
+    my $next;
+    $next = sub {
+        # Skip candidates without metadata and stop at the cap or the end.
+        while ( $i < scalar @$candidates && scalar @matched < MAX_SEEDS ) {
+            my $cand = $candidates->[ $i++ ];
+            next unless $cand && defined $cand->{artist} && $cand->{artist} ne ''
+                     && defined $cand->{title}  && $cand->{title} ne '';
+
+            my $query = $cand->{artist} . ' ' . $cand->{title};
+            $log->info("YANDEX DSTM: searching catalog for seed track '$query'");
+
+            $api->search(
+                $query,
+                'track',
+                $protect->(sub {
+                    my $result = shift;
+                    my $id = _firstResultId($result, 'tracks');
+                    if ( defined $id && !grep { $_ eq $id } @matched ) {
+                        push @matched, $id;
+                        $log->info("YANDEX DSTM: matched catalog track $id (" . scalar(@matched) . " of " . MAX_SEEDS . " seeds)");
+                    }
+                    $next->();
+                }),
+                $protect->(sub {
+                    my $error = shift;
+                    $log->warn("YANDEX DSTM: track search failed ($error), trying the next candidate");
+                    $next->();
+                }),
+            );
+            return;
+        }
+        $done->();
+    };
+
+    $done = sub {
+        if ( scalar @matched ) {
+            _finishSeedIds($client, $finish, \@matched);
+            return;
+        }
+        _artistFallback($client, $api, $candidates, $finish, $protect);
+    };
+
+    $next->();
 }
 
 sub _artistFallback {
@@ -272,9 +348,8 @@ sub _artistFallback {
     $finish->($client, [MY_WAVE_URL]);
 }
 
-# Most frequent artist among the seeds; ties are won by the artist seen
-# first in the seed list, so the pick is deterministic even though the
-# core shuffles the seed order.
+# Most frequent artist among the candidates; ties are won by the artist seen
+# first (the freshest track), so the pick is deterministic.
 sub _topArtist {
     my ($seeds) = @_;
 
