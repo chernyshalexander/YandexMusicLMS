@@ -1137,8 +1137,14 @@ sub explodePlaylist {
 		}
 
 		# Build queue from previously seen tracks (format: "trackId:albumId")
-		my $seen_tracks_prev = $prefs->client($client)->get('yandex_seen_tracks') || [];
+		# Live check (2026-11-24): the API treats `queue` as the session's
+		# CURRENT queue, not as a "do not repeat" hint - it echoes the sent
+		# history back as the first batch, burying the actual seeds. A new
+		# session therefore starts with an empty queue; the seen list is only
+		# reset here (it feeds the client-side duplicate filter).
+		my $seen_tracks_history = $prefs->client($client)->get('yandex_seen_tracks') || [];
 		$prefs->client($client)->set('yandex_seen_tracks', []) if $client;
+		my $queue_param = [];
 
 		# For Vibe Wheel: station_id is '_vibe_', seeds come from ?seeds= param
 		my $station_or_seeds = ($station_id eq '_vibe_')
@@ -1157,11 +1163,12 @@ sub explodePlaylist {
 		} else {
 			@wheel_seeds = ($station_id);
 			$log->info("YANDEX NEW ROTOR: Exploding session for station $station_id, settings: " .
-				join(', ', map { "$_=$settings{$_}" } keys %settings) . ", queue: " . scalar(@$seen_tracks_prev) . " tracks");
+				join(', ', map { "$_=$settings{$_}" } keys %settings) .
+				", history: " . scalar(@$seen_tracks_history) . " tracks (not sent)");
 		}
 
 		# 1. Create session
-		$yandex_client->rotor_session_new($station_or_seeds, \%settings, $seen_tracks_prev, sub {
+		$yandex_client->rotor_session_new($station_or_seeds, \%settings, $queue_param, sub {
 			my $session_result = shift;
 			my $radio_session_id = $session_result->{radioSessionId};
 			my $batch_id = $session_result->{batchId};
