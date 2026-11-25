@@ -380,8 +380,16 @@ sub _start_ynison_for_player {
     my $token    = $accounts->{$userId}{token} || return;
     my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
 
-    require Plugins::yandex::Ynison;
-    my $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
+    my $engine = $prefs->get('ynison_engine') || 'legacy';
+    my $ynison;
+    if ($engine eq 'new') {
+        require Plugins::yandex::Ynison::Adapter;
+        $ynison = Plugins::yandex::Ynison::Adapter->new($player, $token, $uid);
+    }
+    else {
+        require Plugins::yandex::Ynison;
+        $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
+    }
     $ynison_instances{$player->id()} = $ynison;
 
     $ynison->on_state(sub {
@@ -479,6 +487,21 @@ sub _handle_yandex_state_update {
     # Volume sync is independent of everything else
     _ynison_sync_volume($client, $ynison, $state->{devices}) if $state->{devices};
 
+    # The rewritten engine publishes the client's classification flags
+    # (Adapter::_on_client_state). The listener frame is read-only here:
+    # _apply_yandex_state only reads it; the compat cache is updated via
+    # update_cached_queue. A relay frame must not seek (lesson L9).
+    if (($state->{engine} // 'legacy') eq 'new') {
+        return if $state->{echo} || $state->{suppress_status};
+        $ynison->{relay_frame} = $state->{relay};
+        $ynison->{syncing_from_yandex} = 1;
+        eval { _apply_yandex_state($client, $ynison, $state->{player_state}) };
+        $log->error("YANDEX: Error applying state: $@") if $@;
+        $ynison->{syncing_from_yandex} = 0;
+        $ynison->{relay_frame} = 0;
+        return;
+    }
+
     my $active_device_id = $state->{active_device_id_optional} // '';
     my $was_active       = $ynison->{we_are_active} // 0;
     my $is_active        = ($active_device_id eq $ynison->device_id) ? 1 : 0;
@@ -564,7 +587,9 @@ sub _apply_yandex_state {
         my $local_pos  = int(Slim::Player::Source::songTime($client) || 0);
         my $now        = time();
 
-        if ($now >= ($ynison->{seek_grace_until} // 0) && abs($remote_pos - $local_pos) >= 5) {
+        if ($now >= ($ynison->{seek_grace_until} // 0)
+            && !$ynison->{relay_frame}
+            && abs($remote_pos - $local_pos) >= 5) {
             $log->info("YANDEX: Incoming seek from app: $local_pos -> $remote_pos s (interpolated from ${remote_pos_ms}ms)");
             $ynison->{seek_grace_until} = $now + 3.0;
             $client->execute(['time', $remote_pos]);
@@ -681,7 +706,10 @@ sub _ynison_maybe_replenish_radio {
     my $cur_idx = $queue->{current_playable_index} // 0;
     return unless $cur_idx >= $total - 2;  # Trigger prefetch on penultimate or last track
 
-    my $radio_session_id = $queue->{entity_id};
+    # Fresh clients carry the rotor session in queue.wave_queue
+    # (entity_id is deprecated); fall back to entity_id for old queues.
+    my $radio_session_id = ($queue->{queue}{wave_queue}{entity_options}{wave_entity_optional}{session_id} // '')
+                        || $queue->{entity_id};
     return unless $radio_session_id;
 
     my $last_track = $list->[-1];
@@ -892,8 +920,21 @@ sub playerEventCallback {
                     $ynison->update_state();
                 }
                 elsif ($command eq 'jump') {
-                    my $cmd = $ynison->build_next_cmd();
-                    $ynison->send_command($cmd) if $cmd;
+                    if (($prefs->get('ynison_engine') || 'legacy') eq 'new') {
+                        my $song = $client->playingSong();
+                        my ($tid) = $song && $song->track ? ($song->track->url =~ /yandexmusic:\/\/(\d+)/) : ();
+                        my $list = $ynison->{yandex_queue} ? ($ynison->{yandex_queue}{playable_list} || []) : [];
+                        my $cached = $ynison->{yandex_queue}{current_playable_index} // -1;
+                        my $back = 0;
+                        for my $i (0 .. $#$list) {
+                            if (($list->[$i]{playable_id} // '') eq ($tid // '')) { $back = ($i < $cached) ? 1 : 0; last }
+                        }
+                        $back ? $ynison->skip_back : $ynison->skip_forward;
+                    }
+                    else {
+                        my $cmd = $ynison->build_next_cmd();
+                        $ynison->send_command($cmd) if $cmd;
+                    }
                 }
                 # Remember that we have an active Yandex session
                 $client->pluginData('ynison_had_yandex_session', 1);

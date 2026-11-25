@@ -811,6 +811,14 @@ PLUGIN_YANDEX_YNISON_DEBUG_DESCRIPTION
 	EN	Enable detailed logging and extended debugging information for Ynison multi-device sync.
 	RU	Включить подробное логирование и расширенную отладочную информацию для синхронизации Ynison между устройствами.
 
+PLUGIN_YANDEX_YNISON_ENGINE
+	EN	Ynison engine
+	RU	Движок Ynison
+
+PLUGIN_YANDEX_YNISON_ENGINE_DESC
+	EN	legacy — the current implementation; new — the rewritten client (reconnect ladder, status on change, relay detection).
+	RU	legacy — текущая реализация; new — новый клиент (лестница реконнекта, статус по изменению, детект релеев).
+
 PLUGIN_YANDEX_ACCOUNTS
 	EN	Accounts
 	RU	Аккаунты

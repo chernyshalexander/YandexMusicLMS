@@ -957,6 +957,15 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
         %]>
 </div>
 [% END %]
+
+[% WRAPPER setting title="PLUGIN_YANDEX_YNISON_ENGINE" desc="PLUGIN_YANDEX_YNISON_ENGINE_DESC" %]
+<div class="prefDesc">
+    <select name="pref_ynison_engine" id="pref_ynison_engine">
+        <option value="legacy" [% IF prefs.ynison_engine == 'legacy' %]selected[% END %]>legacy</option>
+        <option value="new" [% IF prefs.ynison_engine == 'new' %]selected[% END %]>new</option>
+    </select>
+</div>
+[% END %]
 <script type="text/javascript">
 (function () {
     var toggle  = document.getElementById('pref_show_wave_wizard');
