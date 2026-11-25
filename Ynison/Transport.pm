@@ -375,4 +375,16 @@ sub fetch_one {
     return $self;
 }
 
+# fetch_redirect(host, path, headers, cb, port => N, https => 0|1):
+# cb->($transport, $data|undef, $status|undef).
+sub fetch_redirect {
+    my ($self, $host, $path, $headers, $cb, %o) = @_;
+    return $self->fetch_one(
+        host => $host, path => $path,
+        https => $o{https} // 1, port => $o{port} // $C->YNISON_PORT(),
+        headers => $headers, logger => $self->{logger}, scheduler => $self->{scheduler},
+        cb => sub { my ($data, $status) = @_; $cb->($self, $data, $status) },
+    );
+}
+
 1;
