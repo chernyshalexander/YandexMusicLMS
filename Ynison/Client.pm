@@ -16,7 +16,10 @@ Everything external is injected: the transport (or its factory), the scheduler
 is waited out exactly here (constraint 8). The reconnect engine schedules one
 retry at a time along the policy ladder, arms on_reclaim after the settle
 window of every reconnect, and refreshes the token once per run through the
-on_auth_failure callback. Outbound commands (Task 10) build on this module.
+on_auth_failure callback. The outbound commands live here too: report_status
+with its guards (duration, the empty-queue gate, the active-device gate and
+the dedup window), the player-state/active-device/session-params/volume
+setters, and the strict-send queue that is flushed after a re-registration.
 
 =cut
 
@@ -25,8 +28,8 @@ on_auth_failure callback. Outbound commands (Task 10) build on this module.
 # frame handling through Ynison::State and the reconnect policy. Everything
 # external is injected: the transport (or its factory), the scheduler
 # ({set => cb, kill => cb}) and the clock. The reconnect engine, the settle
-# window reclaim and the token refresh live here too. Outbound commands
-# (Task 10) build on this module.
+# window reclaim and the token refresh live here too, as do the outbound
+# commands: guarded report_status, the setters and the strict-send queue.
 
 use strict;
 use warnings;
@@ -66,6 +69,7 @@ sub new {
         policy      => Plugins::yandex::Ynison::ReconnectPolicy->new,
         ws          => undef,
         redirect_ws => undef,
+        strict_queue => [],                     # strict sends made while the channel is down
         ready       => 0,
         ever_connected => 0,
         settle_until => 0,
@@ -197,6 +201,14 @@ sub _on_channel_open {
             player_state => Plugins::yandex::Ynison::Message::empty_player_state($self->{device}{device_id}),
         )));
     $t->send_text(JSON::XS::VersionOneAndTwo::encode_json(Plugins::yandex::Ynison::Message::update_session_params($self->{mute_if_passive})));
+    # Strict sends made while the channel was down ride right behind the
+    # re-registration - before any state frame could matter.
+    if (my $queued = $self->{strict_queue} && @{ $self->{strict_queue} }) {
+        my @frames = @{ $self->{strict_queue} };
+        $self->{strict_queue} = [];
+        $t->send_text($_) for @frames;
+        $self->_log('info', sprintf('flushed %d queued strict sends', scalar @frames));
+    }
     # First-frame watchdog: a silent state channel must not hang forever.
     if (my $s = $self->{scheduler}) {
         $self->{first_frame_timer} = $s->{set}->($C->FIRST_FRAME_TIMEOUT(), sub {
@@ -289,6 +301,97 @@ sub _on_frame {
         $self->_log('error', "on_state listener failed: $@") if $@;
     }
     return;
+}
+
+# --- outbound commands (Task 10) ------------------------------------------------
+
+# _send($hashref, strict): JSON-encode and send; a strict send while the
+# channel is down is queued and flushed after the next registration.
+sub _send {
+    my ($self, $msg, $strict) = @_;
+    my $json = JSON::XS::VersionOneAndTwo::encode_json($msg);
+    if (!$self->{ready}) {
+        if ($strict) {
+            push @{ $self->{strict_queue} }, $json;
+            return 1;
+        }
+        return 0;
+    }
+    return $self->{ws}->send_text($json) ? 1 : 0;
+}
+
+# report_status(progress_ms, duration_ms, paused, strict => 0|1)
+# 1 = sent (or queued strict), 0 = skipped by a guard, undef = strict failure.
+sub report_status {
+    my ($self, $progress, $duration, $paused, %o) = @_;
+    $paused = $paused ? 1 : 0;
+    my $strict = $o{strict} ? 1 : 0;
+    $duration = ($self->state->status || {})->{duration_ms} // 0 unless $duration && $duration > 0;
+    $duration = 0 + ($duration // 0);
+    if ($duration <= 0) {
+        return $strict ? undef : 0;                      # an unknown duration is a hard failure for strict
+    }
+    $progress = Plugins::yandex::Ynison::Message::clamp_progress($progress, $duration);
+    # Constraint 17: an unpaused heartbeat over an empty server queue closes the
+    # socket. Strict user commands are exempt (upstream: "strict user commands
+    # are not gated").
+    if (!$strict && !$paused && !defined $self->state->current_track_id) {
+        $self->_log('warn', 'skipping an unpaused status: the server queue has no current track');
+        return 0;
+    }
+    if (!$strict && !$self->state->is_active) {
+        return 0;                                        # another device owns the session
+    }
+    if (!$strict && $self->state->status_matches($progress, $duration, $paused)) {
+        return 0;                                        # nothing new for Ynison to learn
+    }
+    my $sent = $self->_send(Plugins::yandex::Ynison::Message::update_playing_status(
+        progress_ms => $progress, duration_ms => $duration, paused => $paused,
+        version     => Plugins::yandex::Ynison::Message::new_version($self->{device}{device_id}),
+    ), $strict);
+    if ($sent) {
+        $self->state->note_status_sent($progress, $duration, $paused);
+    }
+    return $sent;
+}
+
+sub set_player_state {
+    my ($self, $player_state) = @_;
+    return $self->_send(Plugins::yandex::Ynison::Message::update_player_state($player_state));
+}
+
+sub set_active_device {
+    my ($self, $device_id) = @_;
+    return $self->_send(Plugins::yandex::Ynison::Message::update_active_device($device_id));
+}
+
+sub set_session_params {
+    my ($self, $mute) = @_;
+    return $self->_send(Plugins::yandex::Ynison::Message::update_session_params($mute));
+}
+
+sub set_volume {
+    my ($self, $volume) = @_;
+    $volume = 0 if !defined $volume || $volume < 0;
+    $volume = 1 if $volume > 1;
+    return $self->_send(Plugins::yandex::Ynison::Message::update_volume_info(
+        $self->{device}{device_id}, $volume,
+        Plugins::yandex::Ynison::Message::new_version($self->{device}{device_id})));
+}
+
+sub debug_snapshot {
+    my ($self) = @_;
+    return {
+        ready       => $self->{ready},
+        device_id   => $self->{device}{device_id},
+        active      => $self->state->is_active,
+        track       => $self->state->current_track_id,
+        paused      => $self->state->is_paused,
+        progress_ms => $self->state->progress_ms,
+        strict_queue => scalar @{ $self->{strict_queue} },
+        reconnecting => $self->is_reconnecting,
+        last_event  => $self->{last_event},
+    };
 }
 
 sub disconnect {
