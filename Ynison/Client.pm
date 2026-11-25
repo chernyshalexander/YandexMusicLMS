@@ -185,9 +185,10 @@ sub _on_channel_open {
     if ($self->{settle_until} && $self->{on_reclaim} && $self->{scheduler}) {
         $self->{reclaim_timer} = $self->{scheduler}{set}->($C->SETTLE_WINDOW() + $C->RECLAIM_DELAY(), sub {
             return unless $self->{ready};
-            delete $self->{reclaim_timer};
+            delete $self->{reclaim_timer};              # the timer already fired
             $self->_log('info', 'reclaiming the active device after reconnect');
-            $self->{on_reclaim}->($self);
+            eval { $self->{on_reclaim}->($self) };
+            $self->_log('error', "on_reclaim listener failed: $@") if $@;
         });
     }
     $t->send_text(JSON::XS::VersionOneAndTwo::encode_json(
@@ -234,7 +235,9 @@ sub _on_channel_closed {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
     $self->{policy}->on_transport_failure;
-    delete $self->{reclaim_timer};
+    if (my $h = delete $self->{reclaim_timer}) {
+        $self->{scheduler}{kill}->($h) if $self->{scheduler};
+    }
     $self->_schedule_reconnect;
     $self->_log('error', $reason);
     return;
@@ -263,7 +266,9 @@ sub _on_frame {
         if (my $h = delete $self->{first_frame_timer}) {
             $self->{scheduler}{kill}->($h) if $self->{scheduler};
         }
-        delete $self->{reclaim_timer};
+        if (my $h = delete $self->{reclaim_timer}) {
+            $self->{scheduler}{kill}->($h) if $self->{scheduler};
+        }
         $self->_schedule_reconnect;
         return;
     }
@@ -329,13 +334,17 @@ sub _reconnect_tick {
     }
     if (!$self->{auth_refreshed} && $self->{on_auth_failure}) {
         # A single refresh attempt per client run, upstream-style; an expired
-        # token is possible on the very first connect, too.
-        my ($token, $outcome) = $self->{on_auth_failure}->();
-        if (defined $token && $outcome eq 'refreshed') {
-            $self->{token} = $token;
-            $self->{auth_refreshed} = 1;
-            $self->_log('info', 'token refreshed');
-        }
+        # token is possible on the very first connect, too. Any outcome latches,
+        # a dying callback included: it is never consulted twice.
+        $self->{auth_refreshed} = 1;
+        eval {
+            my ($token, $outcome) = $self->{on_auth_failure}->();
+            if (defined $token && $outcome eq 'refreshed') {
+                $self->{token} = $token;
+                $self->_log('info', 'token refreshed');
+            }
+        };
+        $self->_log('error', "on_auth_failure callback failed: $@") if $@;
     }
     $self->connect;
     return;
