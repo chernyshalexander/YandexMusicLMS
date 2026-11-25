@@ -113,8 +113,9 @@ sub update_player_state { envelope({ update_player_state => { player_state => $_
 sub update_playing_status {
     my (%a) = @_;
     my $paused = $a{paused} ? 1 : 0;
+    my $progress = clamp_progress($a{progress_ms}, $a{duration_ms});   # Constraint 5, enforced here
     my $status = {
-        progress_ms    => i64($a{progress_ms}),
+        progress_ms    => i64($progress),
         duration_ms    => i64($a{duration_ms}),
         paused         => _bool($paused),
         playback_speed => 1.0,
