@@ -13,8 +13,10 @@ every connection, arms the heartbeat from the redirector's keep-alive params,
 and routes inbound frames through Ynison::State and the reconnect policy.
 Everything external is injected: the transport (or its factory), the scheduler
 ({set => cb, kill => cb}) and the clock. The go-away window of a server error
-is waited out exactly here (constraint 8); the rest of the reconnect
-machinery (Task 9) and the outbound commands (Task 10) build on this module.
+is waited out exactly here (constraint 8). The reconnect engine schedules one
+retry at a time along the policy ladder, arms on_reclaim after the settle
+window of every reconnect, and refreshes the token once per run through the
+on_auth_failure callback. Outbound commands (Task 10) build on this module.
 
 =cut
 
@@ -22,8 +24,9 @@ machinery (Task 9) and the outbound commands (Task 10) build on this module.
 # every connection, heartbeat from the redirector's keep-alive params, inbound
 # frame handling through Ynison::State and the reconnect policy. Everything
 # external is injected: the transport (or its factory), the scheduler
-# ({set => cb, kill => cb}) and the clock. Reconnects (Task 9) and outbound
-# commands (Task 10) build on this module.
+# ({set => cb, kill => cb}) and the clock. The reconnect engine, the settle
+# window reclaim and the token refresh live here too. Outbound commands
+# (Task 10) build on this module.
 
 use strict;
 use warnings;
@@ -52,7 +55,8 @@ sub new {
         get_volume  => $o{get_volume} // sub { 0 },
         on_state    => $o{on_state},
         on_connect  => $o{on_connect},
-        on_reclaim  => $o{on_reclaim},          # wired in Task 9
+        on_reclaim  => $o{on_reclaim},
+        on_auth_failure => $o{on_auth_failure}, # () -> (token, 'refreshed'|'permanent')
         on_event    => $o{on_event} // sub { },
         factory     => $o{transport_factory},
         scheduler   => $o{scheduler},
@@ -66,15 +70,28 @@ sub new {
         ever_connected => 0,
         settle_until => 0,
         last_event  => undef,
+        saw_frame   => 0,                       # a state frame arrived on THIS connection
         first_frame_timer => undef,
-        reconnect_timer => undef,               # the go-away wait; Task 9 generalizes it
+        reconnect_timer => undef,               # at most one retry in flight (the handle)
+        reclaim_timer => undef,                 # on_reclaim after a reconnect's settle window
+        auth_refreshed => 0,                    # one token refresh attempt per run
         interval_s  => undef,
         stopped     => 0,
     }, $class;
     return $self;
 }
 
-sub _log { my ($self, $level, $msg) = @_; $self->{on_event}->($level, $msg) if $level ne 'debug'; return }
+# The journal callback is the module's only voice (constraint 14); a dying
+# sink must not abort the event loop, and reporting a dying sink through the
+# same sink would recurse - so that one failure is swallowed.
+sub _log {
+    my ($self, $level, $msg) = @_;
+    return if $level eq 'debug' || $self->{in_log};
+    $self->{in_log} = 1;
+    eval { $self->{on_event}->($level, $msg) };
+    $self->{in_log} = 0;
+    return;
+}
 
 sub state       { $_[0]->{state} }
 sub is_ready    { $_[0]->{ready} ? 1 : 0 }
@@ -112,16 +129,22 @@ sub _headers {
 
 sub connect {
     my ($self) = @_;
-    return if $self->{stopped};
+    return if $self->{ready} || $self->{stopped} || defined $self->{reconnect_timer};
     my $t = $self->_factory_transport;
     $self->{redirect_ws} = $t;                          # tests pump this hop too
     $t->fetch_redirect($self->{redirect_host}, $C->YNISON_REDIRECT_PATH(), $self->_headers, sub {
         my (undef, $data, $status) = @_;
         return if $self->{stopped};
         if (!defined $data) {
-            $self->{policy}->on_transport_failure;
-            $self->_log('error', "redirector failed" . (defined $status ? " (HTTP $status)" : ''));
-            return;                                  # Task 9 schedules the retry
+            if (defined $status && ($status == 401 || $status == 403)) {
+                $self->{policy}->on_server_error($C->ERR_UNAUTHENTICATED(), grpc_code => 16, go_away => 0, ladder => undef);
+            }
+            else {
+                $self->{policy}->on_transport_failure;
+            }
+            $self->_log('error', 'redirector failed' . (defined $status ? " (HTTP $status)" : ''));
+            $self->_schedule_reconnect;
+            return;
         }
         my $ka = $data->{keep_alive_params};
         my $interval = $ka && $ka->{keep_alive_time_seconds} ? 0 + $ka->{keep_alive_time_seconds} : $C->WS_HEARTBEAT_DEFAULT();
@@ -151,9 +174,22 @@ sub _connect_state {
 
 sub _on_channel_open {
     my ($self, $t) = @_;
+    $self->{saw_frame} = 0;                             # the watchdog is per connection
     $self->{ready} = 1;
     $self->{settle_until} = $self->{ever_connected} ? $self->{clock}->() + $C->SETTLE_WINDOW() : 0;
     $self->{ever_connected} = 1;
+    delete $self->{reconnect_timer};                    # a tick dialing while ready
+    # Reclaim the active device after the settle window of a RECONNECT (the
+    # condition on settle_until separates this from the first connect, whose
+    # empty registration already makes the server drop us from the stage).
+    if ($self->{settle_until} && $self->{on_reclaim} && $self->{scheduler}) {
+        $self->{reclaim_timer} = $self->{scheduler}{set}->($C->SETTLE_WINDOW() + $C->RECLAIM_DELAY(), sub {
+            return unless $self->{ready};
+            delete $self->{reclaim_timer};
+            $self->_log('info', 'reclaiming the active device after reconnect');
+            $self->{on_reclaim}->($self);
+        });
+    }
     $t->send_text(JSON::XS::VersionOneAndTwo::encode_json(
         Plugins::yandex::Ynison::Message::update_full_state(
             device => $self->_device_block,
@@ -163,11 +199,14 @@ sub _on_channel_open {
     # First-frame watchdog: a silent state channel must not hang forever.
     if (my $s = $self->{scheduler}) {
         $self->{first_frame_timer} = $s->{set}->($C->FIRST_FRAME_TIMEOUT(), sub {
-            return unless $self->{ready} && !$self->{last_event};
+            return unless $self->{ready} && !$self->{saw_frame};
             $self->_on_channel_closed('no state frame after connect');
         });
     }
-    $self->{on_connect}->($self) if $self->{on_connect};
+    if ($self->{on_connect}) {
+        eval { $self->{on_connect}->($self) };
+        $self->_log('error', "on_connect listener failed: $@") if $@;
+    }
     $self->_log('info', 'state channel ready');
     return;
 }
@@ -195,6 +234,8 @@ sub _on_channel_closed {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
     $self->{policy}->on_transport_failure;
+    delete $self->{reclaim_timer};
+    $self->_schedule_reconnect;
     $self->_log('error', $reason);
     return;
 }
@@ -208,24 +249,22 @@ sub _on_frame {
             grpc_code => $d->{grpc_code}, go_away => $d->{go_away_s}, ladder => $d->{backoff_millis});
         if ($d->{go_away_s}) {
             $self->_log('warn', "Yandex asked this device to stay away for $d->{go_away_s} s (code $d->{code}); reconnecting earlier would extend the wait");
-            # The go-away window is waited out exactly (constraint 8): the
-            # redirector is dialed only after it. Task 9 folds this into the
-            # general reconnect machinery (ladder, reclaim, token refresh).
-            if (my $h = delete $self->{first_frame_timer}) {
-                $self->{scheduler}{kill}->($h) if $self->{scheduler};
-            }
-            if (!$self->{stopped} && $self->{scheduler} && !defined $self->{reconnect_timer}) {
-                my $delay = $self->{policy}->next_delay;    # consumes the go-away
-                $self->{reconnect_timer} = $self->{scheduler}{set}->($delay, sub {
-                    $self->{reconnect_timer} = undef;
-                    return if $self->{stopped};
-                    $self->connect;
-                });
-            }
         }
         else {
             $self->_log('warn', "Ynison error code=$d->{code} " . ($d->{message} // ''));
         }
+        # An error frame is a server directive, not a transport failure: break
+        # the session either way. next_delay has already consumed the go-away
+        # (if any), so the retry waits the window out exactly (constraint 8),
+        # and a tick that lands inside it defers through go_away_pending.
+        $self->{ready} = 0;
+        my $t = delete $self->{ws};
+        $t->close if $t;
+        if (my $h = delete $self->{first_frame_timer}) {
+            $self->{scheduler}{kill}->($h) if $self->{scheduler};
+        }
+        delete $self->{reclaim_timer};
+        $self->_schedule_reconnect;
         return;
     }
     if ($kind eq 'ping') {
@@ -237,9 +276,13 @@ sub _on_frame {
     if (my $h = delete $self->{first_frame_timer}) {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
+    $self->{saw_frame} = 1;
     $self->{last_event} = $self->{state}->apply_frame($payload);
     $self->{policy}->on_healthy;
-    $self->{on_state}->($self) if $self->{on_state};
+    if ($self->{on_state}) {
+        eval { $self->{on_state}->($self) };
+        $self->_log('error', "on_state listener failed: $@") if $@;
+    }
     return;
 }
 
@@ -249,11 +292,52 @@ sub disconnect {
     $self->{ready} = 0;
     if (my $t = delete $self->{ws}) { $t->close }
     if (my $t = delete $self->{redirect_ws}) { $t->close }
-    for my $key (qw(first_frame_timer reconnect_timer)) {
+    for my $key (qw(first_frame_timer reconnect_timer reclaim_timer)) {
         if (my $h = delete $self->{$key}) {
             $self->{scheduler}{kill}->($h) if $self->{scheduler};
         }
     }
+    return;
+}
+
+# --- reconnect machinery (Task 9) --------------------------------------------
+
+sub is_reconnecting {
+    my ($self) = @_;
+    return defined $self->{reconnect_timer} ? 1 : 0;
+}
+
+# Idempotent: one retry in flight at any time; nothing after disconnect().
+sub _schedule_reconnect {
+    my ($self) = @_;
+    return if $self->{stopped};
+    return if defined $self->{reconnect_timer};
+    my $delay = $self->{policy}->next_delay;
+    $self->_log('info', sprintf('reconnecting in %.0f s', $delay));
+    $self->{reconnect_timer} = $self->{scheduler}{set}->($delay, sub { $self->_reconnect_tick });
+    return;
+}
+
+sub _reconnect_tick {
+    my ($self) = @_;
+    $self->{reconnect_timer} = undef;
+    return if $self->{stopped};
+    if ($self->{policy}->go_away_pending) {
+        # A go-away arrived while we were waiting: dialing now would land inside its window.
+        $self->_schedule_reconnect;
+        return;
+    }
+    if (!$self->{auth_refreshed} && $self->{on_auth_failure}) {
+        # A single refresh attempt per client run, upstream-style; an expired
+        # token is possible on the very first connect, too.
+        my ($token, $outcome) = $self->{on_auth_failure}->();
+        if (defined $token && $outcome eq 'refreshed') {
+            $self->{token} = $token;
+            $self->{auth_refreshed} = 1;
+            $self->_log('info', 'token refreshed');
+        }
+    }
+    $self->connect;
     return;
 }
 
