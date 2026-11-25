@@ -487,21 +487,6 @@ sub _handle_yandex_state_update {
     # Volume sync is independent of everything else
     _ynison_sync_volume($client, $ynison, $state->{devices}) if $state->{devices};
 
-    # The rewritten engine publishes the client's classification flags
-    # (Adapter::_on_client_state). The listener frame is read-only here:
-    # _apply_yandex_state only reads it; the compat cache is updated via
-    # update_cached_queue. A relay frame must not seek (lesson L9).
-    if (($state->{engine} // 'legacy') eq 'new') {
-        return if $state->{echo} || $state->{suppress_status};
-        $ynison->{relay_frame} = $state->{relay};
-        $ynison->{syncing_from_yandex} = 1;
-        eval { _apply_yandex_state($client, $ynison, $state->{player_state}) };
-        $log->error("YANDEX: Error applying state: $@") if $@;
-        $ynison->{syncing_from_yandex} = 0;
-        $ynison->{relay_frame} = 0;
-        return;
-    }
-
     my $active_device_id = $state->{active_device_id_optional} // '';
     my $was_active       = $ynison->{we_are_active} // 0;
     my $is_active        = ($active_device_id eq $ynison->device_id) ? 1 : 0;
@@ -519,6 +504,23 @@ sub _handle_yandex_state_update {
     }
 
     return unless $is_active;
+
+    # The rewritten engine publishes the client's classification flags
+    # (Adapter::_on_client_state). The listener frame is read-only here:
+    # _apply_yandex_state only reads it; the compat cache is updated via
+    # update_cached_queue. A relay frame must not seek (lesson L9).
+    # This branch runs only for the active device: passive frames have
+    # already returned above, so a foreign queue is never cast here.
+    if (($state->{engine} // 'legacy') eq 'new') {
+        return if $state->{echo} || $state->{suppress_status};
+        $ynison->{relay_frame} = $state->{relay};
+        $ynison->{syncing_from_yandex} = 1;
+        eval { _apply_yandex_state($client, $ynison, $state->{player_state}) };
+        $log->error("YANDEX: Error applying state: $@") if $@;
+        $ynison->{syncing_from_yandex} = 0;
+        $ynison->{relay_frame} = 0;
+        return;
+    }
 
     my $player_state = $state->{player_state};
     return unless $player_state;
