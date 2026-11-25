@@ -5,7 +5,7 @@
     <importmodule>Plugins::yandex::Importer</importmodule>
     <onlineLibrary>true</onlineLibrary>
     <canConflictWithDSTM>1</canConflictWithDSTM>
-    <version>0.796</version>
+    <version>0.797</version>
     <description>PLUGIN_YANDEX_DESC</description>
     <defaultState>enabled</defaultState>
     <targetApplication>
