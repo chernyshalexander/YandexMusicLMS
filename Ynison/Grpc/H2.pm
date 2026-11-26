@@ -65,7 +65,9 @@ Ynison state message travels as one frame.
 
 Header blocks ride on L<Plugins::yandex::Ynison::Grpc::HPack>: outbound lists
 are encoded statelessly (literal-without-indexing; names must be lowercase,
-HTTP/2's rule); inbound HEADERS/CONTINUATION payloads feed the one decoder,
+HTTP/2's rule) and must fit ONE frame under the peer's max frame size - a
+bigger block is refused by name, the MVP emits no CONTINUATION frames;
+inbound HEADERS/CONTINUATION payloads feed the one decoder,
 END_HEADERS finishes it. The decoder is created with OUR advertised
 SETTINGS_HEADER_TABLE_SIZE (that is what bounds the tables peers use to
 encode to us; their own setting only concerns our stateless encoder). A
@@ -103,7 +105,10 @@ Only core Perl plus HPack; nothing loads Slim here.
 #
 # Connection-level errors (bad frames, HPACK failures, GOAWAY) end the
 # connection; ops on it answer ok => 0 with a named reason. Nothing dies
-# across the API boundary except caller argument mistakes.
+# across the API boundary except caller argument mistakes. An outbound header
+# block bigger than the peer's max frame size is refused (no CONTINUATION in
+# the MVP); an empty inbound DATA frame gets no WINDOW_UPDATE (a 0 increment
+# would be a protocol error).
 
 use strict;
 use warnings;
@@ -232,6 +237,9 @@ sub send_headers {
     }
     my $block = eval { Plugins::yandex::Ynison::Grpc::HPack::encode_header_list($list) };
     return _err("h2: header encoding failed: $@") if !defined $block;
+    return _err("h2: header block of @{[length $block]} octets exceeds the peer's max frame "
+                . "size $c->{_tx_max_frame} (no outbound CONTINUATION in the MVP)\n")
+        if length($block) > $c->{_tx_max_frame};
     $st->{headers_out} = 1;
     $st->{state} = $st->{state} eq 'half_remote' ? 'closed' : 'half_local' if $end;
     $c->{_out} .= _frame($FRAME{HEADERS}, FLAG_END_HEADERS | ($end ? FLAG_END_STREAM : 0),
@@ -452,17 +460,19 @@ sub _recv_data {
     return _conn_err($c, 'FLOW_CONTROL_ERROR',
         "h2: DATA of $n octets exceeds our stream $sid window\n")
         if $n > $st->{rx_window};
-    $c->{_rx_win_conn} -= $n;
-    $st->{rx_window}   -= $n;
+    if ($n > 0) {                        # an empty DATA frame consumes no window and gets no update
+        $c->{_rx_win_conn} -= $n;
+        $st->{rx_window}   -= $n;
+        # replenish what arrived, aggressively (the plan: never throttle the Ynison push)
+        $c->{_out} .= _frame($FRAME{WINDOW_UPDATE}, 0, 0, pack('N', $n));
+        $c->{_rx_win_conn} += $n;
+        if ($st->{state} ne 'closed') {                   # a closed stream gets no window updates
+            $c->{_out} .= _frame($FRAME{WINDOW_UPDATE}, 0, $sid, pack('N', $n));
+            $st->{rx_window} += $n;
+        }
+    }
     if ($flags & FLAG_END_STREAM) {
         $st->{state} = $st->{state} eq 'half_local' ? 'closed' : 'half_remote';
-    }
-    # replenish what arrived, aggressively (the plan: never throttle the Ynison push)
-    $c->{_out} .= _frame($FRAME{WINDOW_UPDATE}, 0, 0, pack('N', $n));
-    $c->{_rx_win_conn} += $n;
-    if ($st->{state} ne 'closed') {                       # a closed stream gets no window updates
-        $c->{_out} .= _frame($FRAME{WINDOW_UPDATE}, 0, $sid, pack('N', $n));
-        $st->{rx_window} += $n;
     }
     return { type => 'data', stream_id => $sid, data => $payload,
              end_stream => ($flags & FLAG_END_STREAM) ? 1 : 0 };
@@ -571,6 +581,9 @@ sub _recv_ping {
 sub _recv_goaway {
     my ($c, $sid, $payload) = @_;
     if (my $bad = _id_guard('GOAWAY', $sid, 0)) { return _conn_err($c, 'PROTOCOL_ERROR', $bad) }
+    return _conn_err($c, 'FRAME_SIZE_ERROR',
+        "h2: GOAWAY of @{[length $payload]} octets, wants at least 8\n")
+        unless length($payload) >= 8;
     my ($last, $code) = unpack('N N', substr($payload, 0, 8));
     my $name = $ERROR_BY_ID{$code} // "ERROR_$code";
     $c->{_dead} = "GOAWAY received (last stream $last, $name)";
