@@ -33,6 +33,7 @@ use warnings;
 use Storable qw(dclone);
 use Time::HiRes ();
 
+use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 
 use Plugins::yandex::Ynison::Client ();
@@ -82,6 +83,11 @@ sub new {
         can_be_player => 1,
         get_volume => sub { ($player->volume || 0) / 100 },
         on_state => sub { $self->_on_client_state($_[0]) },
+        on_event => sub {                                   # the client's only log channel: surface it
+            my ($level, $msg) = @_;
+            my $m = $level eq 'error' ? 'error' : $level eq 'warn' ? 'warn' : 'info';
+            Slim::Utils::Log::logger('plugin.yandex')->$m("Ynison[new] $msg");
+        },
         on_reclaim => sub { $self->update_state; $self->{_client}->set_active_device($device_id) },
         transport_factory => $o{transport_factory},
         ($o{logger} ? (logger => $o{logger}) : ()),
@@ -295,8 +301,9 @@ sub debug_snapshot {
 
 sub _log {
     my ($self, $level, $msg) = @_;
-    if (my $l = $self->{logger}) { $l->($level, $msg); return }
-    warn "[ynison] $msg\n" if $level eq 'error';
+    my $m = $level eq 'error' ? 'error' : $level eq 'warn' ? 'warn' : 'info';
+    if (my $l = $self->{logger}) { $l->($m, $msg); return }   # test override
+    Slim::Utils::Log::logger('plugin.yandex')->$m("Ynison[new] $msg");
     return;
 }
 
