@@ -359,6 +359,25 @@ sub report_status {
     return $sent;
 }
 
+# heartbeat_status: the periodic app-level keepalive (legacy parity). It skips
+# the dedup and active-device gates on purpose: Ynison keeps a device listed as
+# online only while it keeps reporting, and a passive device otherwise sends
+# nothing for hours. Position/duration are clamped as usual; an unpaused status
+# over an empty queue is refused (constraint 17).
+sub heartbeat_status {
+    my ($self, $progress, $duration, $paused) = @_;
+    return 0 unless $self->{ready};
+    $duration = 0 + ($duration // 0);
+    return 0 if $duration <= 0;
+    $paused = $paused ? 1 : 0;
+    return 0 if !$paused && !defined $self->state->current_track_id;
+    $progress = Plugins::yandex::Ynison::Message::clamp_progress($progress, $duration);
+    return $self->_send(Plugins::yandex::Ynison::Message::update_playing_status(
+        progress_ms => $progress, duration_ms => $duration, paused => $paused,
+        version => Plugins::yandex::Ynison::Message::new_version($self->{device}{device_id}),
+    ), 0);
+}
+
 sub set_player_state {
     my ($self, $player_state) = @_;
     return $self->_send(Plugins::yandex::Ynison::Message::update_player_state($player_state));

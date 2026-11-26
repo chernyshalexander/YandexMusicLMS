@@ -69,6 +69,8 @@ sub new {
         engine              => 'new',
         last_frame          => undef,
         listeners           => [],
+        status_timer        => undef,
+        status_tick_s       => $o{status_tick_s} // 30,
         logger              => $o{logger},
         clock               => $clock,
     }, $class;
@@ -97,6 +99,8 @@ sub new {
         },
         scheduler => $api, clock => $clock,
     );
+    $self->{scheduler_hook} = $api;
+    $self->_arm_status_tick;
     return $self;
 }
 
@@ -116,8 +120,50 @@ sub _device_id_for {
 
 # --- legacy seam ----------------------------------------------------------------
 sub on_state   { my ($self, $cb) = @_; push @{ $self->{listeners} }, $cb; return }
-sub connect    { my ($self) = @_; $self->{_client}->connect; return }
-sub disconnect { my ($self) = @_; $self->{_client}->disconnect; return }
+sub connect {
+    my ($self) = @_;
+    $self->{_client}->connect;
+    $self->_arm_status_tick;
+    return;
+}
+
+# The periodic status keeps the device listed as online (legacy parity) and
+# refreshes the position in the app while we play.
+sub _arm_status_tick {
+    my ($self) = @_;
+    return unless $self->{scheduler_hook};
+    my $s = $self->{scheduler_hook};
+    $self->{status_timer} = $s->{set}->($self->{status_tick_s}, sub { $self->_status_tick });
+    return;
+}
+
+sub _status_tick {
+    my ($self) = @_;
+    $self->{status_timer} = undef;
+    my $c = $self->{_client};
+    if ($c && $c->is_ready) {
+        my $player = $self->{client};
+        my $song = $player->playingSong;
+        my $url = $song && $song->track ? $song->track->url : '';
+        if (defined $url && $url =~ /^yandexmusic:\/\//) {
+            my $dur = int(($song->duration || 0) * 1000);
+            my $prog = 0;
+            eval { $prog = int((Slim::Player::Source::songTime($player) || 0) * 1000) };
+            my $paused = ($player->isPaused || !$player->isPlaying) ? 1 : 0;
+            $c->heartbeat_status($prog, $dur, $paused);
+        }
+    }
+    $self->_arm_status_tick;
+    return;
+}
+sub disconnect {
+    my ($self) = @_;
+    if (my $h = delete $self->{status_timer}) {
+        $self->{scheduler_hook}{kill}->($h) if $self->{scheduler_hook};
+    }
+    $self->{_client}->disconnect;
+    return;
+}
 sub device_id  { my ($self) = @_; return $self->{device_id} }
 sub is_connected { my ($self) = @_; return $self->{_client}->is_ready }
 sub is_active  { my ($self) = @_; return $self->is_connected && $self->{we_are_active} }
