@@ -45,15 +45,17 @@ stored, but still decodes.
 
 decode dies with a terse "hpack: ..." reason (like the protobuf codec;
 network callers wrap it in eval) on malformed input: index 0 or past the
-table end, truncation anywhere inside the block, invalid Huffman padding or
-an embedded EOS, an integer that would not fit 32 bits (nothing legal on
-today's wires comes close; the cap also bounds hostile continuation-byte
-runs), or a dynamic table size update above the protocol maximum given to
-new_decoder (default 4096, the HTTP/2 default of SETTINGS_HEADER_TABLE_SIZE);
-size updates may lower and raise the effective maximum within that ceiling.
-A decoder that died is done for: the block buffer is left untouched
-(deterministically), but the transport must drop the connection - HPACK
-errors are COMPRESSION_ERROR, there is no recovery.
+table end, truncation anywhere inside the block, invalid Huffman padding
+(longer than 7 bits or not all ones) or an embedded EOS, an integer that
+would not fit 32 bits (nothing legal on today's wires comes close; the cap
+also bounds hostile continuation-byte runs), a dynamic table size update
+above the protocol maximum given to new_decoder (default 4096, the HTTP/2
+default of SETTINGS_HEADER_TABLE_SIZE), or a size update that does not
+open its block (RFC 7541 6.3: any number of updates before the first
+field, none after). Size updates may lower and raise the effective maximum
+within that ceiling. A decoder that died is done for: the block buffer is
+left untouched (deterministically), but the transport must drop the
+connection - HPACK errors are COMPRESSION_ERROR, there is no recovery.
 
 Only core Perl plus Encode; nothing loads Slim here.
 
@@ -263,7 +265,11 @@ sub finish {
         my $b = ord(substr $buf, $pos, 1);
         if    ($b & 0x80)           { push @out, [ _indexed($d, $buf, \$pos, $end) ] }          # 1xxxxxxx
         elsif (($b & 0xC0) == 0x40) { push @out, [ _literal($d, $buf, \$pos, $end, 6, 1) ] }    # 01xxxxxx
-        elsif (($b & 0xE0) == 0x20) { _size_update($d, _int($buf, \$pos, $end, 5)) }            # 001xxxxx
+        elsif (($b & 0xE0) == 0x20) {                                                            # 001xxxxx
+            die "hpack: dynamic table size update must open the header block (RFC 7541 6.3)\n"
+                if @out;    # any field decoded already: the update no longer opens the block
+            _size_update($d, _int($buf, \$pos, $end, 5));
+        }
         else                        { push @out, [ _literal($d, $buf, \$pos, $end, 4, 0) ] }    # 000[01]xxxx
     }
     $d->{_buf} = '';
@@ -385,8 +391,8 @@ sub _huffman {   # Appendix B code walk: MSB-first bits through a (length, code)
             }
         }
     }
-    die "hpack: invalid Huffman padding (the trailing bits must be all ones)\n"
-        if $len && $code != (1 << $len) - 1;
+    die "hpack: invalid Huffman padding (at most 7 bits, and they must be all ones)\n"
+        if $len > 7 || $code != (1 << $len) - 1;    # RFC 7541 5.2: EOS prefix only
     return $out;
 }
 
