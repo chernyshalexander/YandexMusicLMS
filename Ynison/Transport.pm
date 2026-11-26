@@ -46,6 +46,23 @@ use Plugins::yandex::Ynison::Message ();
 
 my $C = 'Plugins::yandex::Ynison::Constants';
 
+# Slim::Networking::Async::new_socket always returns a PLAIN HTTP socket
+# ("Default to an HTTP socket..."), even with https => 1 — TLS needs a
+# subclass overriding new_socket (the legacy Ynison.pm did the same).
+{
+    package Plugins::yandex::Ynison::Transport::Async;
+    use base qw(Slim::Networking::Async);
+
+    sub new_socket {
+        my ($self, %args) = @_;
+        if ($args{https}) {
+            require Slim::Networking::Async::Socket::HTTPS;
+            return Slim::Networking::Async::Socket::HTTPS->new(%args);
+        }
+        return $self->SUPER::new_socket(%args);
+    }
+}
+
 sub new {
     my ($class, %o) = @_;
     return bless {
@@ -78,7 +95,7 @@ sub open {
     $self->{conn}     = { host => $o{host}, path => $o{path}, port => $o{port} // $C->YNISON_PORT(), https => $o{https} // 1 };
     $self->{test_sock} = $o{socket};
 
-    my $async = Slim::Networking::Async->new();
+    my $async = Plugins::yandex::Ynison::Transport::Async->new();
     $self->{async} = $async;
     unless ($self->{test_sock}) {
         eval {
