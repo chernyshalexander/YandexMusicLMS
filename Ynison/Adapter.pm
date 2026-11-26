@@ -143,6 +143,12 @@ sub _on_client_state {
     my ($self, $client) = @_;
     my $ev = $client->last_event;
     $self->{we_are_active} = $self->{device_id} eq ($client->state->active_device_id // '') ? 1 : 0;
+    # A foreign-authored queue version means the queue changed elsewhere;
+    # reset the skip dedup so the next legitimate skip publishes even if it
+    # lands on the previously published index.
+    my $q_author = (($client->state->player_queue || {})->{version} || {})->{device_id} // '';
+    $self->{published_index} = undef
+        if $q_author ne '' && $q_author ne $self->{device_id};
     my $ps = $client->state->player_state;
     my $frame = {
         ping => 0,

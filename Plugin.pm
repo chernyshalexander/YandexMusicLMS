@@ -512,6 +512,10 @@ sub _handle_yandex_state_update {
     # This branch runs only for the active device: passive frames have
     # already returned above, so a foreign queue is never cast here.
     if (($state->{engine} // 'legacy') eq 'new') {
+        # The echo of our own skip carries the server-accepted queue; sync
+        # the compat cache before the echo return or skip direction goes stale.
+        $ynison->update_cached_queue($state->{player_state})
+            if $state->{echo} || $state->{suppress_status};
         return if $state->{echo} || $state->{suppress_status};
         $ynison->{relay_frame} = $state->{relay};
         $ynison->{syncing_from_yandex} = 1;
@@ -760,7 +764,16 @@ sub _ynison_maybe_replenish_radio {
 
             return unless @added_items;
 
-            # Clone existing queue and push new items to update Ynison
+            if (($ynison->{engine} // 'legacy') eq 'new') {
+                # The rewritten engine publishes through the Adapter:
+                # 200-item window, index shift, compat cache (lesson L7).
+                $ynison->{syncing_from_yandex} = 1;
+                $ynison->radio_replenish(\@added_items);
+                $ynison->{syncing_from_yandex} = 0;
+                return;
+            }
+
+            # legacy tail: clone queue, append, publish via send_command
             my %updated_queue = %$queue;
             my @updated_list = (@$list, @added_items);
             $updated_queue{playable_list} = \@updated_list;

@@ -75,7 +75,12 @@ sub on_server_error {
     my ($self, $code, %o) = @_;
     my $go = $o{go_away} || 0;
     $self->_adopt(($go ? 'go_away:' : 'basic:') . (defined $code ? $code : ''));
-    $self->{active}  = [ parse_backoff_ladder($o{ladder}) ];
+    my @new_ladder = parse_backoff_ladder($o{ladder});
+    my $sig = join ',', @new_ladder;
+    if ($sig ne join(',', @{ $self->{active} })) {
+        $self->{active} = \@new_ladder;
+        $self->{index}  = 0;                     # a genuinely new ladder restarts the position
+    }
     $self->{go_away} = $go;
     my $retryable = 1;
     if (!$go && defined $o{grpc_code}) {
