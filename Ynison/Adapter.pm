@@ -186,6 +186,17 @@ sub _on_client_state {
             $st->current_track_id // '-', $st->current_index, $st->is_paused,
             (defined $st->active_device_id ? substr($st->active_device_id, 0, 6) . '…' : '-'),
             scalar @{ $st->devices }, $ev->{is_echo} ? 1 : 0, $ev->{status_is_relay} ? 1 : 0));
+
+        if ($self->{_frames} == 1) {                 # one-time roster: prove our device is published
+            for my $d (@{ $st->devices }) {
+                my $info = $d->{info} || {};
+                $self->_log('info', sprintf('  device: %s%s [%s] app=%s ver=%s offline=%d',
+                    ($info->{device_id} // '') eq $self->{device_id} ? '* ' : '  ',
+                    $info->{title} // '?', $info->{type} // '?',
+                    $info->{app_name} // '?', $info->{app_version} // '-',
+                    $d->{is_offline} ? 1 : 0));
+            }
+        }
     }
     for my $cb (@{ $self->{listeners} }) {
         eval { $cb->($frame) };
