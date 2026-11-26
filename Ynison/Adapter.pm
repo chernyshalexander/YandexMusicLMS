@@ -187,6 +187,15 @@ sub _on_client_state {
             (defined $st->active_device_id ? substr($st->active_device_id, 0, 6) . '…' : '-'),
             scalar @{ $st->devices }, $ev->{is_echo} ? 1 : 0, $ev->{status_is_relay} ? 1 : 0));
 
+        my $stt = $st->status || {};
+        my $s_author = (($stt->{version} || {})->{device_id} // '');
+        my $q_author = ((($st->player_queue || {})->{version} || {})->{device_id} // '');
+        $self->_log('info', sprintf('  f%d: prog=%s dur=%s paused=%d author=%s qauthor=%s',
+            $self->{_frames}, $stt->{progress_ms} // '-', $stt->{duration_ms} // '-',
+            ($stt->{paused} ? 1 : 0),
+            ($s_author eq $self->{device_id} ? 'US' : ($s_author || '-')),
+            ($q_author eq $self->{device_id} ? 'US' : ($q_author || '-'))));
+
         if ($self->{_frames} == 1) {                 # one-time roster: prove our device is published
             for my $d (@{ $st->devices }) {
                 my $info = $d->{info} || {};

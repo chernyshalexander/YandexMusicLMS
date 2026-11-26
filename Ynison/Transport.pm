@@ -254,7 +254,10 @@ sub send_pong { $_[0]->_queue_ctrl(Plugins::yandex::Ynison::WSFraming::encode_po
 
 sub _queue_ctrl {
     my ($self, $frame) = @_;
-    return unless $self->{socket};
+    unless ($self->{socket}) {
+        $self->_log('warn', 'control frame dropped: no socket');
+        return;
+    }
     push @{ $self->{write_q} }, { data => $frame, sent_at => time(), attempts => 0 };
     Slim::Networking::IO::Select::addWrite($self->{socket}, sub { $self->_on_writable(@_) });
     return;
@@ -273,6 +276,8 @@ sub _on_writable {
     }
     my $n = $fh->syswrite($data);
     if (!defined $n) {
+        $self->_log('info', sprintf('write: %s (queued %d)', $!, scalar @{ $self->{write_q} }))
+            if $!{EAGAIN} || $!{EWOULDBLOCK};
         return if $!{EAGAIN} || $!{EWOULDBLOCK};
         $self->_fail("write error: $!");
         return;
