@@ -174,6 +174,19 @@ sub _on_client_state {
         engine                    => 'new',
     };
     $self->{last_frame} = $frame;
+
+    # Live visibility: the first state frame and every meaningful change.
+    $self->{_frames} = ($self->{_frames} // 0) + 1;
+    if ($self->{_frames} == 1
+        || $ev->{item_changed} || $ev->{active_changed} || $ev->{status_is_relay})
+    {
+        my $st = $client->state;
+        $self->_log('info', sprintf('state #%d: track=%s idx=%s paused=%d active=%s devices=%d echo=%d relay=%d',
+            $self->{_frames},
+            $st->current_track_id // '-', $st->current_index, $st->is_paused,
+            (defined $st->active_device_id ? substr($st->active_device_id, 0, 6) . '…' : '-'),
+            scalar @{ $st->devices }, $ev->{is_echo} ? 1 : 0, $ev->{status_is_relay} ? 1 : 0));
+    }
     for my $cb (@{ $self->{listeners} }) {
         eval { $cb->($frame) };
         $self->_log('error', "listener error: $@") if $@;
