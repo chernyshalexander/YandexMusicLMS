@@ -84,6 +84,7 @@ sub new {
         last_frame_s => undef,                  # last inbound state frame (any author)
         last_peer_s => undef,                   # last frame listing an ONLINE foreign device
         conv_probe_next => 0,                   # rate limit for redirector probes
+        was_active => 0,                        # the last frame made THIS device active
         auth_refreshed => 0,                    # one token refresh attempt per run
         interval_s  => undef,
         stopped     => 0,
@@ -197,10 +198,11 @@ sub _on_channel_open {
     $self->{last_frame_s} = $self->{clock}->();         # the quiet clock restarts per session
     $self->{last_peer_s}  = $self->{clock}->();
     $self->_arm_convergence;
-    # Reclaim the active device after the settle window of a RECONNECT (the
-    # condition on settle_until separates this from the first connect, whose
-    # empty registration already makes the server drop us from the stage).
-    if ($self->{settle_until} && $self->{on_reclaim} && $self->{scheduler}) {
+    # Reclaim the active device after the settle window of a RECONNECT, but
+    # only when this device actually owned the stage before the drop: a
+    # passive device reconnecting (or converging into another session) must
+    # not steal the stage from whoever is playing there now.
+    if ($self->{settle_until} && $self->{was_active} && $self->{on_reclaim} && $self->{scheduler}) {
         $self->{reclaim_timer} = $self->{scheduler}{set}->($C->SETTLE_WINDOW() + $C->RECLAIM_DELAY(), sub {
             return unless $self->{ready};
             delete $self->{reclaim_timer};              # the timer already fired
@@ -313,6 +315,7 @@ sub _on_frame {
     $self->{saw_frame} = 1;
     $self->{last_frame_s} = $self->{clock}->();
     $self->{last_event} = $self->{state}->apply_frame($payload);
+    $self->{was_active} = $self->state->is_active ? 1 : 0;
     for my $d (@{ $self->state->devices }) {
         next if ($d->{info}{device_id} // '') eq $self->{device}{device_id};
         next if $d->{is_offline};
