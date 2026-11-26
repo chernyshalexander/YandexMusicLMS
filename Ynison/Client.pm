@@ -482,8 +482,11 @@ sub _convergence_tick {
     return if $self->{reconnect_timer};                 # a reconnect owns the socket
     return if $self->state->is_active;                  # we own the stage: peers join us
     my $now = $self->{clock}->();
-    return if defined $self->{last_frame_s} && $now - $self->{last_frame_s} < $C->CONV_QUIET_S();
-    return if defined $self->{last_peer_s}  && $now - $self->{last_peer_s}  < $C->CONV_QUIET_S();
+    # The 1 s tolerance absorbs scheduler skew: the first state frame usually
+    # lands a fraction of a second after open, and an exact comparison would
+    # defer every probe to the second tick.
+    return if defined $self->{last_frame_s} && $now - $self->{last_frame_s} < $C->CONV_QUIET_S() - 1;
+    return if defined $self->{last_peer_s}  && $now - $self->{last_peer_s}  < $C->CONV_QUIET_S() - 1;
     return if $now < $self->{conv_probe_next};
     $self->{conv_probe_next} = $now + $C->CONV_PROBE_EVERY_S();
     $self->_log('info', 'session quiet and lonely; probing the redirector for the account session');
