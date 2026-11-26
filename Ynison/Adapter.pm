@@ -83,6 +83,7 @@ sub new {
             app_version => $C->APP_VERSION(),
         },
         can_be_player => 1,
+        convergence => 1,                                   # probe the redirector when lonely
         get_volume => sub { ($player->volume || 0) / 100 },
         on_state => sub { $self->_on_client_state($_[0]) },
         on_event => sub {                                   # the client's only log channel: surface it

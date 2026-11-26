@@ -59,6 +59,8 @@ use constant {
 
     SETTLE_WINDOW   => 2.0,
     RECLAIM_DELAY   => 0.3,
+    CONV_QUIET_S        => 600,  # no frames and no online peers this long: the session looks lonely
+    CONV_PROBE_EVERY_S  => 600,  # at most one convergence probe per this interval
     STATUS_TICK     => 5,
     VOLUME_DEBOUNCE => 0.2,
     QUEUE_WINDOW    => 200,

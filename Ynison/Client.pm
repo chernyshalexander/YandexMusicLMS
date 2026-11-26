@@ -78,6 +78,12 @@ sub new {
         first_frame_timer => undef,
         reconnect_timer => undef,               # at most one retry in flight (the handle)
         reclaim_timer => undef,                 # on_reclaim after a reconnect's settle window
+        conv_timer => undef,                    # session-convergence check chain
+        convergence => $o{convergence} // 0,    # enabled by the production wiring
+        session_id => undef,                    # the session this channel belongs to
+        last_frame_s => undef,                  # last inbound state frame (any author)
+        last_peer_s => undef,                   # last frame listing an ONLINE foreign device
+        conv_probe_next => 0,                   # rate limit for redirector probes
         auth_refreshed => 0,                    # one token refresh attempt per run
         interval_s  => undef,
         stopped     => 0,
@@ -163,6 +169,7 @@ sub connect {
 
 sub _connect_state {
     my ($self, $host, $ticket, $session_id) = @_;
+    $self->{session_id} = defined $session_id ? "$session_id" : undef;
     my ($h, $p) = $host =~ /^(.+):(\d+)$/ ? ($1, 0 + $2) : ($host, $C->YNISON_PORT());
     my $t = $self->_factory_transport;
     $t->set_heartbeat($self->{interval_s} // $C->WS_HEARTBEAT_DEFAULT());
@@ -187,6 +194,9 @@ sub _on_channel_open {
     $self->{settle_until} = $self->{ever_connected} ? $self->{clock}->() + $C->SETTLE_WINDOW() : 0;
     $self->{ever_connected} = 1;
     delete $self->{reconnect_timer};                    # a tick dialing while ready
+    $self->{last_frame_s} = $self->{clock}->();         # the quiet clock restarts per session
+    $self->{last_peer_s}  = $self->{clock}->();
+    $self->_arm_convergence;
     # Reclaim the active device after the settle window of a RECONNECT (the
     # condition on settle_until separates this from the first connect, whose
     # empty registration already makes the server drop us from the stage).
@@ -250,6 +260,9 @@ sub _on_channel_closed {
     if (my $h = delete $self->{first_frame_timer}) {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
+    if (my $h = delete $self->{conv_timer}) {
+        $self->{scheduler}{kill}->($h) if $self->{scheduler};
+    }
     $self->{policy}->on_transport_failure;
     if (my $h = delete $self->{reclaim_timer}) {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
@@ -298,7 +311,14 @@ sub _on_frame {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
     $self->{saw_frame} = 1;
+    $self->{last_frame_s} = $self->{clock}->();
     $self->{last_event} = $self->{state}->apply_frame($payload);
+    for my $d (@{ $self->state->devices }) {
+        next if ($d->{info}{device_id} // '') eq $self->{device}{device_id};
+        next if $d->{is_offline};
+        $self->{last_peer_s} = $self->{clock}->();
+        last;
+    }
     $self->{policy}->on_healthy;
     if ($self->{on_state}) {
         eval { $self->{on_state}->($self) };
@@ -413,6 +433,7 @@ sub debug_snapshot {
         progress_ms => $self->state->progress_ms,
         strict_queue => scalar @{ $self->{strict_queue} },
         reconnecting => $self->is_reconnecting,
+        session_id   => $self->{session_id},
         last_event  => $self->{last_event},
     };
 }
@@ -423,11 +444,78 @@ sub disconnect {
     $self->{ready} = 0;
     if (my $t = delete $self->{ws}) { $t->close }
     if (my $t = delete $self->{redirect_ws}) { $t->close }
-    for my $key (qw(first_frame_timer reconnect_timer reclaim_timer)) {
+    for my $key (qw(first_frame_timer reconnect_timer reclaim_timer conv_timer)) {
         if (my $h = delete $self->{$key}) {
             $self->{scheduler}{kill}->($h) if $self->{scheduler};
         }
     }
+    return;
+}
+
+# --- session convergence ------------------------------------------------------
+
+# The redirector owns the account's canonical session. A client that connects
+# while no other device is around can be handed its own private session and
+# then never learn that a phone has started (or rejoined) the canonical one:
+# sessions do not broadcast across contexts. The server's own remedy is the
+# 300100001 rebalance, which only fires on conflicts. So a client that has
+# been quiet and lonely for a while probes the redirector: if it now points
+# at a different session, drop this channel and reconnect into that one.
+sub _arm_convergence {
+    my ($self) = @_;
+    return unless $self->{convergence} && $self->{scheduler};
+    if (my $h = delete $self->{conv_timer}) { $self->{scheduler}{kill}->($h) }
+    $self->{conv_timer} = $self->{scheduler}{set}->($C->CONV_QUIET_S(), sub {
+        return if $self->{stopped};
+        delete $self->{conv_timer};                     # the timer already fired
+        $self->_convergence_tick;
+        $self->_arm_convergence;                        # the chain lives while the channel does
+    });
+}
+
+sub _convergence_tick {
+    my ($self) = @_;
+    return unless $self->{ready} && !$self->{stopped};
+    return if $self->{reconnect_timer};                 # a reconnect owns the socket
+    return if $self->state->is_active;                  # we own the stage: peers join us
+    my $now = $self->{clock}->();
+    return if defined $self->{last_frame_s} && $now - $self->{last_frame_s} < $C->CONV_QUIET_S();
+    return if defined $self->{last_peer_s}  && $now - $self->{last_peer_s}  < $C->CONV_QUIET_S();
+    return if $now < $self->{conv_probe_next};
+    $self->{conv_probe_next} = $now + $C->CONV_PROBE_EVERY_S();
+    $self->_log('info', 'session quiet and lonely; probing the redirector for the account session');
+    my $t = $self->_factory_transport;
+    $t->fetch_redirect($self->{redirect_host}, $C->YNISON_REDIRECT_PATH(), $self->_headers, sub {
+        my (undef, $data, $status) = @_;
+        return if $self->{stopped};
+        if (!$data || !defined $data->{session_id}) {
+            # A throttled or failed probe must stay policy-neutral: the chain re-arms.
+            $self->_log('warn', 'convergence probe failed' . (defined $status ? " (HTTP $status)" : ''));
+            return;
+        }
+        my $sid = "$data->{session_id}";
+        if (!defined $self->{session_id} || $sid eq $self->{session_id}) {
+            $self->_log('debug', "convergence probe: already in session $sid");
+            return;
+        }
+        $self->_log('info', "redirector points at session $sid, ours is $self->{session_id}; converging");
+        $self->converge_to;
+    }, port => $self->{redirect_port}, https => $self->{tls});
+}
+
+# Drop the current channel and reconnect through the redirector immediately.
+# Convergence is a healthy operation, not a failure: the reconnect ladder must
+# not learn about it.
+sub converge_to {
+    my ($self) = @_;
+    $self->{ready} = 0;
+    if (my $t = delete $self->{ws}) { $t->close }
+    for my $key (qw(first_frame_timer reclaim_timer conv_timer)) {
+        if (my $h = delete $self->{$key}) {
+            $self->{scheduler}{kill}->($h) if $self->{scheduler};
+        }
+    }
+    $self->connect;
     return;
 }
 
