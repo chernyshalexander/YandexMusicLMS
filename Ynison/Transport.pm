@@ -77,6 +77,8 @@ sub new {
         decoder   => Plugins::yandex::Ynison::WSFraming::Decoder->new,
         heartbeat => undef,          # scheduler handle
         hb_sec    => 0,
+        pong_wait => undef,          # liveness timer handle
+        pong_sec  => Plugins::yandex::Ynison::Constants::WS_PING_TIMEOUT_DEFAULT(),
         open      => 0,
         closed    => 0,
     }, $class;
@@ -163,6 +165,9 @@ sub _teardown {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
         $self->{heartbeat} = undef;
     }
+    if (my $h = delete $self->{pong_wait}) {
+        $self->{scheduler}{kill}->($h) if $self->{scheduler};
+    }
     if (my $fh = delete $self->{socket}) {
         Slim::Networking::IO::Select::removeRead($fh);
         Slim::Networking::IO::Select::removeWrite($fh);
@@ -195,11 +200,29 @@ sub set_heartbeat {
     return;
 }
 
+sub set_ping_timeout { $_[0]->{pong_sec} = $_[1] if $_[1] && $_[1] > 0; return }
+
 sub _hb_tick {
     my ($self) = @_;
     return unless $self->{open};
     $self->send_ping;
+    # Liveness: a ping must be answered (pong or any frame) within pong_sec,
+    # or the channel is half-open and the server already dropped us (plan 3.1).
+    if (my $s = $self->{scheduler}) {
+        $self->{pong_wait} = $s->{set}->($self->{pong_sec}, sub {
+            return unless $self->{open};
+            $self->_fail('no pong within ' . $self->{pong_sec} . 's');
+        });
+    }
     $self->{heartbeat} = $self->{scheduler}{set}->($self->{hb_sec}, sub { $self->_hb_tick });
+    return;
+}
+
+sub _alive {
+    my ($self) = @_;
+    if (my $h = delete $self->{pong_wait}) {
+        $self->{scheduler}{kill}->($h) if $self->{scheduler};
+    }
     return;
 }
 
@@ -325,6 +348,7 @@ sub _on_readable {
 sub _pump_frames {
     my ($self) = @_;
     my $buf = delete $self->{read_buf};
+    $self->_alive if defined $buf && length $buf;
     for my $ev ($self->{decoder}->feed($buf)) {
         my $type = $ev->{type};
         if ($type eq 'text') {

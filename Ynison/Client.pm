@@ -154,6 +154,8 @@ sub connect {
         my $interval = $ka && $ka->{keep_alive_time_seconds} ? 0 + $ka->{keep_alive_time_seconds} : $C->WS_HEARTBEAT_DEFAULT();
         $interval = $C->WS_MIN_HEARTBEAT() if $interval < $C->WS_MIN_HEARTBEAT();
         $self->{interval_s} = $interval;
+        $self->{ping_timeout_s} = $ka && $ka->{keep_alive_timeout_seconds}
+            ? 0 + $ka->{keep_alive_timeout_seconds} : $C->WS_PING_TIMEOUT_DEFAULT();
         $self->_connect_state($data->{host}, $data->{redirect_ticket}, $data->{session_id});
     }, port => $self->{redirect_port}, https => $self->{tls});
     return;
@@ -164,6 +166,8 @@ sub _connect_state {
     my ($h, $p) = $host =~ /^(.+):(\d+)$/ ? ($1, 0 + $2) : ($host, $C->YNISON_PORT());
     my $t = $self->_factory_transport;
     $t->set_heartbeat($self->{interval_s} // $C->WS_HEARTBEAT_DEFAULT());
+    $t->set_ping_timeout($self->{ping_timeout_s} // $C->WS_PING_TIMEOUT_DEFAULT())
+        if $t->can('set_ping_timeout');
     $t->open(
         host => $h, path => $C->YNISON_STATE_PATH(), https => $self->{tls}, port => $p,
         headers => $self->_headers($ticket, $session_id),

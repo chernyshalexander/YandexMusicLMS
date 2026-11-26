@@ -177,8 +177,10 @@ sub _classify {
     for my $w (reverse @{ $s->{watermarks} }) {
         next if $now - $w->{at} > $C->ECHO_WATERMARK_WINDOW_S();
         next unless $track eq $w->{track};
-        return (1, 1) if abs($progress - $w->{progress}) <= 1
-            && $duration == $w->{duration} && $paused == $w->{paused};
+        # Server echoes may round the duration and advance the position a bit;
+        # a 1 s window still separates our own send from a peer seek.
+        return (1, 1) if abs($progress - $w->{progress}) <= 1000
+            && abs($duration - $w->{duration}) <= 1000 && $paused == $w->{paused};
     }
     return (0, 0);
 }
