@@ -603,9 +603,19 @@ sub _apply_yandex_state {
 
         _ynison_sync_play_pause($client, $remote_paused);
     } elsif ($same_queue) {
-        $log->info("YANDEX: NEXT/PREV to index $remote_idx (track=$remote_track)");
+        # Navigate by TRACK ID inside the recorded LMS order: the LMS
+        # playlist can diverge from the Ynison playable_list order, and
+        # navigating by the Ynison index then plays the wrong track —
+        # a jump loop with buffering on every state broadcast.
+        my $target = $remote_idx;
+        if (my $ids = $ynison->{lms_queue_ids}) {
+            for my $i (0 .. $#$ids) {
+                if ($ids->[$i] eq $remote_track) { $target = $i; last }
+            }
+        }
+        $log->info("YANDEX: NEXT/PREV: remote idx $remote_idx track $remote_track -> LMS index $target");
         $ynison->{seek_grace_until} = time() + 3.0;
-        $client->execute(['playlist', 'index', $remote_idx]);
+        $client->execute(['playlist', 'index', $target]);
         _ynison_sync_play_pause($client, $remote_paused);
     } else {
         $log->info(sprintf('YANDEX: Cast: entity=%s tracks=%d idx=%d track=%s',
@@ -674,6 +684,16 @@ sub _rebuild_lms_queue_from_yandex {
     my @playable_list = @{$queue->{playable_list} // []};
     my $current_index = $queue->{current_playable_index} // 0;
     return unless @playable_list;
+
+    # Remember the LMS playlist order (it can diverge from the Ynison
+    # playable_list order after edits/rebuilds) so NEXT/PREV can navigate
+    # by track id instead of by Ynison index — otherwise a wrong track
+    # plays and every state broadcast loops with buffering.
+    $ynison->{lms_queue_ids} = [
+        map { ($_->{playable_id} // '') }
+        grep { ($_->{playable_type} // '') eq 'TRACK' }
+        @playable_list
+    ];
 
     $log->info(sprintf('YANDEX: Rebuilding queue: %d tracks idx=%d paused=%d pos=%ds',
         scalar(@playable_list), $current_index, $start_paused ? 1 : 0, $initial_pos));
