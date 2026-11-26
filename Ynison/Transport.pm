@@ -206,12 +206,15 @@ sub _hb_tick {
     my ($self) = @_;
     return unless $self->{open};
     $self->send_ping;
-    $self->_log('info', sprintf('heartbeat: ping sent; last inbound frame %s s ago',
-        defined $self->{last_rx} ? int(time() - $self->{last_rx}) : -1));
+    $self->_log('info', sprintf('heartbeat: ping sent; last inbound frame %s s ago; pong_sec=%s sched=%s',
+        defined $self->{last_rx} ? int(time() - $self->{last_rx}) : -1,
+        defined $self->{pong_sec} ? $self->{pong_sec} : 'UNDEF',
+        $self->{scheduler} ? 'yes' : 'NO'));
     # Liveness: a ping must be answered (pong or any frame) within pong_sec,
     # or the channel is half-open and the server already dropped us (plan 3.1).
     if (my $s = $self->{scheduler}) {
         $self->{pong_wait} = $s->{set}->($self->{pong_sec}, sub {
+            $self->_log('info', 'liveness timer fired; open=' . ($self->{open} ? 1 : 0));
             return unless $self->{open};
             $self->_fail('no pong within ' . $self->{pong_sec} . 's');
         });
