@@ -27,6 +27,13 @@ use constant {
     YNISON_ORIGIN        => 'https://music.yandex.ru',
     YNISON_PORT          => 443,
 
+    # the gRPC transport (pref ynison_transport=grpc); the WS path ignores these.
+    # Endpoints live-verified (2026-11-26): the redirector answers on the .net host.
+    GRPC_REDIRECT_HOST   => 'ynison.music.yandex.net',
+    GRPC_REDIRECT_METHOD => '/ynison_redirect.YnisonRedirectService/GetRedirectToYnison',
+    GRPC_STATE_METHOD    => '/ynison_state.YnisonStateService/PutYnisonState',
+    GRPC_ALPN            => 'h2',
+
     DEVICE_TYPE_WEB     => 'WEB',    # DeviceType.WEB as protobuf-JSON (enum names)
     DEVICE_TYPE_WEB_NUM => 1,        # DeviceType.WEB in the Sec-WebSocket-Protocol header (numbers)
     APP_NAME            => 'yandex-music-lms',
