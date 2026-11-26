@@ -206,6 +206,8 @@ sub _hb_tick {
     my ($self) = @_;
     return unless $self->{open};
     $self->send_ping;
+    $self->_log('info', sprintf('heartbeat: ping sent; last inbound frame %s s ago',
+        defined $self->{last_rx} ? int(time() - $self->{last_rx}) : -1));
     # Liveness: a ping must be answered (pong or any frame) within pong_sec,
     # or the channel is half-open and the server already dropped us (plan 3.1).
     if (my $s = $self->{scheduler}) {
@@ -348,7 +350,10 @@ sub _on_readable {
 sub _pump_frames {
     my ($self) = @_;
     my $buf = delete $self->{read_buf};
-    $self->_alive if defined $buf && length $buf;
+    if (defined $buf && length $buf) {
+        $self->{last_rx} = time();
+        $self->_alive;
+    }
     for my $ev ($self->{decoder}->feed($buf)) {
         my $type = $ev->{type};
         if ($type eq 'text') {
