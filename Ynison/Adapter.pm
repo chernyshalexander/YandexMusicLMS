@@ -90,7 +90,11 @@ sub new {
         },
         on_reclaim => sub { $self->update_state; $self->{_client}->set_active_device($device_id) },
         transport_factory => $o{transport_factory},
-        ($o{logger} ? (logger => $o{logger}) : ()),
+        logger => sub {                                     # Transport/_log passthrough: surface in server.log
+            my ($level, $msg) = @_;
+            my $m = $level eq 'error' ? 'error' : $level eq 'warn' ? 'warn' : 'info';
+            Slim::Utils::Log::logger('plugin.yandex')->$m("Ynison[new] $msg");
+        },
         scheduler => $api, clock => $clock,
     );
     return $self;
