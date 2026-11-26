@@ -263,6 +263,11 @@ sub _on_handshake {
     return unless defined $status;                     # header block incomplete
 
     if ($status != 101) {
+        # Diagnostic: the edge writes the rejection reason into the body; log
+        # the remainder of the buffer (up to 300 bytes) with the status.
+        my $body = substr($self->{read_buf}, 0, 300) // '';
+        $body =~ s/[^\x20-\x7e]/./g;
+        $self->_log('warn', "handshake $status body: $body");
         $self->_fail("handshake failed: $status", $status);
         return;
     }
