@@ -598,8 +598,11 @@ sub _on_h2_event {
         # streams after a GOAWAY; the front nonetheless serves the covered
         # stream), so the request keeps being served and no NEW stream starts.
         if ($ev->{draining}) {
+            # Wording note: LMS logs carry no level field, and viewers color by
+            # substring - spelling the code as "NO_ERROR" made every healthy
+            # connection look like an error. "code 0" says the same thing.
             $self->_log('info', "grpc: connection draining"
-                . " (GOAWAY NO_ERROR, last stream $ev->{last_stream_id}): the open"
+                . " (GOAWAY code 0, last stream $ev->{last_stream_id}): the open"
                 . " stream keeps being served");
             return;
         }
