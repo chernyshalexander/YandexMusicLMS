@@ -58,7 +58,7 @@ sub page {
 }
 
 sub prefs {
-    return ($prefs, qw(menuLocation translitSearch max_bitrate use_raw_transport remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection show_history show_resume_quick_item progress_save_interval search_podcasts search_waves enable_ynison ynison_debug ynison_engine ynison_transport show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play dstm_wheel_rebuild aes_backend demux_backend));
+    return ($prefs, qw(menuLocation translitSearch max_bitrate use_raw_transport remove_duplicates show_chart show_new_releases show_new_playlists show_audiobooks_in_collection show_history show_resume_quick_item progress_save_interval search_podcasts search_waves enable_ynison ynison_debug ynison_transport show_wave_wizard wizard_station_type wizard_cat_diversity wizard_cat_mood wizard_cat_language vibe_wheel_rebuild_on_play dstm_wheel_rebuild aes_backend demux_backend));
 }
 
 sub handler {
@@ -508,11 +508,10 @@ sub handler {
 		$params->{pref_search_waves}                   ||= 0;
 		$params->{pref_enable_ynison}                  ||= 0;
 		$params->{pref_ynison_debug}                   ||= 0;
-		$params->{pref_ynison_engine}                  ||= 'legacy';
-		# basic.html has no field for this pref: an ||= here would fill 'ws'
-		# on every save and the generic save loop would write it back, silently
-		# reverting a manually-set grpc. Round-trip the stored value instead.
-		$params->{pref_ynison_transport}               = $prefs->get('ynison_transport') || 'ws';
+		# basic.html has a submitting select for this pref, so an ||= default
+		# is save-safe: a submitted value always wins, an absent param (the
+		# form render path) shows the stored choice or ws.
+		$params->{pref_ynison_transport}               ||= 'ws';
 		$params->{pref_show_wave_wizard}               ||= 0;
 		$params->{pref_wizard_station_type}            //= 'activity';
 		$params->{pref_wizard_cat_diversity}           ||= 0;

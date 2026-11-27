@@ -958,11 +958,11 @@ desc="PLUGIN_YANDEX_SHOW_AUDIOBOOKS_IN_COLLECTION_DESC" %]
 </div>
 [% END %]
 
-[% WRAPPER setting title="PLUGIN_YANDEX_YNISON_ENGINE" desc="PLUGIN_YANDEX_YNISON_ENGINE_DESC" %]
+[% WRAPPER setting title="PLUGIN_YANDEX_YNISON_TRANSPORT" desc="PLUGIN_YANDEX_YNISON_TRANSPORT_DESC" %]
 <div class="prefDesc">
-    <select name="pref_ynison_engine" id="pref_ynison_engine">
-        <option value="legacy" [% IF prefs.ynison_engine == 'legacy' %]selected[% END %]>legacy</option>
-        <option value="new" [% IF prefs.ynison_engine == 'new' %]selected[% END %]>new</option>
+    <select name="pref_ynison_transport" id="pref_ynison_transport">
+        <option value="ws" [% IF prefs.ynison_transport == 'ws' %]selected[% END %]>ws (WebSocket)</option>
+        <option value="grpc" [% IF prefs.ynison_transport == 'grpc' %]selected[% END %]>grpc (native gRPC)</option>
     </select>
 </div>
 [% END %]

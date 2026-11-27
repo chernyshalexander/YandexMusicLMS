@@ -381,13 +381,12 @@ sub _start_ynison_for_player {
     my $token    = $accounts->{$userId}{token} || return;
     my $uid      = $api_clients{$userId}->get_me()->{uid} || return;
 
-    my $engine = $prefs->get('ynison_engine') || 'legacy';
     my $ynison;
-    if ($engine eq 'new') {
+    {
         require Plugins::yandex::Ynison::Adapter;
         my %opts;
-        # The transport pref only affects the new-engine path; legacy stays
-        # untouched. The factory closure must carry a REAL logger:
+        # The transport pref picks the wire: ws (default) or the native gRPC
+        # client. The factory closure must carry a REAL logger:
         # Client._factory_transport passes logger => sub {} (commit 8aece25
         # lesson), so without it every GrpcTransport diagnostic would be lost.
         if (($prefs->get('ynison_transport') || 'ws') eq 'grpc') {
@@ -405,10 +404,6 @@ sub _start_ynison_for_player {
             };
         }
         $ynison = Plugins::yandex::Ynison::Adapter->new($player, $token, $uid, %opts);
-    }
-    else {
-        require Plugins::yandex::Ynison;
-        $ynison = Plugins::yandex::Ynison->new($player, $token, $uid);
     }
     $ynison_instances{$player->id()} = $ynison;
 
@@ -559,42 +554,17 @@ sub _handle_yandex_state_update {
     # update_cached_queue. A relay frame must not seek (lesson L9).
     # This branch runs only for the active device: passive frames have
     # already returned above, so a foreign queue is never cast here.
-    if (($state->{engine} // 'legacy') eq 'new') {
-        # The echo of our own skip carries the server-accepted queue; sync
-        # the compat cache before the echo return or skip direction goes stale.
-        $ynison->update_cached_queue($state->{player_state})
-            if $state->{echo} || $state->{suppress_status};
-        return if $state->{echo} || $state->{suppress_status};
-        $ynison->{relay_frame} = $state->{relay};
-        $ynison->{syncing_from_yandex} = 1;
-        eval { _apply_yandex_state($client, $ynison, $state->{player_state}) };
-        $log->error("YANDEX: Error applying state: $@") if $@;
-        $ynison->{syncing_from_yandex} = 0;
-        $ynison->{relay_frame} = 0;
-        return;
-    }
-
-    my $player_state = $state->{player_state};
-    return unless $player_state;
-
-    # Echo filter:
-    # A state update is our own echo if and only if BOTH player_queue version
-    # and status version were authored by our device_id.
-    # If another device sends play/pause or next, queue_author might remain ours
-    # while status_author becomes the remote device.
-    my $our_id   = $ynison->device_id;
-    my $q_author = (($player_state->{player_queue} // {})->{version} // {})->{device_id} // '';
-    my $s_author = (($player_state->{status}       // {})->{version} // {})->{device_id} // '';
-
-    if ($q_author eq $our_id && $s_author eq $our_id) {
-        $log->debug('YANDEX: Skipping own echo (both player_queue and status versions belong to this device)');
-        return;
-    }
-
+    # The echo of our own skip carries the server-accepted queue; sync
+    # the compat cache before the echo return or skip direction goes stale.
+    $ynison->update_cached_queue($state->{player_state})
+        if $state->{echo} || $state->{suppress_status};
+    return if $state->{echo} || $state->{suppress_status};
+    $ynison->{relay_frame} = $state->{relay};
     $ynison->{syncing_from_yandex} = 1;
-    eval { _apply_yandex_state($client, $ynison, $player_state) };
+    eval { _apply_yandex_state($client, $ynison, $state->{player_state}) };
     $log->error("YANDEX: Error applying state: $@") if $@;
     $ynison->{syncing_from_yandex} = 0;
+    $ynison->{relay_frame} = 0;
 }
 
 sub _apply_yandex_state {
@@ -845,33 +815,11 @@ sub _ynison_maybe_replenish_radio {
 
             return unless @added_items;
 
-            if (($ynison->{engine} // 'legacy') eq 'new') {
-                # The rewritten engine publishes through the Adapter:
-                # 200-item window, index shift, compat cache (lesson L7).
-                $ynison->{syncing_from_yandex} = 1;
-                $ynison->radio_replenish(\@added_items);
-                $ynison->{syncing_from_yandex} = 0;
-                return;
-            }
-
-            # legacy tail: clone queue, append, publish via send_command
-            my %updated_queue = %$queue;
-            my @updated_list = (@$list, @added_items);
-            $updated_queue{playable_list} = \@updated_list;
-            $updated_queue{version}       = $ynison->_new_version();
-
-            $ynison->{yandex_queue} = \%updated_queue;
-
-            my $state = eval { $ynison->_build_player_state() };
-            if ($state) {
-                $state->{player_queue} = \%updated_queue;
-                $ynison->send_command({
-                    update_player_state        => { player_state => $state },
-                    rid                        => Plugins::yandex::Ynison::_generate_request_id(),
-                    player_action_timestamp_ms => "" . Plugins::yandex::Ynison::_get_timestamp(),
-                    activity_interception_type => 'DO_NOT_INTERCEPT_BY_DEFAULT',
-                });
-            }
+            # Publish through the Adapter: 200-item window, index shift,
+            # compat cache (lesson L7).
+            $ynison->{syncing_from_yandex} = 1;
+            $ynison->radio_replenish(\@added_items);
+            $ynison->{syncing_from_yandex} = 0;
         },
         sub {
             my $err = shift;
@@ -1016,21 +964,15 @@ sub playerEventCallback {
                     $ynison->update_state();
                 }
                 elsif ($command eq 'jump') {
-                    if (($prefs->get('ynison_engine') || 'legacy') eq 'new') {
-                        my $song = $client->playingSong();
-                        my ($tid) = $song && $song->track ? ($song->track->url =~ /yandexmusic:\/\/(\d+)/) : ();
-                        my $list = $ynison->{yandex_queue} ? ($ynison->{yandex_queue}{playable_list} || []) : [];
-                        my $cached = $ynison->{yandex_queue}{current_playable_index} // -1;
-                        my $back = 0;
-                        for my $i (0 .. $#$list) {
-                            if (($list->[$i]{playable_id} // '') eq ($tid // '')) { $back = ($i < $cached) ? 1 : 0; last }
-                        }
-                        $back ? $ynison->skip_back : $ynison->skip_forward;
+                    my $song = $client->playingSong();
+                    my ($tid) = $song && $song->track ? ($song->track->url =~ /yandexmusic:\/\/(\d+)/) : ();
+                    my $list = $ynison->{yandex_queue} ? ($ynison->{yandex_queue}{playable_list} || []) : [];
+                    my $cached = $ynison->{yandex_queue}{current_playable_index} // -1;
+                    my $back = 0;
+                    for my $i (0 .. $#$list) {
+                        if (($list->[$i]{playable_id} // '') eq ($tid // '')) { $back = ($i < $cached) ? 1 : 0; last }
                     }
-                    else {
-                        my $cmd = $ynison->build_next_cmd();
-                        $ynison->send_command($cmd) if $cmd;
-                    }
+                    $back ? $ynison->skip_back : $ynison->skip_forward;
                 }
                 # Remember that we have an active Yandex session
                 $client->pluginData('ynison_had_yandex_session', 1);
