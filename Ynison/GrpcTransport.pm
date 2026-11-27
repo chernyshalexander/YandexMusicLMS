@@ -77,12 +77,17 @@ event, our SETTINGS ACK riding just before them). The Ynison front refuses
 streams created before its SETTINGS with RST_STREAM(REFUSED_STREAM) +
 GOAWAY(PROTOCOL_ERROR); grpc-core never trips that gate because it always
 waits for the server SETTINGS - the Task 6 live differential proved the same
-bytes ACCEPTED when held and REFUSED when sent immediately.
+bytes ACCEPTED when held and REFUSED when sent immediately. The wait is
+bounded: a peer that never sends SETTINGS fails the channel with
+C<no server SETTINGS within FIRST_FRAME_TIMEOUT seconds>.
 
 =item A NO_ERROR GOAWAY from the front (it opens every connection with
-GOAWAY(NO_ERROR, last_stream=1) before serving the request) is a drain, not a
-close: the covered stream keeps being served; only an error-code GOAWAY - or
-one that skips our live stream - closes the channel as before.
+GOAWAY(NO_ERROR, last_stream=1) before serving the request) is a peer-driven
+drain, a deliberate deviation from RFC 7540 6.8 that the front requires - not
+conformance: the covered stream keeps being served (live evidence: the GOAWAY
+NO_ERROR arrives before the response and stream 1 is still served); only an
+error-code GOAWAY - or one that skips our live stream - closes the channel as
+before.
 
 =item A stalled flush fails the connection instead of dropping the oldest
 frame: h2 bytes cannot be dropped mid-stream (a hole corrupts the framing for
@@ -148,6 +153,7 @@ sub new {
         grpc_buf  => '',
         write_q   => [],
         awaiting_settings => 0,      # the bootstrap holds the request until then
+        bootstrap_timer  => undef,   # the SETTINGS deadline handle
         heartbeat => undef,          # scheduler handle
         hb_sec    => 0,
         pong_wait => undef,          # liveness timer handle
@@ -229,6 +235,16 @@ sub _on_connect {
     $self->{awaiting_settings} = 1;
     $c->pause_after_settings(1);   # split a SETTINGS+response flight on settings
     push @{ $self->{write_q} }, { data => $c->initial_bytes, sent_at => time(), attempts => 0 };
+    # The bootstrap waits with a deadline: a peer that completes the TLS dial
+    # but never sends SETTINGS must not leave the state channel silent forever
+    # (on_open/the Client's first-frame watchdog only arm once the request
+    # exists). Fail the channel by name when the deadline passes.
+    if ($self->{scheduler}) {
+        $self->{bootstrap_timer} = $self->{scheduler}{set}->($C->FIRST_FRAME_TIMEOUT(), sub {
+            return unless $self->{awaiting_settings} && $self->{open};
+            $self->_fail('no server SETTINGS within ' . $C->FIRST_FRAME_TIMEOUT() . 's');
+        });
+    }
     Slim::Networking::IO::Select::addWrite($fh, sub { $self->_on_writable(@_) });
     Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
     $self->{open} = 1;
@@ -238,7 +254,10 @@ sub _on_connect {
 # The request stream: fired when the peer's SETTINGS arrive (the bootstrap
 # holds every request until then - see _on_connect). Opens the stream, sends
 # the HEADERS block and, for the unary redirect, the empty body with END_STREAM.
-# The liveness heartbeat arms here too, so no PING ever precedes our HEADERS.
+# The liveness heartbeat arms here too: the Client calls set_heartbeat before
+# open, so it stays dormant until the request exists and no PING precedes our
+# HEADERS. An external set_heartbeat between open and the server SETTINGS
+# would still arm immediately (the transport is already open) and PING first.
 sub _send_request {
     my ($self) = @_;
     my $c  = $self->{h2};
@@ -365,6 +384,9 @@ sub _teardown {
         $self->{heartbeat} = undef;
     }
     if (my $h = delete $self->{pong_wait}) {
+        $self->{scheduler}{kill}->($h) if $self->{scheduler};
+    }
+    if (my $h = delete $self->{bootstrap_timer}) {
         $self->{scheduler}{kill}->($h) if $self->{scheduler};
     }
     if (my $fh = delete $self->{socket}) {
@@ -562,14 +584,19 @@ sub _on_h2_event {
     return $self->_on_data($ev)    if $type eq 'data';
     if ($type eq 'settings') {
         if (delete $self->{awaiting_settings}) {
+            if (my $h = delete $self->{bootstrap_timer}) {
+                $self->{scheduler}{kill}->($h) if $self->{scheduler};
+            }
             $self->_send_request;    # the request exists before the buffered rest parses
             $self->{h2}->pause_after_settings(0) if $self->{h2};
         }
         return;
     }
     if ($type eq 'goaway') {
-        # The front's NO_ERROR GOAWAY covering our stream is a drain (RFC 7540
-        # 6.8): the request keeps being served, no NEW streams may start.
+        # The front's NO_ERROR GOAWAY covering our stream is a peer-driven
+        # drain: a deliberate deviation from RFC 7540 6.8 (which forbids
+        # streams after a GOAWAY; the front nonetheless serves the covered
+        # stream), so the request keeps being served and no NEW stream starts.
         if ($ev->{draining}) {
             $self->_log('info', "grpc: connection draining"
                 . " (GOAWAY NO_ERROR, last stream $ev->{last_stream_id}): the open"

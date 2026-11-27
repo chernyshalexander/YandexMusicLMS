@@ -24,6 +24,8 @@ and sysreads into feed(). Tests drive the byte pump directly.
     $c->send_goaway('NO_ERROR', 'bye');
     my $out = $c->take_output;                   # every frame queued since the last call
     my @events = $c->feed($bytes_in);            # inbound byte pump -> typed events
+    $c->pause_after_settings(1);                 # bootstrap: split a flight after SETTINGS
+    my @later = $c->feed('');                    # -> resumes the buffered frames
 
 Every outbound op returns a status hashref: { ok => 1, ... } on success or
 { ok => 0, error => 'h2: ...' } when the state machine, the peer's windows or
@@ -56,12 +58,23 @@ answers { ok => 0, error => 'h2: no connection: ...' }.
 
 GOAWAY is special-cased for the Ynison front, which opens EVERY connection
 with GOAWAY(NO_ERROR, last_stream=1) before the client even sends its request
-(observed live, Task 6): per RFC 7540 6.8 that is a promise to serve every
-stream up to last_stream_id - a drain, not a death. A NO_ERROR GOAWAY marks
-the connection draining (the covered stream keeps working; a NEW stream above
-the boundary is refused by name, one at or below it is still accepted), while
-a GOAWAY with an error code - or a NO_ERROR one that skips our live stream -
-ends the connection as before (draining => 0).
+(observed live, Task 6: the GOAWAY NO_ERROR arrives before the response and
+stream 1 is still served). RFC 7540 6.8 says a receiver of a GOAWAY MUST NOT
+open additional streams, so serving stream 1 afterwards is a PEER-DRIVEN
+DEVIATION from the RFC that this front requires - not RFC conformance. A
+NO_ERROR GOAWAY nevertheless marks the connection draining (the covered
+stream keeps working; a NEW stream above the boundary is refused by name, one
+at or below it is still accepted), while a GOAWAY with an error code - or a
+NO_ERROR one that skips our live stream - ends the connection as before
+(draining => 0). Do not "comply" this deviation away without re-verifying it
+against the live front: the real integration depends on the drain.
+
+pause_after_settings($flag) serves the bootstrap: while set, feed() returns
+right after a peer SETTINGS event and keeps the rest of that TCP flight
+buffered, so the caller can open its request stream first; the next call -
+feed('') is the idiomatic one - resumes the buffered frames. The transport
+clears the flag once the request exists; later SETTINGS updates then parse
+in one pass again.
 
 Flow control, per the plan: we advertise SETTINGS_INITIAL_WINDOW_SIZE 1MB and
 open the connection window by +1MB (the WINDOW_UPDATE in initial_bytes); every
@@ -111,6 +124,8 @@ Only core Perl plus HPack; nothing loads Slim here.
 #   send_goaway     -> { ok => 1, ... } | { ok => 0, error => 'h2: ...' }
 #   take_output()   -> all frame bytes queued since the last call
 #   feed(bytes)     -> list of typed events (hashrefs with a 'type' key)
+#   pause_after_settings(flag) -> $c: split a flight after a peer SETTINGS;
+#                      the next feed('') resumes the buffered frames
 #   is_dead / dead_reason
 #
 # Connection-level errors (bad frames, HPACK failures) end the connection, as
@@ -379,9 +394,10 @@ sub _err { my ($msg) = @_; chomp $msg; return { ok => 0, error => $msg } }
 
 sub _dead_err { return $_[0]{_dead} ? "h2: no connection: $_[0]{_dead}\n" : '' }
 
-# '' when a NEW stream may still be opened, otherwise the named drain text
-# (RFC 7540 6.8: a NO_ERROR GOAWAY promises every stream up to last_stream_id,
-# even ones opened after it arrived).
+# '' when a NEW stream may still be opened, otherwise the named drain text.
+# The front's NO_ERROR GOAWAY(1) arrives before the response and stream 1 is
+# still served: a PEER-DRIVEN DEVIATION from RFC 7540 6.8 (which forbids
+# opening streams after a GOAWAY) that this front requires, not conformance.
 sub _drain_err {
     my ($c) = @_;
     return '' unless defined $c->{_draining};
@@ -632,20 +648,25 @@ sub _recv_goaway {
         "h2: GOAWAY of @{[length $payload]} octets, wants at least 8\n")
         unless length($payload) >= 8;
     my ($last, $code) = unpack('N N', substr($payload, 0, 8));
+    $last &= 0x7FFFFFFF;                     # the reserved bit is ignored on receipt
     my $name  = $ERROR_BY_ID{$code} // "ERROR_$code";
     my $debug = substr($payload, 8);
     my $st    = $c->{_stream};
     my $live  = $st && $st->{state} ne 'closed' ? $st->{id} : undef;
     # Fatal when the sender is in error, or when our LIVE stream lies above the
     # drain boundary (it would never be processed). Otherwise NO_ERROR is the
-    # Ynison front's normal opening gambit: drain, keep serving (see the POD).
+    # Ynison front's normal opening gambit: a peer-driven drain, keep serving
+    # (see the POD).
     if ($code != $ERROR{NO_ERROR} || (defined $live && $live > $last)) {
         $c->{_dead} = "GOAWAY received (last stream $last, $name)";
         $c->{_in}   = '';
         return { type => 'goaway', last_stream_id => $last, code => $code, error => $name,
                  debug => $debug, draining => 0 };
     }
-    $c->{_draining} = { last => $last };
+    # RFC 7540 6.8: a successive GOAWAY's last-stream-id MUST NOT increase, so
+    # the stored boundary only ever moves down.
+    $c->{_draining}{last} = $last
+        if !defined($c->{_draining}{last}) || $last < $c->{_draining}{last};
     return { type => 'goaway', last_stream_id => $last, code => $code, error => $name,
              debug => $debug, draining => 1 };
 }
