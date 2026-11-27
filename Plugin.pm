@@ -488,10 +488,38 @@ sub disableDSTM {
     return 0 unless $client;
 
     # Never let a failure here crash the core's eval-protected poll.
-    return eval {
-        require Plugins::yandex::DontStopTheMusic;
-        Plugins::yandex::DontStopTheMusic->isRotorActive($client);
-    } || 0;
+    my $rc = eval {
+        my $active = 0;
+
+        # A Ynison RADIO/WAVE queue replenishes itself from its rotor session,
+        # so the core must not append its own tracks. The LMS queue only holds
+        # plain yandexmusic://<track> URLs, which the rotor-URL check below
+        # cannot recognise - ask the recorded entity kind instead. Only while
+        # Ynison content plays: a local track, playlist or album cast keeps
+        # DSTM fully eligible.
+        if (my $song = $client->playingSong) {
+            my $track = $song->track;
+            my $url = !defined $track ? '' : (ref $track ? $track->url : $track);
+            $url = '' unless defined $url;
+            if ($url =~ /^yandexmusic:/) {
+                my $entity_type = $client->pluginData('ynison_entity_type') // '';
+                if (!$entity_type) {
+                    my $master = $client->master;
+                    if ($master && $master->id ne $client->id) {
+                        $entity_type = $master->pluginData('ynison_entity_type') // '';
+                    }
+                }
+                $active = 1 if $entity_type =~ /^(?:RADIO|WAVE)$/i;
+            }
+        }
+
+        if (!$active) {
+            require Plugins::yandex::DontStopTheMusic;
+            $active = Plugins::yandex::DontStopTheMusic->isRotorActive($client) ? 1 : 0;
+        }
+        $active;
+    };
+    return $rc || 0;
 }
 
 # Handle incoming state updates from Yandex Ynison
@@ -574,6 +602,16 @@ sub _apply_yandex_state {
 
     my $queue  = $player_state->{player_queue} // {};
     my $status = $player_state->{status}       // {};
+
+    # Remember the queue kind for the DSTM hook (see disableDSTM): a rotor
+    # RADIO/WAVE queue replenishes itself and must suppress DSTM, while a
+    # playlist or album cast keeps it eligible. Only a frame that carries the
+    # queue updates the mark - a status-only frame must not clear it.
+    if (ref $player_state->{player_queue} eq 'HASH'
+        && exists $player_state->{player_queue}{entity_type})
+    {
+        $client->pluginData(ynison_entity_type => ($player_state->{player_queue}{entity_type} // ''));
+    }
 
     # Inbound booleans are references (JSON booleans / plain \1|\0 from the
     # protobuf decoder): a bare truth test on one is always true under gRPC,
