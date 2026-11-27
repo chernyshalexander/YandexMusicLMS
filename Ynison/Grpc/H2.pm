@@ -45,13 +45,23 @@ Events from feed() are plain hashrefs with a 'type' key:
     { type => 'data',      stream_id, data => octets, end_stream => 0|1 }
     { type => 'window_update', stream_id, delta }   # 0 = the connection level
     { type => 'rst_stream',    stream_id, code, error }          # error = the code name
-    { type => 'goaway',    last_stream_id, code, error, debug }
+    { type => 'goaway',    last_stream_id, code, error, debug,
+                           draining => 0|1 }
     { type => 'error',     level => 'connection'|'stream', error => the code name,
                            code => number, reason => 'h2: ...' }
 
-A connection-level error (or a received GOAWAY) ends the connection: is_dead()
-turns true, dead_reason() explains it, feed() yields nothing further and every
-outbound op answers { ok => 0, error => 'h2: no connection: ...' }.
+A connection-level error ends the connection: is_dead() turns true,
+dead_reason() explains it, feed() yields nothing further and every outbound op
+answers { ok => 0, error => 'h2: no connection: ...' }.
+
+GOAWAY is special-cased for the Ynison front, which opens EVERY connection
+with GOAWAY(NO_ERROR, last_stream=1) before the client even sends its request
+(observed live, Task 6): per RFC 7540 6.8 that is a promise to serve every
+stream up to last_stream_id - a drain, not a death. A NO_ERROR GOAWAY marks
+the connection draining (the covered stream keeps working; a NEW stream above
+the boundary is refused by name, one at or below it is still accepted), while
+a GOAWAY with an error code - or a NO_ERROR one that skips our live stream -
+ends the connection as before (draining => 0).
 
 Flow control, per the plan: we advertise SETTINGS_INITIAL_WINDOW_SIZE 1MB and
 open the connection window by +1MB (the WINDOW_UPDATE in initial_bytes); every
@@ -103,9 +113,10 @@ Only core Perl plus HPack; nothing loads Slim here.
 #   feed(bytes)     -> list of typed events (hashrefs with a 'type' key)
 #   is_dead / dead_reason
 #
-# Connection-level errors (bad frames, HPACK failures, GOAWAY) end the
-# connection; ops on it answer ok => 0 with a named reason. Nothing dies
-# across the API boundary except caller argument mistakes. An outbound header
+# Connection-level errors (bad frames, HPACK failures) end the connection, as
+# does a GOAWAY with an error code; the front's normal NO_ERROR GOAWAY is only
+# a drain (see the POD) and ops on the covered stream answer ok => 1. Nothing
+# dies across the API boundary except caller argument mistakes. An outbound header
 # block bigger than the peer's max frame size is refused (no CONTINUATION in
 # the MVP); an empty inbound DATA frame gets no WINDOW_UPDATE (a 0 increment
 # would be a protocol error).
@@ -178,6 +189,8 @@ sub new {
         _stream       => undef,              # the one stream record, once opened
         _next_sid     => 1,
         _last_sid     => 0,                  # the highest id we opened (for GOAWAY)
+        _draining     => undef,              # { last => N }: a NO_ERROR GOAWAY received
+        _pause_after_settings => 0,          # the bootstrap: split a flight on settings
         _dead         => undef,              # undef | why the connection ended
     }, $class;
 }
@@ -195,6 +208,7 @@ sub initial_bytes {    # call once, before anything else: the bytes to syswrite 
 sub open_stream {
     my ($c) = @_;
     if (my $dead = _dead_err($c)) { return _err($dead) }
+    if (my $drain = _drain_err($c)) { return _err($drain) }
     if (my $live = _live_stream($c)) {
         return _err("h2: stream $live->{id} is still active (one stream at a time)\n");
     }
@@ -330,9 +344,30 @@ sub feed {
             push @events, _conn_err($c, 'PROTOCOL_ERROR', $bad);
             last;
         }
-        push @events, _dispatch($c, $type, $flags, $sid, $payload);
+        my @out = _dispatch($c, $type, $flags, $sid, $payload);
+        push @events, @out;
+        # The bootstrap pause: hand the batch over right after a peer SETTINGS
+        # so the caller can open its request stream while the rest of the
+        # flight stays buffered in _in (the next feed - even an empty one -
+        # resumes). grpc-core has the same ordering for free: its settings
+        # callback opens the request before later frames of the same flight
+        # are parsed. Without it, a server SETTINGS + response flight would be
+        # classified as HEADERS on an idle stream (a protocol error) before
+        # the request exists.
+        last if $c->{_pause_after_settings} && grep { ($_->{type} // '') eq 'settings' } @out;
     }
     return @events;
+}
+
+# The bootstrap pause (see feed()): while set, feed() returns right after a
+# peer SETTINGS event, leaving the rest of that TCP flight buffered. The
+# transport opens its request on the event and resumes with feed('') (the
+# _on_readable loop does this), then clears the flag - later SETTINGS updates
+# parse in one pass again.
+sub pause_after_settings {
+    my ($c, $flag) = @_;
+    $c->{_pause_after_settings} = $flag ? 1 : 0;
+    return $c;
 }
 
 sub is_dead     { defined $_[0]{_dead} }
@@ -343,6 +378,18 @@ sub dead_reason { $_[0]{_dead} }
 sub _err { my ($msg) = @_; chomp $msg; return { ok => 0, error => $msg } }
 
 sub _dead_err { return $_[0]{_dead} ? "h2: no connection: $_[0]{_dead}\n" : '' }
+
+# '' when a NEW stream may still be opened, otherwise the named drain text
+# (RFC 7540 6.8: a NO_ERROR GOAWAY promises every stream up to last_stream_id,
+# even ones opened after it arrived).
+sub _drain_err {
+    my ($c) = @_;
+    return '' unless defined $c->{_draining};
+    my $last = $c->{_draining}{last};
+    return '' unless $c->{_next_sid} > $last;
+    return "h2: draining (GOAWAY last stream $last): a new stream "
+         . "$c->{_next_sid} would not be processed\n";
+}
 
 # '' when the op may proceed, otherwise the named error text
 sub _stream_guard {
@@ -585,11 +632,22 @@ sub _recv_goaway {
         "h2: GOAWAY of @{[length $payload]} octets, wants at least 8\n")
         unless length($payload) >= 8;
     my ($last, $code) = unpack('N N', substr($payload, 0, 8));
-    my $name = $ERROR_BY_ID{$code} // "ERROR_$code";
-    $c->{_dead} = "GOAWAY received (last stream $last, $name)";
-    $c->{_in}   = '';
+    my $name  = $ERROR_BY_ID{$code} // "ERROR_$code";
+    my $debug = substr($payload, 8);
+    my $st    = $c->{_stream};
+    my $live  = $st && $st->{state} ne 'closed' ? $st->{id} : undef;
+    # Fatal when the sender is in error, or when our LIVE stream lies above the
+    # drain boundary (it would never be processed). Otherwise NO_ERROR is the
+    # Ynison front's normal opening gambit: drain, keep serving (see the POD).
+    if ($code != $ERROR{NO_ERROR} || (defined $live && $live > $last)) {
+        $c->{_dead} = "GOAWAY received (last stream $last, $name)";
+        $c->{_in}   = '';
+        return { type => 'goaway', last_stream_id => $last, code => $code, error => $name,
+                 debug => $debug, draining => 0 };
+    }
+    $c->{_draining} = { last => $last };
     return { type => 'goaway', last_stream_id => $last, code => $code, error => $name,
-             debug => substr($payload, 8) };
+             debug => $debug, draining => 1 };
 }
 
 sub _recv_window_update {

@@ -71,6 +71,19 @@ timeout.
 
 =over
 
+=item The bootstrap waits for the peer's SETTINGS before any request bytes
+(preface+SETTINGS go out at once; HEADERS/body fire on the first settings
+event, our SETTINGS ACK riding just before them). The Ynison front refuses
+streams created before its SETTINGS with RST_STREAM(REFUSED_STREAM) +
+GOAWAY(PROTOCOL_ERROR); grpc-core never trips that gate because it always
+waits for the server SETTINGS - the Task 6 live differential proved the same
+bytes ACCEPTED when held and REFUSED when sent immediately.
+
+=item A NO_ERROR GOAWAY from the front (it opens every connection with
+GOAWAY(NO_ERROR, last_stream=1) before serving the request) is a drain, not a
+close: the covered stream keeps being served; only an error-code GOAWAY - or
+one that skips our live stream - closes the channel as before.
+
 =item A stalled flush fails the connection instead of dropping the oldest
 frame: h2 bytes cannot be dropped mid-stream (a hole corrupts the framing for
 everything that follows).
@@ -134,6 +147,7 @@ sub new {
         unary_msg => undef,
         grpc_buf  => '',
         write_q   => [],
+        awaiting_settings => 0,      # the bootstrap holds the request until then
         heartbeat => undef,          # scheduler handle
         hb_sec    => 0,
         pong_wait => undef,          # liveness timer handle
@@ -204,7 +218,30 @@ sub _on_connect {
 
     my $c = Plugins::yandex::Ynison::Grpc::H2->new;
     $self->{h2} = $c;
-    my $out = $c->initial_bytes;
+    # The bootstrap waits for the peer's SETTINGS before any request bytes: the
+    # Ynison front refuses streams that arrive before its SETTINGS with
+    # RST_STREAM(REFUSED_STREAM) + GOAWAY(PROTOCOL_ERROR) on stream 1. grpc-core
+    # never trips this gate - it sends HEADERS only after the server's SETTINGS
+    # have arrived (Task 6 differential: same bytes later = ACCEPTED, same
+    # bytes immediately = REFUSED). _send_request below fires on the settings
+    # event; the SETTINGS ACK rides out just before our HEADERS, exactly the
+    # accepted grpcio choreography.
+    $self->{awaiting_settings} = 1;
+    $c->pause_after_settings(1);   # split a SETTINGS+response flight on settings
+    push @{ $self->{write_q} }, { data => $c->initial_bytes, sent_at => time(), attempts => 0 };
+    Slim::Networking::IO::Select::addWrite($fh, sub { $self->_on_writable(@_) });
+    Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
+    $self->{open} = 1;
+    return;
+}
+
+# The request stream: fired when the peer's SETTINGS arrive (the bootstrap
+# holds every request until then - see _on_connect). Opens the stream, sends
+# the HEADERS block and, for the unary redirect, the empty body with END_STREAM.
+# The liveness heartbeat arms here too, so no PING ever precedes our HEADERS.
+sub _send_request {
+    my ($self) = @_;
+    my $c  = $self->{h2};
     my $st = $c->open_stream;
     return $self->_fail("h2 stream open failed: $st->{error}") unless $st->{ok};
     $self->{stream_id} = $st->{stream_id};
@@ -218,13 +255,9 @@ sub _on_connect {
             Plugins::yandex::Ynison::Grpc::GrpcFraming::encode_message(''), 1);
         return $self->_fail("h2 DATA failed: $ds->{error}") unless $ds->{ok};
     }
-    $out .= $c->take_output;
-    push @{ $self->{write_q} }, { data => $out, sent_at => time(), attempts => 0 };
-    Slim::Networking::IO::Select::addWrite($fh, sub { $self->_on_writable(@_) });
-    Slim::Networking::IO::Select::addRead($fh, sub { $self->_on_readable(@_) });
-    $self->{open} = 1;
+    $self->_queue_write;
     $self->{heartbeat} = $self->{scheduler}{set}->($self->{hb_sec}, sub { $self->_hb_tick })
-        if $self->{hb_sec} && $self->{scheduler};
+        if $self->{hb_sec} && $self->{scheduler} && !$self->{heartbeat};
     if ($self->{unary}) {
         $self->_log('info', "grpc redirect request sent to $authority");
         return;
@@ -343,6 +376,7 @@ sub _teardown {
     $self->{test_sock} = undef;
     $self->{write_q}   = [];
     $self->{grpc_buf}  = '';
+    $self->{awaiting_settings} = 0;
     return;
 }
 
@@ -505,9 +539,16 @@ sub _on_readable {
     }
     $self->{last_rx} = time();
     $self->_alive;
-    for my $ev ($self->{h2}->feed($buf)) {
+    while (1) {    # the bootstrap pause may split a flight: after the request
+                   # opens on the settings event, resume the buffered rest
+        my @ev = $self->{h2}->feed($buf);
+        last unless @ev;
+        for my $ev (@ev) {
+            last if $self->{closed};
+            $self->_on_h2_event($ev);
+        }
         last if $self->{closed};
-        $self->_on_h2_event($ev);
+        $buf = '';    # the next pass parses what stayed in the h2's buffer
     }
     return if $self->{closed};
     $self->_queue_write;     # SETTINGS ACKs, WINDOW_UPDATEs, PING ACKs
@@ -519,7 +560,22 @@ sub _on_h2_event {
     my $type = $ev->{type};
     return $self->_on_headers($ev) if $type eq 'headers';
     return $self->_on_data($ev)    if $type eq 'data';
+    if ($type eq 'settings') {
+        if (delete $self->{awaiting_settings}) {
+            $self->_send_request;    # the request exists before the buffered rest parses
+            $self->{h2}->pause_after_settings(0) if $self->{h2};
+        }
+        return;
+    }
     if ($type eq 'goaway') {
+        # The front's NO_ERROR GOAWAY covering our stream is a drain (RFC 7540
+        # 6.8): the request keeps being served, no NEW streams may start.
+        if ($ev->{draining}) {
+            $self->_log('info', "grpc: connection draining"
+                . " (GOAWAY NO_ERROR, last stream $ev->{last_stream_id}): the open"
+                . " stream keeps being served");
+            return;
+        }
         my $debug = defined $ev->{debug} && length $ev->{debug} ? ": $ev->{debug}" : '';
         return $self->_fail_close(1006, "server sent GOAWAY (" . ($ev->{error} // '?') . ")$debug");
     }
@@ -529,8 +585,8 @@ sub _on_h2_event {
     if ($type eq 'error') {
         return $self->_fail_close(1006, $ev->{reason});
     }
-    # settings / settings_ack / ping / ping_ack / window_update: the h2 engine
-    # answered what needed answering; the read path marked liveness.
+    # settings_ack / ping / ping_ack / window_update: the h2 engine answered
+    # what needed answering; the read path marked liveness.
     return;
 }
 
