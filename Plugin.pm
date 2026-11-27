@@ -384,7 +384,26 @@ sub _start_ynison_for_player {
     my $ynison;
     if ($engine eq 'new') {
         require Plugins::yandex::Ynison::Adapter;
-        $ynison = Plugins::yandex::Ynison::Adapter->new($player, $token, $uid);
+        my %opts;
+        # The transport pref only affects the new-engine path; legacy stays
+        # untouched. The factory closure must carry a REAL logger:
+        # Client._factory_transport passes logger => sub {} (commit 8aece25
+        # lesson), so without it every GrpcTransport diagnostic would be lost.
+        if (($prefs->get('ynison_transport') || 'ws') eq 'grpc') {
+            require Plugins::yandex::Ynison::GrpcTransport;
+            $opts{transport_factory} = sub {
+                my (%f) = @_;
+                return Plugins::yandex::Ynison::GrpcTransport->new(
+                    logger => sub {
+                        my ($level, $msg) = @_;
+                        my $m = $level eq 'error' ? 'error' : $level eq 'warn' ? 'warn' : 'info';
+                        Slim::Utils::Log::logger('plugin.yandex')->$m("Ynison[new] $msg");
+                    },
+                    scheduler => $f{scheduler},
+                );
+            };
+        }
+        $ynison = Plugins::yandex::Ynison::Adapter->new($player, $token, $uid, %opts);
     }
     else {
         require Plugins::yandex::Ynison;

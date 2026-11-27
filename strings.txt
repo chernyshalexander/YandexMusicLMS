@@ -819,6 +819,14 @@ PLUGIN_YANDEX_YNISON_ENGINE_DESC
 	EN	legacy — the current implementation; new — the rewritten client (reconnect ladder, status on change, relay detection).
 	RU	legacy — текущая реализация; new — новый клиент (лестница реконнекта, статус по изменению, детект релеев).
 
+PLUGIN_YANDEX_YNISON_TRANSPORT
+	EN	Ynison transport
+	RU	Транспорт Ynison
+
+PLUGIN_YANDEX_YNISON_TRANSPORT_DESC
+	EN	ws — WebSocket (default); grpc — native gRPC transport (experimental). Applies to the "new" engine only.
+	RU	ws — WebSocket (по умолчанию); grpc — нативный gRPC-транспорт (экспериментально). Действует только для движка "new".
+
 PLUGIN_YANDEX_ACCOUNTS
 	EN	Accounts
 	RU	Аккаунты
