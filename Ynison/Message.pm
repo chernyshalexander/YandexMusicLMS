@@ -30,7 +30,7 @@ use Time::HiRes qw(gettimeofday);
 use Plugins::yandex::Ynison::Constants ();
 
 our @ISA       = ('Exporter');
-our @EXPORT_OK = qw(new_rid new_version now_ms i64 ws_key
+our @EXPORT_OK = qw(new_rid new_version now_ms i64 truth ws_key
                     envelope update_full_state update_player_state update_playing_status
                     update_active_device update_session_params update_volume_info
                     empty_player_state device_block clamp_progress normalize_player_state
@@ -79,6 +79,17 @@ sub i64 {
     }
     $n = 0 if $n < 0;
     return $n < 1e15 ? int($n) . '' : sprintf('%.0f', $n);
+}
+
+# The JSON contract carries booleans as references (\1 / \0): JSON::XS::Boolean
+# from the WebSocket gateway and plain \1 / \0 from the gRPC protobuf decoder.
+# JSON booleans are false-aware, plain references are TRUE to Perl truth, so
+# every consumer of an inbound boolean must unwrap it here - a bare
+# `$status->{paused} ?` is always true under the gRPC transport (the cast-never
+# -plays bug of 2026-11-27). Scalars pass through so LMS-side 0/1 works too.
+sub truth {
+    my ($v) = @_;
+    return ref $v ? ($$v ? 1 : 0) : ($v ? 1 : 0);
 }
 
 sub ws_key {

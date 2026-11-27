@@ -183,7 +183,7 @@ sub get_current_progress_ms {
         && "$status->{progress_ms}" =~ /^(\d+)/ ? 0 + $1 : 0;
     my $ts = defined $status->{version} && defined $status->{version}{timestamp_ms}
         && "$status->{version}{timestamp_ms}" =~ /^(\d+)/ ? 0 + $1 : 0;
-    my $paused = ref $status->{paused} ? ${ $status->{paused} } : ($status->{paused} ? 1 : 0);
+    my $paused = Plugins::yandex::Ynison::Message::truth($status->{paused});
     if (!$paused && $ts > 0) {
         $now_ms //= int($self->{clock}->() * 1000);
         my $elapsed = $now_ms - $ts;
@@ -239,7 +239,7 @@ sub _on_client_state {
         my $q_author = ((($st->player_queue || {})->{version} || {})->{device_id} // '');
         $self->_log('info', sprintf('  f%d: prog=%s dur=%s paused=%d author=%s qauthor=%s',
             $self->{_frames}, $stt->{progress_ms} // '-', $stt->{duration_ms} // '-',
-            ($stt->{paused} ? 1 : 0),
+            Plugins::yandex::Ynison::Message::truth($stt->{paused}),
             ($s_author eq $self->{device_id} ? 'US' : ($s_author || '-')),
             ($q_author eq $self->{device_id} ? 'US' : ($q_author || '-'))));
 
@@ -250,7 +250,7 @@ sub _on_client_state {
                     ($info->{device_id} // '') eq $self->{device_id} ? '* ' : '  ',
                     $info->{title} // '?', $info->{type} // '?',
                     $info->{app_name} // '?', $info->{app_version} // '-',
-                    $d->{is_offline} ? 1 : 0));
+                    Plugins::yandex::Ynison::Message::truth($d->{is_offline})));
             }
         }
     }

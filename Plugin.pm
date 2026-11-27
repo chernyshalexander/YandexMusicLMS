@@ -25,6 +25,7 @@ use Plugins::yandex::API::Async;
 use Plugins::yandex::API::Common;
 use Plugins::yandex::Browse;
 use Plugins::yandex::Browse::InfoMenu;
+use Plugins::yandex::Ynison::Message ();
 use Slim::Player::ProtocolHandlers;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
@@ -574,7 +575,10 @@ sub _apply_yandex_state {
     my $queue  = $player_state->{player_queue} // {};
     my $status = $player_state->{status}       // {};
 
-    my $remote_paused = $status->{paused} ? 1 : 0;
+    # Inbound booleans are references (JSON booleans / plain \1|\0 from the
+    # protobuf decoder): a bare truth test on one is always true under gRPC,
+    # which made every remote status look paused and the cast never play.
+    my $remote_paused = Plugins::yandex::Ynison::Message::truth($status->{paused});
     my $remote_list   = $queue->{playable_list} // [];
 
     # Status-only update (play/pause with no track list)

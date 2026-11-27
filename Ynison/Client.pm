@@ -318,7 +318,9 @@ sub _on_frame {
     $self->{was_active} = $self->state->is_active ? 1 : 0;
     for my $d (@{ $self->state->devices }) {
         next if ($d->{info}{device_id} // '') eq $self->{device}{device_id};
-        next if $d->{is_offline};
+        # Inbound booleans are references: a bare test is always true, which
+        # would count every peer as offline (see Message::truth).
+        next if Plugins::yandex::Ynison::Message::truth($d->{is_offline});
         $self->{last_peer_s} = $self->{clock}->();
         last;
     }
