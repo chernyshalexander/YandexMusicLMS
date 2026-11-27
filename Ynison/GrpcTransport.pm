@@ -51,14 +51,21 @@ inbound DATA frames decode PutYnisonStateResponse and fire C<on_text>.
     on_open
     on_text($msg)                 decoded JSON-HASH
     on_close($code, $reason)      EOF, GOAWAY, an h2 connection error, a stream
-                                  reset, or error trailers (1006 parity)
+                                  reset, error trailers, or a server-side
+                                  healthy end of the stream (1006 parity)
     on_error($reason, $status)    dial/write failures; $status is undefined on
                                   the gRPC path (no HTTP handshake exists)
 
 Error trailers with grpc-status != 0 first deliver
 C<{error => {details => {ynison-*}, grpc_code, message}}> through on_text -
 exactly the shape the WS gateway sends - and then fire on_close, so the
-Client's reconnect policy consumes gRPC errors unchanged.
+Client's reconnect policy consumes gRPC errors unchanged. Healthy trailers
+(grpc-status 0) on the state stream are a server-initiated end of the RPC
+just the same - a long-lived Ynison bidi stream never ends healthily
+server-side - so any final data is delivered first and the channel then
+closes with on_close(1006, 'stream ended by healthy trailers'): an immediate,
+orderly reconnect instead of a stalled passive device waiting for the pong
+timeout.
 
 =head2 Deliberate deviations from Transport.pm (the h2 byte stream is not WS)
 
@@ -603,7 +610,15 @@ sub _on_trailers {
     if (!$st) {
         return $self->_fail_close(1006, 'trailers without grpc-status');
     }
-    return if $st->{ok};    # healthy: any final data was delivered before the trailers
+    if ($st->{ok}) {
+        # A long-lived Ynison bidi stream never ends healthily server-side:
+        # healthy trailers mean the RPC is over (half-closed remote), so they
+        # are a restart directive, not a quiet continuation. WS parity: any
+        # final data was delivered before the trailers; now hand the Client an
+        # immediate, orderly reconnect instead of stalling a passive device
+        # until the pong timeout.
+        return $self->_fail_close(1006, 'stream ended by healthy trailers');
+    }
     my $err = Plugins::yandex::Ynison::Grpc::GrpcFraming::gateway_error($list);
     my $reason = "grpc status $st->{code}" . (length $st->{message} ? ": $st->{message}" : '');
     my $cb = $self->{handlers}{on_text};
