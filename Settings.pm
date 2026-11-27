@@ -509,7 +509,10 @@ sub handler {
 		$params->{pref_enable_ynison}                  ||= 0;
 		$params->{pref_ynison_debug}                   ||= 0;
 		$params->{pref_ynison_engine}                  ||= 'legacy';
-		$params->{pref_ynison_transport}               ||= 'ws';
+		# basic.html has no field for this pref: an ||= here would fill 'ws'
+		# on every save and the generic save loop would write it back, silently
+		# reverting a manually-set grpc. Round-trip the stored value instead.
+		$params->{pref_ynison_transport}               = $prefs->get('ynison_transport') || 'ws';
 		$params->{pref_show_wave_wizard}               ||= 0;
 		$params->{pref_wizard_station_type}            //= 'activity';
 		$params->{pref_wizard_cat_diversity}           ||= 0;
