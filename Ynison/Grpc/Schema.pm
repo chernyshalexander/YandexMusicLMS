@@ -70,7 +70,7 @@ use Exporter ();
 
 our @ISA       = ('Exporter');
 our @EXPORT_OK = qw(MESSAGES DEVICE_TYPE INTERCEPTION ENTITY_TYPE ENTITY_CONTEXT REPEAT_MODE
-                    enum_num enum_name);
+                    PLAYABLE_TYPE enum_num enum_name);
 our %EXPORT_TAGS = (all => \@EXPORT_OK);
 
 # ---- enums (name -> number; the reverse maps are built below) ---------------
@@ -119,6 +119,14 @@ my %REPEAT_MODE = (
     ONE         => 2,
     ALL         => 3,
 );
+# Nested enum Playable.PlayableType.
+my %PLAYABLE_TYPE = (
+    UNSPECIFIED => 0,
+    TRACK       => 1,
+    LOCAL_TRACK => 2,
+    INFINITE    => 3,
+    VIDEO_CLIP  => 4,
+);
 
 # ---- message tables (ordered by field number) --------------------------------
 my %MESSAGES = (
@@ -163,11 +171,13 @@ my %MESSAGES = (
         ['playback_speed', 4, 'double'],
         ['version',        5, 'message', 'UpdateVersion'],
     ],
-    Playable => [    # per the plan: playable_id/title/cover only (the full
-                     # stub keeps album_id_optional=2, playable_type=3, from=4,
-                     # video_clip_info=7, track_info=8, navigation_id=9,
-                     # playback_action_id=10 - all out of MVP scope)
+    Playable => [    # the fields the plugin consumes; video_clip_info=7,
+                     # track_info=8, navigation_id=9, playback_action_id=10
+                     # stay out of MVP scope
         ['playable_id',        1, 'string'],
+        ['album_id_optional',  2, 'string_value'],
+        ['playable_type',      3, 'varint_enum', 'PLAYABLE_TYPE'],
+        ['from',               4, 'string'],
         ['title',              5, 'string'],
         ['cover_url_optional', 6, 'string_value'],
     ],
@@ -271,6 +281,7 @@ my %ENUMS = (
     ENTITY_TYPE    => \%ENTITY_TYPE,
     ENTITY_CONTEXT => \%ENTITY_CONTEXT,
     REPEAT_MODE    => \%REPEAT_MODE,
+    PLAYABLE_TYPE  => \%PLAYABLE_TYPE,
 );
 
 my %ENUM_NAMES = map { $_ => { reverse %{ $ENUMS{$_} } } } keys %ENUMS;
@@ -283,6 +294,7 @@ sub INTERCEPTION  { \%INTERCEPTION }
 sub ENTITY_TYPE   { \%ENTITY_TYPE }
 sub ENTITY_CONTEXT{ \%ENTITY_CONTEXT }
 sub REPEAT_MODE   { \%REPEAT_MODE }
+sub PLAYABLE_TYPE { \%PLAYABLE_TYPE }
 
 # enum_num('DEVICE_TYPE', 'WEB') -> 1; dies on an unknown name.
 sub enum_num {
